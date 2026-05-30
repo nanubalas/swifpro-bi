@@ -86,10 +86,3 @@ def release_reservations(*, tenant, ref_type, ref_id):
 
         r.status = InventoryReservation.Status.RELEASED
         r.save()
-
-@transaction.atomic
-def consume_reservations(*, tenant, ref_type, ref_id):
-    """Mark reservations as consumed (does not change reserved; caller should have released or moved)."""
-    InventoryReservation.objects.filter(
-        tenant=tenant, ref_type=ref_type, ref_id=ref_id, status=InventoryReservation.Status.ACTIVE
-    ).update(status=InventoryReservation.Status.CONSUMED)

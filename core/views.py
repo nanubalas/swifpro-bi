@@ -1,4 +1,5 @@
-from decimal import Decimal
+import re
+from decimal import Decimal, InvalidOperation
 from django.db import transaction, IntegrityError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
@@ -6,7 +7,7 @@ from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
 
 from core.models import (
-    Tenant, Location, PurchaseOrder, PurchaseOrderAmendment, Shipment, ShipmentLine, Container, ShipmentEvent,
+    Tenant, Location, PurchaseOrder, PurchaseOrderLine, PurchaseOrderAmendment, Shipment, ShipmentLine, Container, ShipmentEvent,
     InventoryBalance, InventoryMovement, ChannelSnapshot, SalesChannel, Product,
     Supplier, ChannelConnection, SalesOrder, SalesOrderLine,
     ProductBarcode, UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine,
@@ -43,26 +44,33 @@ from core.auth import role_required, ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUS
 
 
 
-def _get_default_tenant():
-    # MVP shortcut: use first tenant.
-    # Later: tie tenant to logged-in user.
+def _get_default_tenant(request=None):
+    # Resolve the active tenant for the request's user via their profile.
+    # Falls back to the first tenant for users without a profile (e.g.
+    # the initial superuser) so existing single-tenant setups keep working.
+    user = getattr(request, "user", None)
+    if user is not None and user.is_authenticated:
+        profile = getattr(user, "profile", None)
+        if profile is not None:
+            return profile.tenant
     return Tenant.objects.order_by("id").first()
 
 
 def _generate_po_number():
-    return "PO-" + timezone.now().strftime("%Y%m%d-%H%M%S")
+    return "PO-" + timezone.now().strftime("%Y%m%d-%H%M%S-%f")
 
 
-def home(request):
-    tenant = _get_default_tenant()
-    return redirect("po_list") if tenant else render(request, "base.html", {"content": "Create a Tenant in admin."})
+def _default_vat_rate(tenant):
+    """Standard VAT rate for the tenant (from the 'STD' tax code), default 20%."""
+    code = TaxCode.objects.filter(tenant=tenant, code="STD", is_active=True).first()
+    return code.rate if code else Decimal("0.20")
 
 
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
 
 def po_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     pos = PurchaseOrder.objects.filter(tenant=tenant).order_by("-created_at")
     return render(request, "po_list.html", {"tenant": tenant, "pos": pos})
 
@@ -70,11 +78,11 @@ def po_list(request):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
 
 def po_print(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
     
     subtotal = sum((line.line_total for line in po.lines.all()), Decimal("0.00"))
-    vat_rate = Decimal("0.20")
+    vat_rate = _default_vat_rate(tenant)
     vat_amount = subtotal * vat_rate
     total = subtotal + vat_amount
 
@@ -84,7 +92,7 @@ def po_print(request, po_id):
         "subtotal": subtotal,
         "vat_amount": vat_amount,
         "total": total,
-        "vat_rate_percent": 20,
+        "vat_rate_percent": vat_rate * 100,
     })
 
 
@@ -92,7 +100,7 @@ def po_print(request, po_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 def po_send(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
 
     if request.method != "POST":
@@ -132,7 +140,7 @@ def po_send(request, po_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 def po_amend(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
 
     if request.method != "POST":
@@ -151,38 +159,45 @@ def po_amend(request, po_id):
         messages.error(request, "Amendment reason is required.")
         return redirect("po_detail", po_id=po.id)
 
-    # Create new version
-    new_po = PurchaseOrder.objects.create(
-        tenant=tenant,
-        po_number=po.po_number,
-        supplier=po.supplier,
-        currency_code=po.currency_code,
-        version=po.version + 1,
-        supersedes=po,
-        is_current=True,
-        status=PurchaseOrder.Status.DRAFT,
-        expected_date=po.expected_date,
-        notes=po.notes,
-    )
-    for line in po.lines.all():
-        PurchaseOrderLine.objects.create(
-            po=new_po,
-            product=line.product,
-            ordered_qty=line.ordered_qty,
-            received_qty=line.received_qty,
-            unit_cost=line.unit_cost,
+    # New version needs a unique po_number (Meta.unique_together = tenant, po_number).
+    # Derive a stable base by stripping any prior "-vN" suffix, then re-version.
+    new_version = po.version + 1
+    base_number = re.sub(r"-v\d+$", "", po.po_number)
+    new_number = f"{base_number}-v{new_version}"
+
+    with transaction.atomic():
+        # Create new version
+        new_po = PurchaseOrder.objects.create(
+            tenant=tenant,
+            po_number=new_number,
+            supplier=po.supplier,
+            currency_code=po.currency_code,
+            version=new_version,
+            supersedes=po,
+            is_current=True,
+            status=PurchaseOrder.Status.DRAFT,
+            expected_date=po.expected_date,
+            notes=po.notes,
         )
+        for line in po.lines.all():
+            PurchaseOrderLine.objects.create(
+                po=new_po,
+                product=line.product,
+                ordered_qty=line.ordered_qty,
+                received_qty=line.received_qty,
+                unit_cost=line.unit_cost,
+            )
 
-    po.is_current = False
-    po.save(update_fields=["is_current"])
+        po.is_current = False
+        po.save(update_fields=["is_current"])
 
-    PurchaseOrderAmendment.objects.create(
-        tenant=tenant,
-        from_po=po,
-        to_po=new_po,
-        reason=reason,
-        created_by=request.user,
-    )
+        PurchaseOrderAmendment.objects.create(
+            tenant=tenant,
+            from_po=po,
+            to_po=new_po,
+            reason=reason,
+            created_by=request.user,
+        )
 
     messages.success(request, f"Created PO amendment v{new_po.version}. Update it and submit again.")
     return redirect("po_detail", po_id=new_po.id)
@@ -192,7 +207,7 @@ def po_amend(request, po_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 def po_cancel(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
 
     if request.method != "POST":
@@ -224,9 +239,9 @@ def po_cancel(request, po_id):
 
 
 
-def _safe_default_tenant():
+def _safe_default_tenant(request=None):
     try:
-        return Tenant.objects.order_by("id").first()
+        return _get_default_tenant(request)
     except OperationalError:
         return None
 
@@ -234,7 +249,7 @@ def _safe_default_tenant():
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES, ROLE_FINANCE, ROLE_READONLY])
 
 def landing(request):
-    tenant = _safe_default_tenant()
+    tenant = _safe_default_tenant(request)
     if not tenant:
         return render(request, "landing.html", {
             "tenant": None,
@@ -259,7 +274,7 @@ def landing(request):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 def po_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     if not tenant:
         return render(request, "base.html", {"content": "Create a Tenant in admin first."})
 
@@ -292,6 +307,7 @@ def po_create(request):
             threshold = getattr(tenant, "po_approval_threshold", Decimal("0.00")) or Decimal("0.00")
             if po.status == PurchaseOrder.Status.SUBMITTED and threshold > 0 and total > threshold:
                 po.approval_required = True
+                po.status = PurchaseOrder.Status.APPROVAL_PENDING
                 po.save()
                 messages.warning(
                     request,
@@ -321,13 +337,10 @@ def po_create(request):
 
 
 @login_required
-@role_required([ROLE_ADMIN, ROLE_FINANCE])
-@transaction.atomic
-
-@login_required
 @role_required([ROLE_ADMIN, ROLE_FINANCE], [ROLE_ADMIN, ROLE_FINANCE])
+@transaction.atomic
 def po_approve(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
 
     if request.method != "POST":
@@ -361,12 +374,14 @@ def po_approve(request, po_id):
     messages.success(request, f"PO {po.po_number} approved.")
     return redirect("po_detail", po_id=po.id)
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
 def po_detail(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
 
     subtotal = sum((line.line_total for line in po.lines.all()), Decimal("0.00"))
-    vat_rate = Decimal("0.20")  # change if needed
+    vat_rate = _default_vat_rate(tenant)
     vat_amount = subtotal * vat_rate
     total = subtotal + vat_amount
 
@@ -376,18 +391,15 @@ def po_detail(request, po_id):
         "subtotal": subtotal,
         "vat_amount": vat_amount,
         "total": total,
-        "vat_rate_percent": 20,
+        "vat_rate_percent": vat_rate * 100,
     })
 
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 @transaction.atomic
-@login_required
-@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
-
-@login_required
-@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 def po_submit(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
 
     if request.method != "POST":
@@ -442,19 +454,18 @@ def po_submit(request, po_id):
         messages.success(request, f"PO {po.po_number} submitted.")
     return redirect("po_detail", po_id=po.id)
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])
 def shipment_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     shipments = Shipment.objects.filter(tenant=tenant).select_related("po", "from_supplier", "destination").order_by("-created_at")
     return render(request, "shipments/shipment_list.html", {"tenant": tenant, "shipments": shipments})
 
 
 @login_required
-@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
-
-@login_required
-@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
 def shipment_detail(request, shipment_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     shipment = get_object_or_404(Shipment, id=shipment_id, tenant=tenant)
     po = shipment.po
 
@@ -473,18 +484,27 @@ def shipment_detail(request, shipment_id):
             return redirect("shipment_detail", shipment_id=shipment.id)
 
         if action == "allocate":
-            # Update expected qty per shipment line
-            with transaction.atomic():
-                for sl in shipment.lines.select_related("po_line", "po_line__product"):
-                    raw = (request.POST.get(f"exp_{sl.id}") or "").strip()
-                    if raw == "":
-                        continue
-                    exp = Decimal(raw)
-                    if exp < sl.received_qty:
-                        messages.error(request, f"Expected qty cannot be below received for {sl.po_line.product.sku}.")
-                        raise IntegrityError("Invalid allocation")
-                    sl.expected_qty = exp
-                    sl.save(update_fields=["expected_qty"])
+            # Validate first, then persist atomically — so an invalid value
+            # gives a friendly message instead of a 500.
+            try:
+                with transaction.atomic():
+                    for sl in shipment.lines.select_related("po_line", "po_line__product"):
+                        raw = (request.POST.get(f"exp_{sl.id}") or "").strip()
+                        if raw == "":
+                            continue
+                        try:
+                            exp = Decimal(raw)
+                        except InvalidOperation:
+                            raise ValueError(f"Invalid quantity '{raw}' for {sl.po_line.product.sku}.")
+                        if exp < sl.received_qty:
+                            raise ValueError(
+                                f"Expected qty cannot be below received for {sl.po_line.product.sku}."
+                            )
+                        sl.expected_qty = exp
+                        sl.save(update_fields=["expected_qty"])
+            except ValueError as e:
+                messages.error(request, str(e))
+                return redirect("shipment_detail", shipment_id=shipment.id)
             messages.success(request, "Allocation updated.")
             return redirect("shipment_detail", shipment_id=shipment.id)
 
@@ -537,11 +557,15 @@ def shipment_detail(request, shipment_id):
         "events": events,
     })
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
 def shipment_update(request, shipment_id):
     return shipment_detail(request, shipment_id)
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
 def receive_po(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
 
     if po.approval_required or po.status == PurchaseOrder.Status.APPROVAL_PENDING:
@@ -563,110 +587,118 @@ def receive_po(request, po_id):
         return redirect("shipment_detail", shipment_id=shipment.id)
 
     dest_location = shipment.destination
-    default_grn = "GRN-" + timezone.now().strftime("%Y%m%d-%H%M%S")
+    default_grn = "GRN-" + timezone.now().strftime("%Y%m%d-%H%M%S-%f")
 
     if request.method == "POST":
         grn_number = (request.POST.get("grn_number") or default_grn).strip()
         received_at = timezone.now()
-        any_received = False
 
-        receipt = GoodsReceipt.objects.create(
-            tenant=tenant,
-            po=po,
-            shipment=shipment,
-            grn_number=grn_number,
-            received_at=received_at,
-            received_to=dest_location,
-            attachment=request.FILES.get("attachment"),
-            status=GoodsReceipt.Status.DRAFT,
-        )
-
-        # Optional single landed cost (MVP)
-        lc_name = (request.POST.get("landed_cost_name") or "").strip()
-        lc_amount_raw = (request.POST.get("landed_cost_amount") or "").strip()
-        if lc_name and lc_amount_raw:
-            try:
-                LandedCostCharge.objects.create(
+        try:
+            with transaction.atomic():
+                receipt = GoodsReceipt.objects.create(
                     tenant=tenant,
-                    receipt=receipt,
-                    name=lc_name,
-                    amount=Decimal(lc_amount_raw),
-                    currency_code=po.currency_code,
+                    po=po,
+                    shipment=shipment,
+                    grn_number=grn_number,
+                    received_at=received_at,
+                    received_to=dest_location,
+                    attachment=request.FILES.get("attachment"),
+                    status=GoodsReceipt.Status.DRAFT,
                 )
-            except Exception:
-                pass
 
-        with transaction.atomic():
-            for sl in shipment.lines.select_related("po_line", "po_line__product"):
-                key = f"recv_{sl.id}"
-                qty_raw = (request.POST.get(key) or "").strip()
-                if not qty_raw:
-                    continue
-                qty = Decimal(qty_raw)
-                if qty <= 0:
-                    continue
-
-                if qty > sl.open_qty:
-                    messages.error(request, f"Cannot receive more than open qty for {sl.po_line.product.sku}.")
-                    raise IntegrityError("Over-receipt")
-
-                lot_code = (request.POST.get(f"lot_{sl.id}") or "").strip() or None
-                serial = (request.POST.get(f"serial_{sl.id}") or "").strip() or None
-                expiry_raw = (request.POST.get(f"expiry_{sl.id}") or "").strip()
-                expiry = None
-                if expiry_raw:
+                # Optional single landed cost (MVP)
+                lc_name = (request.POST.get("landed_cost_name") or "").strip()
+                lc_amount_raw = (request.POST.get("landed_cost_amount") or "").strip()
+                if lc_name and lc_amount_raw:
                     try:
-                        expiry = timezone.datetime.fromisoformat(expiry_raw).date()
+                        LandedCostCharge.objects.create(
+                            tenant=tenant,
+                            receipt=receipt,
+                            name=lc_name,
+                            amount=Decimal(lc_amount_raw),
+                            currency_code=po.currency_code,
+                        )
                     except Exception:
-                        expiry = None
+                        pass
 
-                GoodsReceiptLine.objects.create(
-                    receipt=receipt,
-                    po_line=sl.po_line,
-                    product=sl.po_line.product,
-                    qty_received=qty,
-                    unit_cost=sl.po_line.unit_cost,
-                    lot_code=lot_code,
-                    serial_number=serial,
-                    expiry_date=expiry,
-                )
+                any_received = False
+                for sl in shipment.lines.select_related("po_line", "po_line__product"):
+                    key = f"recv_{sl.id}"
+                    qty_raw = (request.POST.get(key) or "").strip()
+                    if not qty_raw:
+                        continue
+                    try:
+                        qty = Decimal(qty_raw)
+                    except InvalidOperation:
+                        raise ValueError(f"Invalid quantity '{qty_raw}' for {sl.po_line.product.sku}.")
+                    if qty <= 0:
+                        continue
 
-                apply_movement(
-                    tenant=tenant,
-                    product=sl.po_line.product,
-                    location=dest_location,
-                    movement_type=InventoryMovement.Type.RECEIPT,
-                    qty=qty,
-                    reference=f"GRN {receipt.grn_number}",
-                    unit_cost=sl.po_line.unit_cost,
-                    lot_code=lot_code,
-                    serial_number=serial,
-                    expiry_date=expiry,
-                )
+                    if qty > sl.open_qty:
+                        raise ValueError(
+                            f"Cannot receive more than open qty for {sl.po_line.product.sku}."
+                        )
 
-                # Update received quantities
-                sl.received_qty += qty
-                sl.save(update_fields=["received_qty"])
-                pol = sl.po_line
-                pol.received_qty += qty
-                pol.save(update_fields=["received_qty"])
-                any_received = True
+                    lot_code = (request.POST.get(f"lot_{sl.id}") or "").strip() or None
+                    serial = (request.POST.get(f"serial_{sl.id}") or "").strip() or None
+                    expiry_raw = (request.POST.get(f"expiry_{sl.id}") or "").strip()
+                    expiry = None
+                    if expiry_raw:
+                        try:
+                            expiry = timezone.datetime.fromisoformat(expiry_raw).date()
+                        except Exception:
+                            expiry = None
 
-        if not any_received:
-            receipt.status = GoodsReceipt.Status.CANCELLED
-            receipt.save(update_fields=["status"])
-            messages.info(request, "Nothing received.")
+                    GoodsReceiptLine.objects.create(
+                        receipt=receipt,
+                        po_line=sl.po_line,
+                        product=sl.po_line.product,
+                        qty_received=qty,
+                        unit_cost=sl.po_line.unit_cost,
+                        lot_code=lot_code,
+                        serial_number=serial,
+                        expiry_date=expiry,
+                    )
+
+                    apply_movement(
+                        tenant=tenant,
+                        product=sl.po_line.product,
+                        location=dest_location,
+                        movement_type=InventoryMovement.MovementType.RECEIVE,
+                        qty_delta=qty,
+                        ref_type="GRN",
+                        ref_id=receipt.grn_number,
+                        notes=f"Receipt against PO {po.po_number}",
+                        lot_code=lot_code,
+                        serial_number=serial,
+                        expiry_date=expiry,
+                    )
+
+                    # Update received quantities
+                    sl.received_qty += qty
+                    sl.save(update_fields=["received_qty"])
+                    pol = sl.po_line
+                    pol.received_qty += qty
+                    pol.save(update_fields=["received_qty"])
+                    any_received = True
+
+                if not any_received:
+                    # Nothing actually received: abort the whole transaction.
+                    raise ValueError("Nothing received.")
+
+                # Update PO status
+                if all((l.open_qty == Decimal("0.00") for l in po.lines.all())):
+                    po.status = PurchaseOrder.Status.RECEIVED
+                else:
+                    po.status = PurchaseOrder.Status.PARTIALLY_RECEIVED
+                po.save(update_fields=["status"])
+
+                receipt.status = GoodsReceipt.Status.POSTED
+                receipt.save(update_fields=["status"])
+        except ValueError as e:
+            # Validation failure (over-receipt / nothing received): roll back and re-prompt.
+            messages.error(request, str(e))
             return redirect("receive_po", po_id=po.id)
-
-        # Update PO status
-        if all((l.open_qty == Decimal("0.00") for l in po.lines.all())):
-            po.status = PurchaseOrder.Status.RECEIVED
-        else:
-            po.status = PurchaseOrder.Status.PARTIALLY_RECEIVED
-        po.save(update_fields=["status"])
-
-        receipt.status = GoodsReceipt.Status.POSTED
-        receipt.save(update_fields=["status"])
 
         messages.success(request, "Receipt posted.")
         return redirect("po_detail", po_id=po.id)
@@ -678,8 +710,10 @@ def receive_po(request, po_id):
         "default_grn": default_grn,
     })
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
 def inventory_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     balances = (
         InventoryBalance.objects
         .filter(tenant=tenant)
@@ -693,7 +727,7 @@ def inventory_list(request):
 @role_required([ROLE_ADMIN, ROLE_FINANCE, ROLE_READONLY])
 
 def reconcile(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
 
     # Latest snapshot per SKU for Shopify (MVP)
     latest = {}
@@ -721,7 +755,7 @@ def reconcile(request):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_READONLY])
 
 def product_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     qs = Product.objects.filter(tenant=tenant).order_by("sku")
     return render(request, "products/product_list.html", {"tenant": tenant, "products": qs})
 
@@ -729,7 +763,7 @@ def product_list(request):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 
 def product_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     if request.method == "POST":
         form = ProductForm(request.POST)
         if form.is_valid():
@@ -756,7 +790,7 @@ def product_create(request):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 
 def product_edit(request, product_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(Product, id=product_id, tenant=tenant)
 
     if request.method == "POST":
@@ -788,7 +822,7 @@ def product_edit(request, product_id):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 
 def product_delete(request, product_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(Product, id=product_id, tenant=tenant)
 
     if request.method == "POST":
@@ -804,7 +838,7 @@ def product_delete(request, product_id):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_READONLY])
 
 def supplier_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     suppliers = Supplier.objects.filter(tenant=tenant).order_by("name")
     return render(request, "suppliers/supplier_list.html", {"tenant": tenant, "suppliers": suppliers})
 
@@ -812,7 +846,7 @@ def supplier_list(request):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 
 def supplier_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = SupplierForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -829,7 +863,7 @@ def supplier_create(request):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 
 def supplier_edit(request, supplier_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(Supplier, id=supplier_id, tenant=tenant)
     form = SupplierForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
@@ -845,7 +879,7 @@ def supplier_edit(request, supplier_id):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 
 def supplier_delete(request, supplier_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(Supplier, id=supplier_id, tenant=tenant)
     if request.method == "POST":
         obj.delete()
@@ -857,7 +891,7 @@ def supplier_delete(request, supplier_id):
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_READONLY])
 
 def location_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     locations = Location.objects.filter(tenant=tenant).order_by("name")
     return render(request, "locations/location_list.html", {"tenant": tenant, "locations": locations})
 
@@ -865,7 +899,7 @@ def location_list(request):
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
 
 def location_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = LocationForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -882,7 +916,7 @@ def location_create(request):
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
 
 def location_edit(request, location_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(Location, id=location_id, tenant=tenant)
     form = LocationForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
@@ -898,7 +932,7 @@ def location_edit(request, location_id):
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
 
 def location_delete(request, location_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(Location, id=location_id, tenant=tenant)
     if request.method == "POST":
         obj.delete()
@@ -910,7 +944,7 @@ def location_delete(request, location_id):
 @role_required([ROLE_ADMIN, ROLE_FINANCE])
 
 def channel_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     conns = ChannelConnection.objects.filter(tenant=tenant).order_by("channel", "name")
     return render(request, "channels/channel_list.html", {"tenant": tenant, "conns": conns})
 
@@ -918,7 +952,7 @@ def channel_list(request):
 @role_required([ROLE_ADMIN, ROLE_FINANCE], [ROLE_ADMIN, ROLE_FINANCE])
 
 def channel_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = ChannelConnectionForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -932,7 +966,7 @@ def channel_create(request):
 @role_required([ROLE_ADMIN, ROLE_FINANCE], [ROLE_ADMIN, ROLE_FINANCE])
 
 def channel_edit(request, conn_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(ChannelConnection, id=conn_id, tenant=tenant)
     form = ChannelConnectionForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
@@ -945,7 +979,7 @@ def channel_edit(request, conn_id):
 @role_required([ROLE_ADMIN, ROLE_FINANCE], [ROLE_ADMIN, ROLE_FINANCE])
 
 def channel_delete(request, conn_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(ChannelConnection, id=conn_id, tenant=tenant)
     if request.method == "POST":
         obj.delete()
@@ -957,7 +991,7 @@ def channel_delete(request, conn_id):
 @role_required([ROLE_ADMIN, ROLE_SALES, ROLE_READONLY])
 
 def sales_order_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     orders = SalesOrder.objects.filter(tenant=tenant).order_by("-order_date")
     return render(request, "sales/sales_order_list.html", {"tenant": tenant, "orders": orders})
 
@@ -965,7 +999,7 @@ def sales_order_list(request):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_SALES], [ROLE_ADMIN, ROLE_SALES])
 def sales_order_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     order = SalesOrder(tenant=tenant, currency_code=tenant.currency_code)
 
     if request.method == "POST":
@@ -1024,7 +1058,7 @@ def sales_order_create(request):
 @role_required([ROLE_ADMIN, ROLE_SALES, ROLE_READONLY])
 
 def sales_order_detail(request, order_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     order = get_object_or_404(SalesOrder, id=order_id, tenant=tenant)
     subtotal = sum((l.line_total for l in order.lines.all()), Decimal("0.00"))
     return render(request, "sales/sales_order_detail.html", {
@@ -1035,7 +1069,7 @@ def sales_order_detail(request, order_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_SALES], [ROLE_ADMIN, ROLE_SALES])
 def sales_order_post(request, order_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     order = get_object_or_404(SalesOrder, id=order_id, tenant=tenant)
     if request.method == "POST":
         shortages = _post_sales_order(order) or []
@@ -1115,7 +1149,7 @@ def _post_sales_order(order: SalesOrder):
 @role_required([ROLE_ADMIN])
 
 def settings_tenant(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     if not tenant:
         # your app already uses needs_setup state
         return redirect("/admin/")
@@ -1134,7 +1168,7 @@ def settings_tenant(request):
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     uoms = UnitOfMeasure.objects.filter(tenant=tenant).order_by("code")
     return render(request, "uoms/uom_list.html", {"tenant": tenant, "uoms": uoms})
 
@@ -1142,7 +1176,7 @@ def uom_list(request):
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = UnitOfMeasureForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -1159,7 +1193,7 @@ def uom_create(request):
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_edit(request, uom_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(UnitOfMeasure, id=uom_id, tenant=tenant)
     form = UnitOfMeasureForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
@@ -1175,7 +1209,7 @@ def uom_edit(request, uom_id):
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_delete(request, uom_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(UnitOfMeasure, id=uom_id, tenant=tenant)
     if request.method == "POST":
         obj.delete()
@@ -1187,7 +1221,7 @@ def uom_delete(request, uom_id):
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_conversion_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     conversions = UOMConversion.objects.filter(tenant=tenant).select_related("product", "from_uom", "to_uom").order_by("product__sku", "from_uom__code")
     return render(request, "uoms/conversion_list.html", {"tenant": tenant, "conversions": conversions})
 
@@ -1195,7 +1229,7 @@ def uom_conversion_list(request):
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_conversion_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = UOMConversionForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -1212,7 +1246,7 @@ def uom_conversion_create(request):
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_conversion_edit(request, conv_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(UOMConversion, id=conv_id, tenant=tenant)
     form = UOMConversionForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
@@ -1228,7 +1262,7 @@ def uom_conversion_edit(request, conv_id):
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_conversion_delete(request, conv_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(UOMConversion, id=conv_id, tenant=tenant)
     if request.method == "POST":
         obj.delete()
@@ -1240,7 +1274,7 @@ def uom_conversion_delete(request, conv_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_SALES], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_SALES])
 def bom_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     boms = BillOfMaterials.objects.filter(tenant=tenant).select_related("product").order_by("-is_active", "product__sku")
     return render(request, "boms/bom_list.html", {"tenant": tenant, "boms": boms})
 
@@ -1248,7 +1282,7 @@ def bom_list(request):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 def bom_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = BillOfMaterialsForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -1262,7 +1296,7 @@ def bom_create(request):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_SALES], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_SALES])
 def bom_detail(request, bom_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     bom = get_object_or_404(BillOfMaterials, id=bom_id, tenant=tenant)
     if request.method == "POST":
         form = BillOfMaterialsForm(request.POST, instance=bom)
@@ -1281,7 +1315,7 @@ def bom_detail(request, bom_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 def bom_delete(request, bom_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     bom = get_object_or_404(BillOfMaterials, id=bom_id, tenant=tenant)
     if request.method == "POST":
         bom.delete()
@@ -1298,14 +1332,14 @@ from core.models import CycleCount, CycleCountLine, InventoryLotBalance
 
 @role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_FINANCE])
 def cycle_count_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     qs = CycleCount.objects.filter(tenant=tenant).select_related("location").order_by("-created_at")
     return render(request, "inventory/cycle_count_list.html", {"tenant": tenant, "cycle_counts": qs})
 
 @role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
 @transaction.atomic
 def cycle_count_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     cc = CycleCount(tenant=tenant)
     if request.method == "POST":
         form = CycleCountForm(request.POST, instance=cc)
@@ -1326,14 +1360,14 @@ def cycle_count_create(request):
 
 @role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_FINANCE])
 def cycle_count_detail(request, cc_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     cc = get_object_or_404(CycleCount, id=cc_id, tenant=tenant)
     return render(request, "inventory/cycle_count_detail.html", {"tenant": tenant, "cc": cc})
 
 @role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
 @transaction.atomic
 def cycle_count_submit(request, cc_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     cc = get_object_or_404(CycleCount, id=cc_id, tenant=tenant)
     if request.method != "POST":
         return redirect("cycle_count_detail", cc_id=cc.id)
@@ -1370,7 +1404,7 @@ def cycle_count_submit(request, cc_id):
 @role_required(read_groups=[ROLE_ADMIN, ROLE_FINANCE], write_groups=[ROLE_ADMIN, ROLE_FINANCE])
 @transaction.atomic
 def cycle_count_approve(request, cc_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     cc = get_object_or_404(CycleCount, id=cc_id, tenant=tenant)
     if request.method == "POST" and cc.status == CycleCount.Status.SUBMITTED:
         cc.status = CycleCount.Status.APPROVED
@@ -1380,7 +1414,7 @@ def cycle_count_approve(request, cc_id):
 @role_required(read_groups=[ROLE_ADMIN, ROLE_FINANCE], write_groups=[ROLE_ADMIN, ROLE_FINANCE])
 @transaction.atomic
 def cycle_count_post(request, cc_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     cc = get_object_or_404(CycleCount, id=cc_id, tenant=tenant)
     if request.method != "POST":
         return render(request, "inventory/cycle_count_post.html", {"tenant": tenant, "cc": cc})
@@ -1414,7 +1448,7 @@ def cycle_count_post(request, cc_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE])
 def transfer_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     transfers = InventoryTransfer.objects.filter(tenant=tenant).order_by("-created_at")
     return render(request, "transfers/transfer_list.html", {"tenant": tenant, "transfers": transfers})
 
@@ -1423,8 +1457,8 @@ def transfer_list(request):
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE])
 @transaction.atomic
 def transfer_create(request):
-    tenant = _get_default_tenant()
-    transfer = InventoryTransfer(tenant=tenant, transfer_number="TR-" + timezone.now().strftime("%Y%m%d-%H%M%S"))
+    tenant = _get_default_tenant(request)
+    transfer = InventoryTransfer(tenant=tenant, transfer_number="TR-" + timezone.now().strftime("%Y%m%d-%H%M%S-%f"))
     if request.method == "POST":
         form = InventoryTransferForm(request.POST, instance=transfer)
         formset = InventoryTransferLineFormSet(request.POST, instance=transfer)
@@ -1450,7 +1484,7 @@ def transfer_create(request):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE])
 def transfer_detail(request, transfer_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     transfer = get_object_or_404(InventoryTransfer, id=transfer_id, tenant=tenant)
     return render(request, "transfers/transfer_detail.html", {"tenant": tenant, "transfer": transfer})
 
@@ -1459,7 +1493,7 @@ def transfer_detail(request, transfer_id):
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE])
 @transaction.atomic
 def transfer_post(request, transfer_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     transfer = get_object_or_404(InventoryTransfer, id=transfer_id, tenant=tenant)
     if request.method == "POST":
         _post_transfer(transfer, request)
@@ -1511,7 +1545,7 @@ def _post_transfer(transfer: InventoryTransfer, request=None):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_FINANCE])
 def invoice_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     invoices = SupplierInvoice.objects.filter(tenant=tenant).order_by("-created_at")
     return render(request, "finance/invoice_list.html", {"tenant": tenant, "invoices": invoices})
 
@@ -1520,7 +1554,7 @@ def invoice_list(request):
 @role_required([ROLE_ADMIN, ROLE_FINANCE])
 @transaction.atomic
 def invoice_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     inv = SupplierInvoice(tenant=tenant, currency_code=tenant.currency_code)
     if request.method == "POST":
         form = SupplierInvoiceForm(request.POST, request.FILES, instance=inv)
@@ -1556,7 +1590,7 @@ def invoice_create(request):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_FINANCE])
 def invoice_detail(request, invoice_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     inv = get_object_or_404(SupplierInvoice, id=invoice_id, tenant=tenant)
     match = _compute_3way(inv)
     return render(request, "finance/invoice_detail.html", {"tenant": tenant, "invoice": inv, "match": match})
@@ -1589,14 +1623,18 @@ def _run_3way_match(inv: SupplierInvoice, request=None):
             messages.warning(request, "3-way match issues: " + "; ".join(m["discrepancies"][:5]))
 
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE, ROLE_READONLY])
 def return_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     rmas = ReturnAuthorization.objects.filter(tenant=tenant).order_by("-created_at")
     return render(request, "returns/return_list.html", {"tenant": tenant, "rmas": rmas})
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE])
 @transaction.atomic
 def return_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     rma = ReturnAuthorization(tenant=tenant)
 
     if request.method == "POST":
@@ -1625,14 +1663,18 @@ def return_create(request):
         "tenant": tenant, "form": form, "formset": formset, "mode": "create"
     })
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE, ROLE_READONLY])
 def return_detail(request, rma_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     rma = get_object_or_404(ReturnAuthorization, id=rma_id, tenant=tenant)
     return render(request, "returns/return_detail.html", {"tenant": tenant, "rma": rma})
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE])
 @transaction.atomic
 def return_process(request, rma_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     rma = get_object_or_404(ReturnAuthorization, id=rma_id, tenant=tenant)
     if request.method == "POST":
         action = request.POST.get("action")
@@ -1680,13 +1722,13 @@ def _receive_rma(rma: ReturnAuthorization):
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def taxcode_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     codes = TaxCode.objects.filter(tenant=tenant).order_by("code")
     return render(request, "tax/taxcode_list.html", {"tenant": tenant, "codes": codes})
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def taxcode_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = TaxCodeForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -1697,7 +1739,7 @@ def taxcode_create(request):
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def taxcode_edit(request, tax_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(TaxCode, id=tax_id, tenant=tenant)
     form = TaxCodeForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
@@ -1707,7 +1749,7 @@ def taxcode_edit(request, tax_id):
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def taxcode_delete(request, tax_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(TaxCode, id=tax_id, tenant=tenant)
     if request.method == "POST":
         obj.delete()
@@ -1721,13 +1763,13 @@ def taxcode_delete(request, tax_id):
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 def customer_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     customers = Customer.objects.filter(tenant=tenant).order_by("name")
     return render(request, "customers/customer_list.html", {"tenant": tenant, "customers": customers})
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 def customer_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = CustomerForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -1738,7 +1780,7 @@ def customer_create(request):
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 def customer_edit(request, customer_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(Customer, id=customer_id, tenant=tenant)
     form = CustomerForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
@@ -1753,14 +1795,18 @@ def customer_edit(request, customer_id):
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 def ar_invoice_list(request):
-    tenant = _get_default_tenant()
-    invoices = CustomerInvoice.objects.filter(tenant=tenant).order_by("-invoice_date", "-id")
+    tenant = _get_default_tenant(request)
+    invoices = (
+        CustomerInvoice.objects.filter(tenant=tenant)
+        .prefetch_related("lines", "lines__tax_code")
+        .order_by("-invoice_date", "-id")
+    )
     return render(request, "ar/ar_invoice_list.html", {"tenant": tenant, "invoices": invoices})
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 @transaction.atomic
 def ar_invoice_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     inv = CustomerInvoice(tenant=tenant, currency_code=tenant.currency_code)
     if request.method == "POST":
         form = CustomerInvoiceForm(request.POST, instance=inv)
@@ -1785,14 +1831,14 @@ def ar_invoice_create(request):
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 def ar_invoice_detail(request, invoice_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
     return render(request, "ar/ar_invoice_detail.html", {"tenant": tenant, "inv": inv})
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 @transaction.atomic
 def ar_invoice_issue(request, invoice_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
     if request.method == "POST":
         post_customer_invoice(inv, user=request.user)
@@ -1806,13 +1852,13 @@ def ar_invoice_issue(request, invoice_id):
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def gl_account_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     accounts = GLAccount.objects.filter(tenant=tenant).order_by("code")
     return render(request, "gl/gl_account_list.html", {"tenant": tenant, "accounts": accounts})
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def gl_account_create(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     form = GLAccountForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
@@ -1823,7 +1869,7 @@ def gl_account_create(request):
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def gl_account_edit(request, account_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     obj = get_object_or_404(GLAccount, id=account_id, tenant=tenant)
     form = GLAccountForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
@@ -1833,13 +1879,13 @@ def gl_account_edit(request, account_id):
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def journal_list(request):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     entries = JournalEntry.objects.filter(tenant=tenant).order_by("-entry_date", "-id")[:200]
     return render(request, "gl/journal_list.html", {"tenant": tenant, "entries": entries})
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def journal_detail(request, je_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     je = get_object_or_404(JournalEntry, id=je_id, tenant=tenant)
     return render(request, "gl/journal_detail.html", {"tenant": tenant, "je": je})
 
@@ -1851,7 +1897,7 @@ def journal_detail(request, je_id):
 @role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 @transaction.atomic
 def invoice_post(request, invoice_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     inv = get_object_or_404(SupplierInvoice, id=invoice_id, tenant=tenant)
     if request.method == "POST":
         post_supplier_invoice(inv, user=request.user)
@@ -1862,7 +1908,7 @@ def invoice_post(request, invoice_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
 def shipment_new(request, po_id):
-    tenant = _get_default_tenant()
+    tenant = _get_default_tenant(request)
     po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
 
     if po.status == PurchaseOrder.Status.DRAFT:

@@ -65,8 +65,11 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
 
     tenant = inv.tenant
 
-    # total from lines
-    subtotal = sum((l.qty * l.unit_cost for l in inv.lines.all()), Decimal("0.00"))
+    # Net + input VAT from lines
+    lines = list(inv.lines.all())
+    subtotal = sum((l.qty * l.unit_cost for l in lines), Decimal("0.00"))
+    tax = sum((l.tax_amount for l in lines), Decimal("0.00"))
+    total = subtotal + tax
 
     je = JournalEntry.objects.create(
         tenant=tenant,
@@ -80,8 +83,11 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
 
     # DR GRNI (assume inventory already received)
     JournalLine.objects.create(entry=je, account=_acc(tenant, "grni"), description="GRNI", debit=subtotal, credit=Decimal("0.00"))
-    # CR Accounts Payable
-    JournalLine.objects.create(entry=je, account=_acc(tenant, "ap"), description="Accounts Payable", debit=Decimal("0.00"), credit=subtotal)
+    # DR VAT Input (reclaimable)
+    if tax and tax != Decimal("0.00"):
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "vat_input"), description="VAT Input", debit=tax, credit=Decimal("0.00"))
+    # CR Accounts Payable (gross)
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "ap"), description="Accounts Payable", debit=Decimal("0.00"), credit=total)
 
     inv.status = "POSTED"
     inv.save()

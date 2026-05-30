@@ -25,6 +25,18 @@ class Tenant(models.Model):
         return self.name
 
 
+class UserProfile(models.Model):
+    """Binds a Django auth user to the tenant whose data they may access.
+
+    Until full multi-tenancy/onboarding is built, a user without a profile
+    falls back to the first tenant (see views._get_default_tenant)."""
+    user = models.OneToOneField("auth.User", on_delete=models.CASCADE, related_name="profile")
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="members")
+
+    def __str__(self):
+        return f"{self.user} @ {self.tenant}"
+
+
 class Location(models.Model):
     class Type(models.TextChoices):
         WAREHOUSE = "WAREHOUSE", "Warehouse"
@@ -533,6 +545,7 @@ class GoodsReceipt(models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     po = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="receipts")
+    shipment = models.ForeignKey(Shipment, on_delete=models.PROTECT, related_name="receipts", null=True, blank=True)
     grn_number = models.CharField(max_length=50)
     received_at = models.DateTimeField(default=timezone.now)
     received_to = models.ForeignKey(Location, on_delete=models.PROTECT)
@@ -610,9 +623,19 @@ class SupplierInvoiceLine(models.Model):
     receipt_line = models.ForeignKey(GoodsReceiptLine, on_delete=models.PROTECT, null=True, blank=True)
     qty = models.DecimalField(max_digits=12, decimal_places=2)
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    tax_code = models.ForeignKey("TaxCode", on_delete=models.PROTECT, null=True, blank=True)
 
     class Meta:
         unique_together = ("invoice", "product", "po_line", "receipt_line")
+
+    @property
+    def line_total(self):
+        return (self.qty or Decimal("0.00")) * (self.unit_cost or Decimal("0.00"))
+
+    @property
+    def tax_amount(self):
+        rate = self.tax_code.rate if self.tax_code else Decimal("0.00")
+        return self.line_total * rate
 
 
 class ReturnAuthorization(models.Model):
