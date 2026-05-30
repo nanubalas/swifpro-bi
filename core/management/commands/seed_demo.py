@@ -27,7 +27,7 @@ class Command(BaseCommand):
         for role in ALL_ROLES:
             Group.objects.get_or_create(name=role)
 
-        # Tenant — the post_save signal bootstraps VAT codes + GL accounts.
+        # Tenant - the post_save signal bootstraps VAT codes + GL accounts.
         tenant, created = Tenant.objects.get_or_create(
             name="SKUNOW Demo Ltd",
             defaults={
@@ -111,7 +111,7 @@ class Command(BaseCommand):
             ShipmentLine.objects.create(shipment=shipment, po_line=pol2, expected_qty=Decimal("100"))
             self.stdout.write("Created demo PO + inbound shipment.")
 
-        # Sales order (draft) — exercises kit explosion / reservations later
+        # Sales order (draft) - exercises kit explosion / reservations later
         so, so_created = SalesOrder.objects.get_or_create(
             tenant=tenant, channel=SalesChannel.SHOPIFY, order_number="SO-DEMO-0001",
             defaults={"status": SalesOrder.Status.DRAFT, "ship_from_location": wh, "currency_code": "GBP"},
@@ -121,7 +121,7 @@ class Command(BaseCommand):
             SalesOrderLine.objects.create(order=so, product=kit, qty=Decimal("1"), unit_price=Decimal("49.99"))
             self.stdout.write("Created demo sales order.")
 
-        # AR invoice — issue it so it posts a balanced journal to the GL
+        # AR invoice - issue it so it posts a balanced journal to the GL
         std_tax = TaxCode.objects.filter(tenant=tenant, code="STD").first()
         customer = Customer.objects.get(tenant=tenant, name="Bright Retail Ltd")
         inv, inv_created = CustomerInvoice.objects.get_or_create(

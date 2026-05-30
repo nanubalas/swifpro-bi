@@ -64,7 +64,7 @@
               {% if po.expected_date %}
                 {{ po.expected_date|date:"d M Y" }}
               {% else %}
-                <span class="text-muted">—</span>
+                <span class="text-muted">-</span>
               {% endif %}
             </td>
             <td class="text-end text-muted">{{ po.created_at|date:"d M Y" }}</td>

@@ -484,7 +484,7 @@ def shipment_detail(request, shipment_id):
             return redirect("shipment_detail", shipment_id=shipment.id)
 
         if action == "allocate":
-            # Validate first, then persist atomically — so an invalid value
+            # Validate first, then persist atomically - so an invalid value
             # gives a friendly message instead of a 500.
             try:
                 with transaction.atomic():

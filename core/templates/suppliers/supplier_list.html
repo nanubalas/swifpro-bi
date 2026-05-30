@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Suppliers — SKUNOW{% endblock %}
+{% block title %}Suppliers - SKUNOW{% endblock %}
 
 {% block body %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -26,8 +26,8 @@
           {% for s in suppliers %}
           <tr>
             <td class="fw-semibold">{{ s.name }}</td>
-            <td>{% if s.email %}{{ s.email }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if s.phone %}{{ s.phone }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td>{% if s.email %}{{ s.email }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if s.phone %}{{ s.phone }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
             <td class="text-end">
               <div class="btn-group">
                 <a class="btn btn-sm btn-outline-primary" href="/suppliers/{{ s.id }}/edit/">Edit</a>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}BOMs — SKUNOW{% endblock %}
+{% block title %}BOMs - SKUNOW{% endblock %}
 {% block body %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
@@ -24,7 +24,7 @@
         <tbody>
           {% for b in boms %}
           <tr>
-            <td class="fw-semibold">{{ b.product.sku }} — {{ b.product.name }}</td>
+            <td class="fw-semibold">{{ b.product.sku }} - {{ b.product.name }}</td>
             <td>{{ b.name }}</td>
             <td>
               {% if b.is_active %}<span class="badge text-bg-success">Yes</span>{% else %}<span class="badge text-bg-secondary">No</span>{% endif %}
