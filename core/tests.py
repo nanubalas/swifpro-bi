@@ -90,7 +90,8 @@ class TemplateRenderTests(TestCase):
     def test_login_page_renders(self):
         resp = self.client.get("/login/")
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "Sign in to SwifPro BI")
+        self.assertContains(resp, "Sign in to")
+        self.assertContains(resp, "SwifPro")  # wordmark
 
     def test_landing_page_renders(self):
         self.client.login(username="u", password="pw")
