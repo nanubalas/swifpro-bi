@@ -271,15 +271,11 @@
     .quick-link { display: flex; align-items: center; gap: .6rem; padding: .6rem .8rem; border-radius: 10px; text-decoration: none; color: var(--skn-text); border: 1px solid var(--skn-border); transition: all .15s ease; }
     .quick-link:hover { background: var(--skn-brand-soft); color: var(--skn-brand); border-color: transparent; transform: translateY(-1px); }
 
-    /* ---------- Brand wordmark (matches the logo) ---------- */
-    .brand-wordmark {
-      font-family: 'Poppins', 'Inter', sans-serif;
-      font-weight: 800; letter-spacing: -.01em; line-height: 1;
-      -webkit-text-fill-color: initial;  /* override any gradient clip */
-    }
-    .brand-wordmark .wm-name { color: #16284a; }   /* deep navy (SwifPro) */
-    .brand-wordmark .wm-bi   { color: #1fa697; }   /* teal (BI) */
-    [data-bs-theme="dark"] .brand-wordmark .wm-name { color: #eaf0fa; }
+    /* ---------- Brand wordmark (the real logo lettering, incl. the custom f) ---------- */
+    .wm-img { height: 1.05em; width: auto; vertical-align: -0.18em; }
+    .wm-img-light { display: none; }
+    [data-bs-theme="dark"] .wm-img-dark { display: none; }
+    [data-bs-theme="dark"] .wm-img-light { display: inline; }
   </style>
 </head>
 
