@@ -1,189 +1,178 @@
 {% extends "base.html" %}
-{% block title %}SKUNOW - Know your SKU better!{% endblock %}
+{% load money %}
+{% block title %}Dashboard - SKUNOW{% endblock %}
 
 {% block body %}
 <style>
-  .skn-hero {
-    border-radius: 22px;
-    padding: 2.2rem 2.2rem;
-    color: #fff;
-    background:
-      radial-gradient(900px 380px at 110% -40%, rgba(255,255,255,.20), transparent 60%),
-      linear-gradient(120deg, var(--skn-brand), var(--skn-accent));
-    box-shadow: var(--skn-shadow-lg);
-    position: relative; overflow: hidden;
+  .kpi-card { position: relative; overflow: hidden; }
+  .kpi-card .kpi-icon {
+    position: absolute; right: 14px; top: 14px; font-size: 1.6rem;
+    opacity: .18; color: var(--skn-brand);
   }
-  .skn-hero h1 { font-weight: 800; letter-spacing: -.02em; }
-  .skn-hero .eyebrow {
-    text-transform: uppercase; letter-spacing: .18em; font-size: .72rem;
-    font-weight: 700; opacity: .85;
-  }
-  .skn-hero .btn-light { font-weight: 700; }
-  .workflow-card { display: block; height: 100%; text-decoration: none; color: inherit; }
-  .workflow-icon {
-    width: 44px; height: 44px; border-radius: 12px;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 1.25rem; background: var(--skn-brand-soft); color: var(--skn-brand);
-  }
-  .workflow-step { font-size: .72rem; font-weight: 700; letter-spacing: .1em; color: var(--skn-muted); text-transform: uppercase; }
-  .kpi-value { font-size: 2rem; font-weight: 800; letter-spacing: -.02em; }
+  .kpi-label { font-size: .74rem; text-transform: uppercase; letter-spacing: .08em; color: var(--skn-muted); font-weight: 700; }
+  .kpi-value { font-size: 1.6rem; font-weight: 800; letter-spacing: -.02em; }
+  .mini-stat { display: flex; align-items: center; gap: .75rem; }
+  .mini-stat .ico { width: 40px; height: 40px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; background: var(--skn-brand-soft); color: var(--skn-brand); font-size: 1.1rem; }
+  .quick-link { display: flex; align-items: center; gap: .6rem; padding: .6rem .8rem; border-radius: 10px; text-decoration: none; color: var(--skn-text); border: 1px solid var(--skn-border); transition: all .15s ease; }
+  .quick-link:hover { background: var(--skn-brand-soft); color: var(--skn-brand); border-color: transparent; transform: translateY(-1px); }
 </style>
-
-<!-- HERO -->
-<div class="skn-hero mb-4">
-  <div class="row align-items-center g-3">
-    <div class="col-lg-8">
-      <div class="eyebrow mb-2">Stock Knowledge &amp; Unified Network for Operations</div>
-      <h1 class="mb-2">{% if tenant %}Welcome back to {{ tenant.name }}{% else %}Welcome to SKUNOW{% endif %}</h1>
-      <p class="mb-0 opacity-75">Create → Track → Receive → Sell → Reconcile, all in one system of record.</p>
-    </div>
-    <div class="col-lg-4 text-lg-end">
-      <a class="btn btn-light btn-lg" href="/po/new/"><i class="bi bi-plus-lg me-1"></i> Raise Purchase Order</a>
-    </div>
-  </div>
-</div>
 
 {% if needs_setup %}
   <div class="alert alert-warning d-flex align-items-center">
     <i class="bi bi-exclamation-triangle-fill me-2"></i>
-    Your database isn’t set up yet. Run migrations and create a Tenant in Admin.
+    Your database isn't set up yet. Create a Tenant (or run <code>python manage.py seed_demo</code>) to get started.
   </div>
-{% endif %}
+{% else %}
 
-<!-- WORKFLOW TILES -->
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small">{{ tenant.name }}</div>
+    <h2 class="fw-bold mb-0">Dashboard</h2>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/reports/"><i class="bi bi-bar-chart-line me-1"></i> Reports</a>
+    <a class="btn btn-primary" href="/po/new/"><i class="bi bi-plus-lg me-1"></i> New PO</a>
+  </div>
+</div>
+
+<!-- KPI row -->
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg">
-    <a class="tile p-3 h-100 workflow-card" href="/po/new/">
-      <span class="workflow-icon mb-3"><i class="bi bi-plus-square"></i></span>
-      <div class="workflow-step">Step 1</div>
-      <h6 class="fw-semibold mb-1">Create PO</h6>
-      <div class="text-muted small">Raise supplier-ready purchase orders.</div>
-    </a>
+  <div class="col-6 col-xl-3">
+    <div class="card kpi-card p-3 h-100">
+      <i class="bi bi-cash-stack kpi-icon"></i>
+      <div class="kpi-label">Cash at bank</div>
+      <div class="kpi-value">{{ kpis.cash|money:tenant.currency_code }}</div>
+    </div>
   </div>
-  <div class="col-6 col-lg">
-    <a class="tile p-3 h-100 workflow-card" href="/shipments/">
-      <span class="workflow-icon mb-3"><i class="bi bi-truck"></i></span>
-      <div class="workflow-step">Step 2</div>
-      <h6 class="fw-semibold mb-1">Track Inbound</h6>
-      <div class="text-muted small">Monitor supplier shipments to WH / 3PL.</div>
-    </a>
+  <div class="col-6 col-xl-3">
+    <div class="card kpi-card p-3 h-100">
+      <i class="bi bi-boxes kpi-icon"></i>
+      <div class="kpi-label">Inventory value</div>
+      <div class="kpi-value">{{ kpis.inventory_value|money:tenant.currency_code }}</div>
+    </div>
   </div>
-  <div class="col-6 col-lg">
-    <a class="tile p-3 h-100 workflow-card" href="/po/">
-      <span class="workflow-icon mb-3"><i class="bi bi-box-arrow-in-down"></i></span>
-      <div class="workflow-step">Step 3</div>
-      <h6 class="fw-semibold mb-1">Receive Goods</h6>
-      <div class="text-muted small">Post GRN and update inventory balances.</div>
-    </a>
+  <div class="col-6 col-xl-3">
+    <div class="card kpi-card p-3 h-100">
+      <i class="bi bi-arrow-down-left-circle kpi-icon"></i>
+      <div class="kpi-label">Receivables (AR)</div>
+      <div class="kpi-value">{{ kpis.receivables|money:tenant.currency_code }}</div>
+    </div>
   </div>
-  <div class="col-6 col-lg">
-    <a class="tile p-3 h-100 workflow-card" href="/sales-orders/">
-      <span class="workflow-icon mb-3"><i class="bi bi-cart-check"></i></span>
-      <div class="workflow-step">Step 4</div>
-      <h6 class="fw-semibold mb-1">Sell Goods</h6>
-      <div class="text-muted small">Post sales orders to deduct inventory.</div>
-    </a>
-  </div>
-  <div class="col-6 col-lg">
-    <a class="tile p-3 h-100 workflow-card" href="/reconcile/">
-      <span class="workflow-icon mb-3"><i class="bi bi-shuffle"></i></span>
-      <div class="workflow-step">Step 5</div>
-      <h6 class="fw-semibold mb-1">Reconcile</h6>
-      <div class="text-muted small">Compare channel stock and detect drift.</div>
-    </a>
+  <div class="col-6 col-xl-3">
+    <div class="card kpi-card p-3 h-100">
+      <i class="bi bi-arrow-up-right-circle kpi-icon"></i>
+      <div class="kpi-label">Payables (AP)</div>
+      <div class="kpi-value">{{ kpis.payables|money:tenant.currency_code }}</div>
+    </div>
   </div>
 </div>
 
-<!-- MAIN GRID: WORK QUEUE + KPI -->
 <div class="row g-4">
-  <div class="col-lg-7">
-    <div class="tile p-4 h-100">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="fw-semibold mb-0"><i class="bi bi-inboxes me-2 text-primary"></i>Work queue</h5>
-        <a href="/po/" class="small text-decoration-none">View all POs <i class="bi bi-arrow-right"></i></a>
+  <!-- Left column -->
+  <div class="col-lg-8">
+    <!-- P&L snapshot -->
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-graph-up-arrow me-2 text-primary"></i>Profit &amp; Loss</span>
+        <a href="/reports/profit-and-loss/" class="small text-decoration-none">Open <i class="bi bi-arrow-right"></i></a>
       </div>
+      <div class="card-body">
+        <div class="row text-center g-3">
+          <div class="col-4"><div class="kpi-label">Revenue</div><div class="fs-4 fw-bold">{{ kpis.revenue|money:tenant.currency_code }}</div></div>
+          <div class="col-4"><div class="kpi-label">Net profit</div><div class="fs-4 fw-bold {% if kpis.net_profit < 0 %}text-danger{% else %}text-success{% endif %}">{{ kpis.net_profit|money:tenant.currency_code }}</div></div>
+          <div class="col-4"><div class="kpi-label">Stock value</div><div class="fs-4 fw-bold">{{ kpis.inventory_value|money:tenant.currency_code }}</div></div>
+        </div>
+      </div>
+    </div>
 
-      {% if not needs_setup and recent_pos %}
-        <div class="list-group list-group-flush">
-          {% for po in recent_pos %}
-            <div class="list-group-item d-flex justify-content-between align-items-center py-3 px-0 bg-transparent">
-              <div>
-                <div class="fw-semibold">{{ po.po_number }}</div>
-                <div class="text-muted small">{{ po.supplier.name }}</div>
-              </div>
-              <div class="d-flex align-items-center gap-2">
-                <span class="badge text-bg-secondary">{{ po.get_status_display }}</span>
-                <a class="btn btn-sm btn-outline-secondary" href="/po/{{ po.id }}/print/" target="_blank"><i class="bi bi-printer"></i></a>
-                <a class="btn btn-sm btn-outline-primary" href="/po/{{ po.id }}/">Open</a>
-                {% if po.status != "RECEIVED" %}
-                  <a class="btn btn-sm btn-primary" href="/po/{{ po.id }}/receive/">Receive</a>
-                {% endif %}
-              </div>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="text-center text-muted py-5">
-          <i class="bi bi-clipboard-plus fs-1 d-block mb-2 opacity-50"></i>
-          No POs yet. Create your first PO to start the workflow.
-        </div>
-      {% endif %}
+    <!-- Operations mini-stats -->
+    <div class="row g-3 mb-4">
+      <div class="col-sm-6 col-xl-3"><div class="card p-3 mini-stat"><span class="ico"><i class="bi bi-file-earmark-text"></i></span><div><div class="fs-5 fw-bold">{{ counts.open_pos }}</div><div class="text-muted small">Open POs</div></div></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="card p-3 mini-stat"><span class="ico"><i class="bi bi-truck"></i></span><div><div class="fs-5 fw-bold">{{ counts.in_transit }}</div><div class="text-muted small">In transit</div></div></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="card p-3 mini-stat"><span class="ico"><i class="bi bi-cart-check"></i></span><div><div class="fs-5 fw-bold">{{ counts.sales_orders }}</div><div class="text-muted small">Sales orders</div></div></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="card p-3 mini-stat"><span class="ico"><i class="bi bi-box-seam"></i></span><div><div class="fs-5 fw-bold">{{ counts.products }}</div><div class="text-muted small">Products</div></div></div></div>
+    </div>
+
+    <!-- Recent POs -->
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-inboxes me-2 text-primary"></i>Recent purchase orders</span>
+        <a href="/po/" class="small text-decoration-none">View all <i class="bi bi-arrow-right"></i></a>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover align-middle mb-0">
+          <tbody>
+            {% for po in recent_pos %}
+            <tr>
+              <td class="ps-3"><a href="/po/{{ po.id }}/" class="fw-semibold text-decoration-none">{{ po.po_number }}</a></td>
+              <td class="text-muted">{{ po.supplier.name }}</td>
+              <td><span class="badge text-bg-secondary">{{ po.get_status_display }}</span></td>
+              <td class="text-end pe-3 text-muted small">{{ po.created_at|date:'d M Y' }}</td>
+            </tr>
+            {% empty %}
+            <tr><td class="text-center text-muted py-4">No purchase orders yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <div class="col-lg-5">
-    <div class="tile p-4 mb-3">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="fw-semibold mb-0"><i class="bi bi-speedometer2 me-2 text-primary"></i>At a glance</h5>
-        <span class="pill">{% if needs_setup %}Setup{% else %}Live{% endif %}</span>
-      </div>
-      <div class="row g-3">
-        <div class="col-6">
-          <div class="card stat-card p-3 h-100">
-            <div class="text-muted small mb-1">Total POs</div>
-            <div class="kpi-value">{{ kpis.po_count|default:0 }}</div>
-          </div>
-        </div>
-        <div class="col-6">
-          <div class="card stat-card p-3 h-100">
-            <div class="text-muted small mb-1">Inventory Lines</div>
-            <div class="kpi-value">{{ kpis.inventory_lines|default:0 }}</div>
-          </div>
-        </div>
+  <!-- Right column -->
+  <div class="col-lg-4">
+    <!-- Action required -->
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-bell me-2 text-primary"></i>Action required</div>
+      <div class="card-body">
+        {% for a in alerts %}
+          <a href="{{ a.url }}" class="d-flex align-items-center gap-2 text-decoration-none text-reset mb-2">
+            <span class="badge text-bg-{{ a.level }}"><i class="bi bi-{{ a.icon }}"></i></span>
+            <span class="small">{{ a.text }}</span>
+          </a>
+        {% empty %}
+          <div class="text-muted small d-flex align-items-center"><i class="bi bi-check-circle text-success me-2"></i>All clear - nothing needs attention.</div>
+        {% endfor %}
       </div>
     </div>
 
-    <div class="tile p-4">
-      <h6 class="fw-semibold mb-3"><i class="bi bi-lightning-charge me-2 text-primary"></i>Quick actions</h6>
-      <div class="d-grid gap-2">
-        <a class="btn btn-outline-primary" href="/po/new/"><i class="bi bi-plus-square me-1"></i> Raise Purchase Order</a>
-        <a class="btn btn-outline-secondary" href="/inventory/"><i class="bi bi-boxes me-1"></i> View Inventory</a>
-        <a class="btn btn-outline-secondary" href="/reconcile/"><i class="bi bi-shuffle me-1"></i> Reconcile Channels</a>
+    <!-- Quick actions -->
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-lightning-charge me-2 text-primary"></i>Quick actions</div>
+      <div class="card-body d-grid gap-2">
+        <a class="quick-link" href="/po/new/"><i class="bi bi-plus-square"></i> Raise purchase order</a>
+        <a class="quick-link" href="/sales-orders/new/"><i class="bi bi-cart-plus"></i> New sales order</a>
+        <a class="quick-link" href="/payments/receipts/new/"><i class="bi bi-cash-coin"></i> Record receipt</a>
+        <a class="quick-link" href="/ar/invoices/new/"><i class="bi bi-receipt"></i> New customer invoice</a>
+        <a class="quick-link" href="/vat/"><i class="bi bi-file-earmark-spreadsheet"></i> VAT return</a>
+      </div>
+    </div>
+
+    <!-- Recent payments -->
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-cash-stack me-2 text-primary"></i>Recent payments</span>
+        <a href="/payments/" class="small text-decoration-none">All</a>
+      </div>
+      <div class="card-body p-0">
+        <table class="table align-middle mb-0">
+          <tbody>
+            {% for p in recent_payments %}
+            <tr>
+              <td class="ps-3">
+                {% if p.direction == 'RECEIPT' %}<i class="bi bi-arrow-down-left text-success"></i>{% else %}<i class="bi bi-arrow-up-right text-warning"></i>{% endif %}
+                <a href="/payments/{{ p.id }}/" class="text-decoration-none">{{ p.party_name }}</a>
+              </td>
+              <td class="text-end pe-3 fw-semibold">{{ p.amount|money:tenant.currency_code }}</td>
+            </tr>
+            {% empty %}
+            <tr><td class="text-center text-muted py-4">No payments yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
 </div>
-
-<!-- ABOUT -->
-<div class="tile p-4 mt-4">
-  <div class="d-flex justify-content-between align-items-center">
-    <h5 class="fw-semibold mb-0"><i class="bi bi-info-circle me-2 text-primary"></i>About SKUNOW</h5>
-    <button class="btn btn-sm btn-outline-secondary" type="button"
-            data-bs-toggle="collapse" data-bs-target="#aboutSkunow">
-      Toggle
-    </button>
-  </div>
-  <div id="aboutSkunow" class="collapse show mt-3">
-    <p class="text-muted mb-3">
-      SKUNOW is an inventory intelligence platform built for startups, SMEs, and growing eCommerce brands.
-      It centralizes purchasing, stock control, and channel reconciliation into a single system of record - eliminating spreadsheet chaos and fragmented tools.
-    </p>
-    <p class="text-muted mb-3">
-      Raise and manage purchase orders with full lifecycle tracking, monitor shipments from suppliers to warehouses or 3PLs, and receive stock with complete audit trails - all while maintaining accurate multi-location inventory balances.
-    </p>
-    <p class="text-muted mb-0">
-      Sync and reconcile inventory with Amazon and Shopify, detect stock drift early, and prevent costly stockouts or overselling before they impact operations.
-    </p>
-  </div>
-</div>
+{% endif %}
 {% endblock %}

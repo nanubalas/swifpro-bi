@@ -97,7 +97,8 @@ class TemplateRenderTests(TestCase):
         resp = self.client.get("/")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "SKUNOW")
-        self.assertContains(resp, "Work queue")
+        self.assertContains(resp, "Dashboard")
+        self.assertContains(resp, "Action required")
 
     def test_po_list_renders(self):
         self.user.groups.add(Group.objects.get_or_create(name="Admin")[0])

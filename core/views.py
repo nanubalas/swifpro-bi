@@ -258,17 +258,63 @@ def landing(request):
             "needs_setup": True,
         })
 
+    today = timezone.localdate()
+
+    # ----- Financial KPIs (from the GL + reports services) -----
+    balances = reports_service.account_balances(tenant)
+    by_code = {acc.code: vals["balance"] for acc, vals in balances.items()}
+    cash = by_code.get("1050", Decimal("0.00"))
+    pnl = reports_service.profit_and_loss(tenant)
+    ar_total = reports_service.aged_receivables(tenant)["total"]
+    ap_total = reports_service.aged_payables(tenant)["total"]
+    stock_value = reports_service.stock_valuation(tenant)["total"]
+
     kpis = {
-        "po_count": PurchaseOrder.objects.filter(tenant=tenant).count(),
-        "inventory_lines": InventoryBalance.objects.filter(tenant=tenant).count(),
+        "cash": cash,
+        "inventory_value": stock_value,
+        "receivables": ar_total,
+        "payables": ap_total,
+        "net_profit": pnl["net_profit"],
+        "revenue": pnl["income_total"],
     }
-    recent_pos = PurchaseOrder.objects.filter(tenant=tenant).order_by("-created_at")[:5]
+
+    # ----- Operational counts -----
+    open_po_statuses = [
+        PurchaseOrder.Status.SUBMITTED, PurchaseOrder.Status.APPROVAL_PENDING,
+        PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.SENT,
+        PurchaseOrder.Status.IN_TRANSIT, PurchaseOrder.Status.PARTIALLY_RECEIVED,
+    ]
+    counts = {
+        "open_pos": PurchaseOrder.objects.filter(tenant=tenant, status__in=open_po_statuses).count(),
+        "in_transit": Shipment.objects.filter(tenant=tenant, status__in=[Shipment.Status.IN_TRANSIT, Shipment.Status.PICKED_UP]).count(),
+        "sales_orders": SalesOrder.objects.filter(tenant=tenant).count(),
+        "products": Product.objects.filter(tenant=tenant).count(),
+    }
+
+    # ----- Action-required alerts -----
+    awaiting_approval = PurchaseOrder.objects.filter(tenant=tenant, status=PurchaseOrder.Status.APPROVAL_PENDING).count()
+    overdue_invoices = CustomerInvoice.objects.filter(tenant=tenant, status=CustomerInvoice.Status.ISSUED, due_date__lt=today).count()
+    out_of_stock = InventoryBalance.objects.filter(tenant=tenant, on_hand__lte=Decimal("0.00")).count()
+    alerts = []
+    if awaiting_approval:
+        alerts.append({"icon": "patch-question", "level": "warning", "text": f"{awaiting_approval} purchase order(s) awaiting approval", "url": "/po/"})
+    if overdue_invoices:
+        alerts.append({"icon": "exclamation-octagon", "level": "danger", "text": f"{overdue_invoices} overdue customer invoice(s)", "url": "/reports/aged-receivables/"})
+    if out_of_stock:
+        alerts.append({"icon": "box", "level": "secondary", "text": f"{out_of_stock} stock line(s) at or below zero", "url": "/inventory/"})
+
+    # ----- Recent activity -----
+    recent_pos = PurchaseOrder.objects.filter(tenant=tenant).select_related("supplier").order_by("-created_at")[:6]
+    recent_payments = Payment.objects.filter(tenant=tenant).select_related("customer", "supplier").order_by("-created_at")[:6]
 
     return render(request, "landing.html", {
         "tenant": tenant,
         "needs_setup": False,
         "kpis": kpis,
-        "recent_pos": recent_pos
+        "counts": counts,
+        "alerts": alerts,
+        "recent_pos": recent_pos,
+        "recent_payments": recent_payments,
     })
 
 
