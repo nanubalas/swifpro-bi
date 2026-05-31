@@ -11,11 +11,12 @@ from core.models import (
     BillOfMaterials, BillOfMaterialsLine, PurchaseOrder, PurchaseOrderLine,
     Shipment, ShipmentLine, InventoryMovement, Customer, CustomerInvoice,
     CustomerInvoiceLine, TaxCode, SalesOrder, SalesOrderLine, ChannelConnection,
-    SalesChannel, SyncRun,
+    SalesChannel, SyncRun, Payment, PaymentAllocation,
 )
 from core.services.inventory import apply_movement
-from core.services.gl import post_customer_invoice
+from core.services.gl import post_customer_invoice, post_inventory_receipt, post_payment
 from core.services.sync_shopify import sync_shopify_for_tenant
+from core.views import _post_sales_order
 
 
 class Command(BaseCommand):
@@ -79,6 +80,7 @@ class Command(BaseCommand):
 
         # Seed inventory once (guard so re-running doesn't double balances)
         if not InventoryMovement.objects.filter(tenant=tenant, ref_type="SEED").exists():
+            opening_value = Decimal("0.00")
             for product, qty in [(p1, "120"), (p2, "80"), (p3, "200")]:
                 apply_movement(
                     tenant=tenant, product=product, location=wh,
@@ -87,7 +89,10 @@ class Command(BaseCommand):
                     notes="Opening balance (demo seed)",
                     unit_cost=product.standard_cost,  # sets moving-average cost
                 )
-            self.stdout.write("Seeded opening inventory balances.")
+                opening_value += Decimal(qty) * product.standard_cost
+            # Capitalize opening stock to the GL so the Balance Sheet shows it.
+            post_inventory_receipt(tenant, opening_value, "OPENING")
+            self.stdout.write("Seeded opening inventory balances (capitalized to GL).")
 
         # Customer
         Customer.objects.get_or_create(
@@ -120,7 +125,9 @@ class Command(BaseCommand):
         if so_created:
             SalesOrderLine.objects.create(order=so, product=p1, qty=Decimal("3"), unit_price=Decimal("24.99"))
             SalesOrderLine.objects.create(order=so, product=kit, qty=Decimal("1"), unit_price=Decimal("49.99"))
-            self.stdout.write("Created demo sales order.")
+            # Post it so inventory is deducted and COGS is expensed to the GL.
+            _post_sales_order(so)
+            self.stdout.write("Created + posted demo sales order (COGS expensed).")
 
         # AR invoice - issue it so it posts a balanced journal to the GL
         std_tax = TaxCode.objects.filter(tenant=tenant, code="STD").first()
@@ -136,6 +143,17 @@ class Command(BaseCommand):
             post_customer_invoice(inv, user=admin)
             self.stdout.write("Created + issued demo AR invoice (posted to GL).")
 
+        # A part-payment receipt against that invoice (populates payments + bank rec)
+        if not Payment.objects.filter(tenant=tenant).exists():
+            receipt = Payment.objects.create(
+                tenant=tenant, direction=Payment.Direction.RECEIPT, customer=customer,
+                amount=Decimal("300.00"), method=Payment.Method.BANK, reference="FPS-DEMO-1",
+                currency_code="GBP",
+            )
+            PaymentAllocation.objects.create(payment=receipt, customer_invoice=inv, amount=Decimal("300.00"))
+            post_payment(receipt, user=admin)
+            self.stdout.write("Recorded a demo customer receipt (part payment).")
+
         # Shopify channel + a sync run (populates snapshot + sales movements)
         ChannelConnection.objects.get_or_create(
             tenant=tenant, channel=SalesChannel.SHOPIFY, name="default",
@@ -144,5 +162,12 @@ class Command(BaseCommand):
         if not SyncRun.objects.filter(tenant=tenant).exists():
             detail = sync_shopify_for_tenant(tenant)
             self.stdout.write(f"Ran Shopify sync: {detail}")
+
+        # Save a draft VAT return for the current quarter (populates the VAT page).
+        from core.services.vat import save_vat_return
+        today = timezone.now().date()
+        period_from = today.replace(day=1) - timezone.timedelta(days=62)
+        save_vat_return(tenant, period_from.replace(day=1), today)
+        self.stdout.write("Saved a draft VAT return.")
 
         self.stdout.write(self.style.SUCCESS("Demo data ready. Open http://127.0.0.1:8000/"))

@@ -1,0 +1,9 @@
+# Normalize line endings: keep LF in the repo, check out native on Windows.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.sqlite3 binary
