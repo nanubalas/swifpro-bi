@@ -21,7 +21,6 @@ from core.models import (
 )
 from django.core.exceptions import PermissionDenied
 from core import roles as roles_mod
-from core import dashboards as dash
 from core.access import (
     get_active_role, get_memberships, default_landing_url, SESSION_TENANT_KEY,
 )
@@ -281,12 +280,21 @@ def select_org(request):
 
 
 def _render_dashboard(request, role_code):
+    """Role-based home: a clean navigation launcher of the modules/reports the
+    role can access (no business data/KPIs/charts at this stage)."""
     tenant = _get_default_tenant(request)
     if not tenant:
         return render(request, "landing.html", {"tenant": None, "needs_setup": True})
-    ctx = dash.BUILDERS[role_code](tenant, request)
-    ctx.update({"tenant": tenant, "role_code": role_code})
-    return render(request, "dashboards/generic.html", ctx)
+    # Cards come straight from the role's accessible navigation (single source
+    # of truth for per-role access); skip the self-referential Dashboard entry.
+    sections = [(t, items) for (t, items) in roles_mod.sidebar_for_role(role_code) if t != "Dashboard"]
+    return render(request, "dashboards/home.html", {
+        "tenant": tenant,
+        "role_code": role_code,
+        "role_label": roles_mod.ROLE_LABELS.get(role_code, role_code),
+        "title": roles_mod.DASHBOARD_TITLE.get(role_code, "Dashboard"),
+        "sections": sections,
+    })
 
 
 def _make_dashboard(role_code):
