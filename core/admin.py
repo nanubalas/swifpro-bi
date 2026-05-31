@@ -1,5 +1,8 @@
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.contrib.auth.models import User
 from core.models import (
+    UserProfile,
     Tenant, Location, Supplier, Product,
     PurchaseOrder, PurchaseOrderLine,
     Shipment, ShipmentEvent,
@@ -9,6 +12,20 @@ from core.models import (
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
     GLAccount, JournalEntry, JournalLine
 )
+
+class UserProfileInline(admin.StackedInline):
+    model = UserProfile
+    can_delete = False
+    extra = 0
+
+
+class UserAdmin(DjangoUserAdmin):
+    inlines = [UserProfileInline]
+
+
+admin.site.unregister(User)
+admin.site.register(User, UserAdmin)
+admin.site.register(UserProfile)
 
 admin.site.register(Tenant)
 admin.site.register(Location)

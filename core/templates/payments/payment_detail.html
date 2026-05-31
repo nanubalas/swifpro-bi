@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Payment - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex align-items-center gap-2 mb-3">
+  <a href="{% url 'payment_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+  <h2 class="fw-bold mb-0">{{ payment.get_direction_display }}</h2>
+  <span class="badge text-bg-secondary">{{ payment.get_status_display }}</span>
+  {% if payment.is_reconciled %}<span class="badge text-bg-info">Cleared</span>{% endif %}
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="tile p-4">
+      <div class="d-flex justify-content-between mb-2"><span class="text-muted">Party</span><span class="fw-semibold">{{ payment.party_name }}</span></div>
+      <div class="d-flex justify-content-between mb-2"><span class="text-muted">Date</span><span>{{ payment.payment_date|date:'d M Y' }}</span></div>
+      <div class="d-flex justify-content-between mb-2"><span class="text-muted">Method</span><span>{{ payment.get_method_display }}</span></div>
+      <div class="d-flex justify-content-between mb-2"><span class="text-muted">Reference</span><span>{{ payment.reference|default:'-' }}</span></div>
+      <hr>
+      <div class="d-flex justify-content-between"><span class="text-muted">Amount</span><span class="fs-5 fw-bold">{{ payment.amount|money:tenant.currency_code }}</span></div>
+      <div class="d-flex justify-content-between"><span class="text-muted">Allocated</span><span>{{ payment.allocated|money:tenant.currency_code }}</span></div>
+      <div class="d-flex justify-content-between"><span class="text-muted">Unallocated</span><span>{{ payment.unallocated|money:tenant.currency_code }}</span></div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header">Allocations</div>
+      <div class="card-body">
+        <table class="table align-middle mb-0">
+          <thead class="table-light"><tr><th>Invoice</th><th class="text-end">Applied</th></tr></thead>
+          <tbody>
+            {% for a in allocations %}
+            <tr>
+              <td>{% if a.customer_invoice %}{{ a.customer_invoice.invoice_number }}{% else %}{{ a.supplier_invoice.invoice_number }}{% endif %}</td>
+              <td class="text-end">{{ a.amount|money:tenant.currency_code }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="2" class="text-muted">No invoices were open to allocate against (recorded as unallocated).</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

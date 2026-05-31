@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Payments - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">Payments</h2>
+    <div class="text-muted">Customer receipts and supplier payments.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="{% url 'bank_reconciliation' %}"><i class="bi bi-check2-square me-1"></i> Bank Reconcile</a>
+    <a class="btn btn-outline-secondary" href="{% url 'supplier_payment_create' %}"><i class="bi bi-arrow-up-right me-1"></i> Pay Supplier</a>
+    <a class="btn btn-primary" href="{% url 'receipt_create' %}"><i class="bi bi-arrow-down-left me-1"></i> Record Receipt</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>Date</th><th>Direction</th><th>Party</th><th>Reference</th><th>Method</th><th class="text-end">Amount</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for p in payments %}
+          <tr>
+            <td class="text-muted">{{ p.payment_date|date:'d M Y' }}</td>
+            <td>
+              {% if p.direction == 'RECEIPT' %}
+                <span class="badge text-bg-success"><i class="bi bi-arrow-down-left me-1"></i>Receipt</span>
+              {% else %}
+                <span class="badge text-bg-warning"><i class="bi bi-arrow-up-right me-1"></i>Payment</span>
+              {% endif %}
+            </td>
+            <td class="fw-semibold"><a href="{% url 'payment_detail' p.id %}" class="text-decoration-none">{{ p.party_name }}</a></td>
+            <td>{{ p.reference|default:'-' }}</td>
+            <td>{{ p.get_method_display }}</td>
+            <td class="text-end fw-semibold">{{ p.amount|money:tenant.currency_code }}</td>
+            <td>
+              <span class="badge text-bg-secondary">{{ p.get_status_display }}</span>
+              {% if p.is_reconciled %}<span class="badge text-bg-info">Cleared</span>{% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-5">No payments recorded yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

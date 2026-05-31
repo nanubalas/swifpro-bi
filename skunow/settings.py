@@ -3,9 +3,28 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-secret-key-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = ["*"]
+
+# In production (DEBUG off) a real secret key MUST be supplied via the
+# environment; we never silently ship the dev key to production.
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "")
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "dev-secret-key-change-me"
+    else:
+        raise RuntimeError("DJANGO_SECRET_KEY must be set when DEBUG is off.")
+
+# Comma-separated hostnames, e.g. "erp.example.co.uk,www.example.co.uk".
+# Defaults to localhost-only; "*" is only used as a dev convenience.
+_allowed = os.environ.get("DJANGO_ALLOWED_HOSTS", "")
+if _allowed:
+    ALLOWED_HOSTS = [h.strip() for h in _allowed.split(",") if h.strip()]
+else:
+    ALLOWED_HOSTS = ["*"] if DEBUG else ["localhost", "127.0.0.1"]
+
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -23,6 +42,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.CurrentTenantMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -68,7 +88,24 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Serve collected static files via WhiteNoise in production. Wired only when
+# the package is installed so local dev (which may not have it) still runs.
+try:
+    import whitenoise  # noqa: F401
+    _HAS_WHITENOISE = True
+except ImportError:
+    _HAS_WHITENOISE = False
+
+if _HAS_WHITENOISE:
+    # Insert right after SecurityMiddleware.
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
+    STORAGES = {
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+    }
 
 
 # Auth
@@ -81,8 +118,21 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 
+# Production hardening: only enforced when DEBUG is off so local dev over
+# http keeps working.
+if not DEBUG:
+    SECURE_SSL_REDIRECT = os.environ.get("DJANGO_SECURE_SSL_REDIRECT", "1") == "1"
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = "DENY"
+
+
 # Email (SMTP) for sending supplier POs
-import os
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.getenv('EMAIL_HOST', '')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))

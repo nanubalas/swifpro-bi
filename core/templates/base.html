@@ -1,199 +1,463 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-bs-theme="light">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}SKUNOW{% endblock %}</title>
 
-  <!-- Bootstrap CDN -->
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Bootstrap + Icons -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+
+  <!-- Avoid theme flash: apply saved theme before paint -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("skunow-theme");
+        if (t) document.documentElement.setAttribute("data-bs-theme", t);
+      } catch (e) {}
+    })();
+  </script>
 
   <style>
-    .app-shell { min-height: 100vh; background: #f7f7fb; }
-    .card-soft { border: 0; box-shadow: 0 6px 20px rgba(0,0,0,.06); border-radius: 16px; }
-    .pill { padding: 4px 10px; border-radius: 999px; background: #eee; display: inline-block; font-size: .85rem; }
-    .nav-section-title { letter-spacing: .08em; }
-    .offcanvas .list-group-item { border: 0; border-radius: 10px; margin-bottom: 4px; }
-    .offcanvas .list-group-item.active { background: rgba(13,110,253,.12); color: #0d6efd; font-weight: 600; }
+    /* ============================================================
+       SKUNOW design tokens - calm, professional, easy on the eyes
+       ============================================================ */
+    :root {
+      --skn-brand: #4f46e5;          /* indigo 600 */
+      --skn-brand-strong: #4338ca;   /* indigo 700 */
+      --skn-brand-soft: #eef2ff;     /* indigo 50  */
+      --skn-accent: #7c6cf0;
+      --skn-brand-rgb: 79, 70, 229;
+
+      --skn-bg: #f4f6fb;
+      --skn-surface: #ffffff;
+      --skn-surface-2: #f8fafc;
+      --skn-border: #e6eaf1;
+      --skn-text: #1f2a37;
+      --skn-muted: #6b7280;
+
+      --skn-radius: 14px;
+      --skn-radius-sm: 10px;
+      --skn-shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+      --skn-shadow: 0 4px 6px -2px rgba(16,24,40,.04), 0 12px 28px -6px rgba(16,24,40,.10);
+      --skn-shadow-lg: 0 18px 48px -12px rgba(16,24,40,.22);
+
+      /* Map Bootstrap globals onto our palette */
+      --bs-body-bg: var(--skn-bg);
+      --bs-body-color: var(--skn-text);
+      --bs-body-font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --bs-primary: var(--skn-brand);
+      --bs-primary-rgb: var(--skn-brand-rgb);
+      --bs-link-color: var(--skn-brand);
+      --bs-link-hover-color: var(--skn-brand-strong);
+      --bs-border-color: var(--skn-border);
+      --bs-border-radius: var(--skn-radius-sm);
+    }
+
+    [data-bs-theme="dark"] {
+      --skn-brand: #818cf8;
+      --skn-brand-strong: #6366f1;
+      --skn-brand-soft: #1e2236;
+      --skn-accent: #a78bfa;
+      --skn-brand-rgb: 129, 140, 248;
+
+      --skn-bg: #0e1320;
+      --skn-surface: #161d2e;
+      --skn-surface-2: #1b2438;
+      --skn-border: #273249;
+      --skn-text: #e5e9f2;
+      --skn-muted: #94a3b8;
+
+      --skn-shadow-sm: 0 1px 2px rgba(0,0,0,.30);
+      --skn-shadow: 0 10px 28px -8px rgba(0,0,0,.55);
+      --skn-shadow-lg: 0 22px 50px -14px rgba(0,0,0,.70);
+
+      --bs-body-bg: var(--skn-bg);
+      --bs-body-color: var(--skn-text);
+      --bs-border-color: var(--skn-border);
+      --bs-emphasis-color: #f8fafc;
+      --bs-secondary-color: var(--skn-muted);
+      --bs-tertiary-bg: var(--skn-surface-2);
+    }
+
+    body {
+      background:
+        radial-gradient(1200px 600px at 100% -10%, rgba(var(--skn-brand-rgb), .07), transparent 60%),
+        radial-gradient(1000px 500px at -10% 0%, rgba(124,108,240,.06), transparent 55%),
+        var(--skn-bg);
+      background-attachment: fixed;
+      color: var(--skn-text);
+      letter-spacing: .1px;
+    }
+    .text-muted, .muted { color: var(--skn-muted) !important; }
+
+    /* ---------- Navbar ---------- */
+    .skn-navbar {
+      background: color-mix(in srgb, var(--skn-surface) 86%, transparent);
+      backdrop-filter: saturate(180%) blur(12px);
+      border-bottom: 1px solid var(--skn-border);
+    }
+    .skn-brand {
+      font-weight: 800;
+      font-size: 1.2rem;
+      letter-spacing: -.02em;
+      background: linear-gradient(100deg, var(--skn-brand), var(--skn-accent));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .skn-iconbtn {
+      width: 40px; height: 40px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 10px;
+      border: 1px solid var(--skn-border);
+      background: var(--skn-surface);
+      color: var(--skn-text);
+      transition: all .18s ease;
+    }
+    .skn-iconbtn:hover { background: var(--skn-brand-soft); color: var(--skn-brand); border-color: transparent; transform: translateY(-1px); }
+    .skn-userchip {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .3rem .7rem; border-radius: 999px;
+      background: var(--skn-surface-2); border: 1px solid var(--skn-border);
+      font-size: .85rem; color: var(--skn-muted);
+    }
+    .skn-avatar {
+      width: 26px; height: 26px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: .72rem; font-weight: 700; color: #fff;
+      background: linear-gradient(135deg, var(--skn-brand), var(--skn-accent));
+    }
+
+    /* ---------- Cards / tiles ---------- */
+    .card, .card-soft, .tile {
+      background: var(--skn-surface);
+      border: 1px solid var(--skn-border);
+      border-radius: var(--skn-radius);
+      box-shadow: var(--skn-shadow-sm);
+      transition: box-shadow .22s ease, transform .22s ease, border-color .22s ease;
+    }
+    .card-soft, .tile { box-shadow: var(--skn-shadow); }
+    .tile:hover, .card-soft:hover, .hover-lift:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--skn-shadow-lg);
+      border-color: color-mix(in srgb, var(--skn-brand) 30%, var(--skn-border));
+    }
+    .card-header { background: transparent; border-bottom: 1px solid var(--skn-border); font-weight: 600; }
+
+    /* Subtle stat card accent strip */
+    .stat-card { position: relative; overflow: hidden; }
+    .stat-card::before {
+      content: ""; position: absolute; inset: 0 auto 0 0; width: 4px;
+      background: linear-gradient(180deg, var(--skn-brand), var(--skn-accent));
+    }
+
+    /* ---------- Buttons ---------- */
+    .btn { border-radius: var(--skn-radius-sm); font-weight: 600; transition: all .16s ease; }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary {
+      --bs-btn-bg: var(--skn-brand); --bs-btn-border-color: var(--skn-brand);
+      --bs-btn-hover-bg: var(--skn-brand-strong); --bs-btn-hover-border-color: var(--skn-brand-strong);
+      --bs-btn-active-bg: var(--skn-brand-strong); --bs-btn-active-border-color: var(--skn-brand-strong);
+      --bs-btn-disabled-bg: var(--skn-brand); --bs-btn-disabled-border-color: var(--skn-brand);
+      box-shadow: 0 6px 16px -6px rgba(var(--skn-brand-rgb), .65);
+    }
+    .btn-primary:hover { box-shadow: 0 10px 22px -6px rgba(var(--skn-brand-rgb), .75); transform: translateY(-1px); }
+    .btn-outline-primary {
+      --bs-btn-color: var(--skn-brand); --bs-btn-border-color: color-mix(in srgb, var(--skn-brand) 45%, var(--skn-border));
+      --bs-btn-hover-bg: var(--skn-brand); --bs-btn-hover-border-color: var(--skn-brand);
+      --bs-btn-active-bg: var(--skn-brand-strong); --bs-btn-active-border-color: var(--skn-brand-strong);
+    }
+    .btn-outline-secondary, .btn-outline-dark {
+      --bs-btn-color: var(--skn-text);
+      --bs-btn-border-color: var(--skn-border);
+      --bs-btn-hover-bg: var(--skn-surface-2); --bs-btn-hover-color: var(--skn-text);
+      --bs-btn-hover-border-color: color-mix(in srgb, var(--skn-brand) 35%, var(--skn-border));
+    }
+
+    /* ---------- Forms ---------- */
+    .form-control, .form-select {
+      background: var(--skn-surface);
+      border: 1px solid var(--skn-border);
+      border-radius: var(--skn-radius-sm);
+      color: var(--skn-text);
+      padding: .58rem .8rem;
+      transition: border-color .16s ease, box-shadow .16s ease;
+    }
+    .form-control:focus, .form-select:focus {
+      border-color: var(--skn-brand);
+      box-shadow: 0 0 0 .22rem rgba(var(--skn-brand-rgb), .18);
+    }
+    .input-group-text { background: var(--skn-surface-2); border-color: var(--skn-border); color: var(--skn-muted); }
+    .form-label { font-weight: 600; font-size: .88rem; color: var(--skn-text); }
+
+    /* ---------- Tables ---------- */
+    .table { --bs-table-bg: transparent; color: var(--skn-text); }
+    .table > thead th {
+      text-transform: uppercase; letter-spacing: .06em; font-size: .72rem;
+      color: var(--skn-muted); font-weight: 700; border-bottom: 1px solid var(--skn-border);
+      background: var(--skn-surface-2);
+    }
+    .table-light, .table thead.table-light th { background: var(--skn-surface-2) !important; color: var(--skn-muted); }
+    .table > tbody > tr { transition: background .15s ease; }
+    .table-hover > tbody > tr:hover > * { background: var(--skn-brand-soft); }
+    .table > :not(caption) > * > * { border-bottom-color: var(--skn-border); }
+
+    /* ---------- Badges (soft, tinted) ---------- */
+    .badge { font-weight: 600; padding: .4em .7em; border-radius: 999px; letter-spacing: .02em; }
+    .text-bg-secondary { background: #eef1f6 !important; color: #54607a !important; }
+    .text-bg-primary   { background: var(--skn-brand-soft) !important; color: var(--skn-brand) !important; }
+    .text-bg-info      { background: #e0f2fe !important; color: #0369a1 !important; }
+    .text-bg-warning   { background: #fef3c7 !important; color: #b45309 !important; }
+    .text-bg-success   { background: #dcfce7 !important; color: #15803d !important; }
+    .text-bg-danger    { background: #fee2e2 !important; color: #b91c1c !important; }
+    .text-bg-dark      { background: #e5e9f2 !important; color: #334155 !important; }
+    [data-bs-theme="dark"] .text-bg-secondary { background: #232c40 !important; color: #aab4cb !important; }
+    [data-bs-theme="dark"] .text-bg-info      { background: #0b2c3f !important; color: #7dd3fc !important; }
+    [data-bs-theme="dark"] .text-bg-warning   { background: #3a2c0b !important; color: #fcd34d !important; }
+    [data-bs-theme="dark"] .text-bg-success   { background: #0e2f1c !important; color: #6ee7a8 !important; }
+    [data-bs-theme="dark"] .text-bg-danger    { background: #3a1414 !important; color: #fca5a5 !important; }
+    [data-bs-theme="dark"] .text-bg-dark      { background: #232c40 !important; color: #cbd5e1 !important; }
+
+    .pill {
+      padding: 4px 12px; border-radius: 999px; background: var(--skn-brand-soft);
+      color: var(--skn-brand); display: inline-block; font-size: .82rem; font-weight: 600;
+    }
+
+    /* ---------- Alerts ---------- */
+    .alert { border: 1px solid var(--skn-border); border-radius: var(--skn-radius); box-shadow: var(--skn-shadow-sm); }
+
+    /* ---------- Offcanvas sidebar ---------- */
+    .offcanvas { background: var(--skn-surface); border-right: 1px solid var(--skn-border); width: 290px; }
+    .offcanvas-header { border-bottom: 1px solid var(--skn-border); }
+    .nav-section-title { letter-spacing: .1em; font-size: .68rem; font-weight: 700; }
+    .offcanvas .list-group-item {
+      border: 0; border-radius: 10px; margin-bottom: 2px; padding: .55rem .75rem;
+      background: transparent; color: var(--skn-text); font-size: .92rem; font-weight: 500;
+      display: flex; align-items: center; gap: .65rem; transition: all .15s ease;
+    }
+    .offcanvas .list-group-item i { font-size: 1.05rem; color: var(--skn-muted); width: 1.2rem; text-align: center; transition: color .15s ease; }
+    .offcanvas .list-group-item:hover { background: var(--skn-surface-2); }
+    .offcanvas .list-group-item:hover i { color: var(--skn-brand); }
+    .offcanvas .list-group-item.active {
+      background: var(--skn-brand-soft); color: var(--skn-brand); font-weight: 650;
+    }
+    .offcanvas .list-group-item.active i { color: var(--skn-brand); }
+
+    /* ---------- Motion ---------- */
+    @keyframes sknFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    .skn-page { animation: sknFadeUp .4s ease both; }
+    @media (prefers-reduced-motion: reduce) {
+      .skn-page, .btn, .tile, .card-soft, .hover-lift { animation: none !important; transition: none !important; }
+    }
+
+    a { text-underline-offset: 2px; }
+    ::selection { background: rgba(var(--skn-brand-rgb), .22); }
   </style>
 </head>
 
-<body class="app-shell">
+<body>
 
-<nav class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+<nav class="navbar navbar-expand-lg skn-navbar sticky-top">
   <div class="container">
 
     {% if user.is_authenticated %}
-    <!-- Hamburger -->
-    <button class="btn btn-outline-secondary me-2"
-            type="button"
-            data-bs-toggle="offcanvas"
-            data-bs-target="#skunowMenu"
-            aria-controls="skunowMenu">
-      ☰
+    <button class="skn-iconbtn me-2" type="button"
+            data-bs-toggle="offcanvas" data-bs-target="#skunowMenu"
+            aria-controls="skunowMenu" aria-label="Open menu">
+      <i class="bi bi-list fs-5"></i>
     </button>
     {% endif %}
 
-    <!-- Brand -->
-    <a class="navbar-brand fw-bold" href="/">SKUNOW</a>
+    <a class="navbar-brand skn-brand d-flex align-items-center gap-2" href="/">
+      <i class="bi bi-boxes"></i> SKUNOW
+    </a>
 
-    <!-- Top right quick actions -->
     <div class="ms-auto d-flex align-items-center gap-2">
+      <button class="skn-iconbtn" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle light / dark">
+        <i class="bi bi-moon-stars"></i>
+      </button>
       {% if user.is_authenticated %}
-        <div class="text-muted small ms-2">{{ user.username }}</div>
-        <a class="btn btn-outline-dark btn-sm" href="/logout/">Logout</a>
+        <span class="skn-userchip">
+          <span class="skn-avatar">{{ user.username|first|upper }}</span>
+          {{ user.username }}
+        </span>
+        <a class="btn btn-outline-secondary btn-sm" href="/logout/">
+          <i class="bi bi-box-arrow-right me-1"></i>Logout
+        </a>
       {% else %}
-        <a class="btn btn-primary btn-sm" href="/login/">Login</a>
+        <a class="btn btn-primary btn-sm" href="/login/">
+          <i class="bi bi-box-arrow-in-right me-1"></i>Login
+        </a>
       {% endif %}
     </div>
   </div>
 </nav>
 
 {% if user.is_authenticated %}
-
 <!-- Offcanvas Menu -->
 <div class="offcanvas offcanvas-start" tabindex="-1" id="skunowMenu">
-  <div class="offcanvas-header border-bottom">
+  <div class="offcanvas-header">
     <div>
-      <h5 class="offcanvas-title fw-bold mb-0">SKUNOW</h5>
+      <h5 class="offcanvas-title skn-brand mb-0"><i class="bi bi-boxes"></i> SKUNOW</h5>
       <div class="text-muted small">Know your SKU better!</div>
     </div>
-    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
   </div>
 
   <div class="offcanvas-body">
-
-    <!-- DASHBOARD -->
     <div class="mb-3">
-      <div class="text-uppercase small text-muted mb-2 nav-section-title">Dashboard</div>
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Dashboard</div>
       <div class="list-group list-group-flush">
-        <a href="/" class="list-group-item list-group-item-action">Overview</a>
+        <a href="/" class="list-group-item list-group-item-action"><i class="bi bi-grid-1x2"></i> Overview</a>
       </div>
     </div>
 
-    <!-- PROCUREMENT -->
     <div class="mb-3">
-      <div class="text-uppercase small text-muted mb-2 nav-section-title">Procurement</div>
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Procurement</div>
       <div class="list-group list-group-flush">
-        <a href="/po/new/" class="list-group-item list-group-item-action">Create PO</a>
-        <a href="/po/" class="list-group-item list-group-item-action">Purchase Orders</a>
-        <!-- Optional: add when you create a dedicated receiving queue page -->
-        <!-- <a href="/receiving/" class="list-group-item list-group-item-action">Receiving</a> -->
+        <a href="/po/new/" class="list-group-item list-group-item-action"><i class="bi bi-plus-square"></i> Create PO</a>
+        <a href="/po/" class="list-group-item list-group-item-action"><i class="bi bi-file-earmark-text"></i> Purchase Orders</a>
+        <a href="/shipments/" class="list-group-item list-group-item-action"><i class="bi bi-truck"></i> Shipments</a>
       </div>
     </div>
 
-    <!-- SALES -->
     <div class="mb-3">
-      <div class="text-uppercase small text-muted mb-2 nav-section-title">Sales</div>
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Sales</div>
       <div class="list-group list-group-flush">
-        <a href="/sales-orders/" class="list-group-item list-group-item-action">Sales Orders</a>
-        <a href="/returns/" class="list-group-item list-group-item-action">Returns (RMA)</a>
-        <a href="/reconcile/" class="list-group-item list-group-item-action">Reconcile</a>
+        <a href="/sales-orders/" class="list-group-item list-group-item-action"><i class="bi bi-cart-check"></i> Sales Orders</a>
+        <a href="/returns/" class="list-group-item list-group-item-action"><i class="bi bi-arrow-return-left"></i> Returns (RMA)</a>
+        <a href="/reconcile/" class="list-group-item list-group-item-action"><i class="bi bi-shuffle"></i> Reconcile</a>
       </div>
     </div>
 
-    <!-- INVENTORY -->
     <div class="mb-3">
-      <div class="text-uppercase small text-muted mb-2 nav-section-title">Inventory</div>
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Inventory</div>
       <div class="list-group list-group-flush">
-        <a href="/inventory/" class="list-group-item list-group-item-action">Inventory Overview</a>
-        <a href="/locations/" class="list-group-item list-group-item-action">Locations</a>
-        <a href="/cycle-counts/" class="list-group-item list-group-item-action">Cycle Counts</a>
+        <a href="/inventory/" class="list-group-item list-group-item-action"><i class="bi bi-boxes"></i> Inventory Overview</a>
+        <a href="/transfers/" class="list-group-item list-group-item-action"><i class="bi bi-arrow-left-right"></i> Transfers</a>
+        <a href="/locations/" class="list-group-item list-group-item-action"><i class="bi bi-geo-alt"></i> Locations</a>
+        <a href="/cycle-counts/" class="list-group-item list-group-item-action"><i class="bi bi-clipboard-check"></i> Cycle Counts</a>
       </div>
     </div>
 
-    <!-- MASTER DATA -->
     <div class="mb-3">
-      <div class="text-uppercase small text-muted mb-2 nav-section-title">Master Data</div>
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Master Data</div>
       <div class="list-group list-group-flush">
-        <a href="/products/" class="list-group-item list-group-item-action">Products</a>
-        <a href="/uoms/" class="list-group-item list-group-item-action">UOMs</a>
-        <a href="/boms/" class="list-group-item list-group-item-action">BOMs / Kits</a>
-        <a href="/suppliers/" class="list-group-item list-group-item-action">Suppliers</a>
+        <a href="/products/" class="list-group-item list-group-item-action"><i class="bi bi-box-seam"></i> Products</a>
+        <a href="/uoms/" class="list-group-item list-group-item-action"><i class="bi bi-rulers"></i> UOMs</a>
+        <a href="/boms/" class="list-group-item list-group-item-action"><i class="bi bi-diagram-3"></i> BOMs / Kits</a>
+        <a href="/suppliers/" class="list-group-item list-group-item-action"><i class="bi bi-shop"></i> Suppliers</a>
       </div>
     </div>
 
-    <!-- CHANNELS -->
     <div class="mb-3">
-      <div class="text-uppercase small text-muted mb-2 nav-section-title">Channels</div>
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Channels</div>
       <div class="list-group list-group-flush">
-        <a href="/channels/" class="list-group-item list-group-item-action">Connections</a>
-        <a href="/reconcile/" class="list-group-item list-group-item-action">Reconciliation</a>
+        <a href="/channels/" class="list-group-item list-group-item-action"><i class="bi bi-plug"></i> Connections</a>
+        <a href="/reconcile/" class="list-group-item list-group-item-action"><i class="bi bi-shuffle"></i> Reconciliation</a>
       </div>
     </div>
 
+    <div class="mb-3">
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Finance</div>
+      <div class="list-group list-group-flush">
+        <a href="/customers/" class="list-group-item list-group-item-action"><i class="bi bi-people"></i> Customers</a>
+        <a href="/ar/invoices/" class="list-group-item list-group-item-action"><i class="bi bi-receipt"></i> Customer Invoices (AR)</a>
+        <a href="/invoices/" class="list-group-item list-group-item-action"><i class="bi bi-receipt-cutoff"></i> Supplier Invoices (AP)</a>
+        <a href="/payments/" class="list-group-item list-group-item-action"><i class="bi bi-cash-stack"></i> Payments</a>
+        <a href="/bank/reconcile/" class="list-group-item list-group-item-action"><i class="bi bi-check2-square"></i> Bank Reconciliation</a>
+        <a href="/tax-codes/" class="list-group-item list-group-item-action"><i class="bi bi-percent"></i> Tax Codes (VAT)</a>
+        <a href="/vat/" class="list-group-item list-group-item-action"><i class="bi bi-file-earmark-spreadsheet"></i> VAT Returns (MTD)</a>
+        <a href="/gl/journal/" class="list-group-item list-group-item-action"><i class="bi bi-journal-text"></i> Journal</a>
+        <a href="/gl/accounts/" class="list-group-item list-group-item-action"><i class="bi bi-bank"></i> Chart of Accounts</a>
+      </div>
+    </div>
 
-    <!-- FINANCE -->
-<div class="mb-3">
-  <div class="text-uppercase small text-muted mb-2">Finance</div>
-  <div class="list-group list-group-flush">
-    <a href="/customers/" class="list-group-item list-group-item-action">Customers</a>
-    <a href="/ar/invoices/" class="list-group-item list-group-item-action">Customer Invoices (AR)</a>
-    <a href="/invoices/" class="list-group-item list-group-item-action">Supplier Invoices (AP)</a>
-    <a href="/tax-codes/" class="list-group-item list-group-item-action">Tax Codes (VAT)</a>
-    <a href="/gl/journal/" class="list-group-item list-group-item-action">Journal</a>
-    <a href="/gl/accounts/" class="list-group-item list-group-item-action">Chart of Accounts</a>
-  </div>
-</div>
+    <div class="mb-3">
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Reports</div>
+      <div class="list-group list-group-flush">
+        <a href="/reports/" class="list-group-item list-group-item-action"><i class="bi bi-bar-chart-line"></i> All Reports</a>
+        <a href="/reports/profit-and-loss/" class="list-group-item list-group-item-action"><i class="bi bi-graph-up-arrow"></i> Profit &amp; Loss</a>
+        <a href="/reports/balance-sheet/" class="list-group-item list-group-item-action"><i class="bi bi-bank2"></i> Balance Sheet</a>
+        <a href="/reports/trial-balance/" class="list-group-item list-group-item-action"><i class="bi bi-list-columns-reverse"></i> Trial Balance</a>
+        <a href="/reports/aged-receivables/" class="list-group-item list-group-item-action"><i class="bi bi-cash-coin"></i> Aged Debtors</a>
+        <a href="/reports/aged-payables/" class="list-group-item list-group-item-action"><i class="bi bi-credit-card"></i> Aged Creditors</a>
+        <a href="/reports/stock-valuation/" class="list-group-item list-group-item-action"><i class="bi bi-box-seam"></i> Stock Valuation</a>
+      </div>
+    </div>
 
-<!-- ADMIN -->
     <div class="mt-4 border-top pt-3">
-      <div class="text-uppercase small text-muted mb-2 nav-section-title">Administration</div>
+      <div class="text-uppercase text-muted mb-2 nav-section-title">Administration</div>
       <div class="list-group list-group-flush">
-        <a href="/admin/" class="list-group-item list-group-item-action">Admin</a>
-        <a href="/settings/tenant/" class="list-group-item list-group-item-action">Settings</a>
-      </div>
-      <div class="text-muted small mt-2">
-        Admin is temporary — SKUNOW UI will replace it fully.
+        <a href="/admin/" class="list-group-item list-group-item-action"><i class="bi bi-shield-lock"></i> Admin</a>
+        <a href="/settings/tenant/" class="list-group-item list-group-item-action"><i class="bi bi-gear"></i> Settings</a>
       </div>
     </div>
-
   </div>
 </div>
 {% endif %}
 
 <main class="container py-4">
   {% if messages %}
-  <div class="container pt-3">
+  <div class="pt-2">
     {% for m in messages %}
-      <div class="alert alert-{{ m.tags|default:'info' }} alert-dismissible fade show" role="alert">
-        {{ m }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      <div class="alert alert-{{ m.tags|default:'info' }} alert-dismissible fade show d-flex align-items-center" role="alert">
+        <i class="bi bi-info-circle-fill me-2"></i>
+        <div>{{ m }}</div>
+        <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert" aria-label="Close"></button>
       </div>
     {% endfor %}
   </div>
   {% endif %}
-  {% block body %}{% endblock %}
+
+  <div class="skn-page">
+    {% block body %}{% endblock %}
+  </div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
-  // Active state: supports sub-routes like /products/12/edit/
-  const path = window.location.pathname;
+  // ---- Sidebar active state (supports sub-routes like /products/12/edit/) ----
+  (function () {
+    const path = window.location.pathname;
+    const links = Array.from(document.querySelectorAll(".offcanvas a.list-group-item"));
+    let best = null, bestLen = -1;
+    links.forEach(a => {
+      const href = a.getAttribute("href");
+      if (!href) return;
+      const isRoot = href === "/";
+      const matches = isRoot ? path === "/" : path.startsWith(href);
+      if (matches && href.length > bestLen) { best = a; bestLen = href.length; }
+    });
+    if (best) best.classList.add("active");
+  })();
 
-  const rules = [
-    { prefix: "/po/", href: "/po/" },
-    { prefix: "/products/", href: "/products/" },
-    { prefix: "/suppliers/", href: "/suppliers/" },
-    { prefix: "/locations/", href: "/locations/" },
-    { prefix: "/inventory/", href: "/inventory/" },
-    { prefix: "/channels/", href: "/channels/" },
-    { prefix: "/sales-orders/", href: "/sales-orders/" },
-    { prefix: "/reconcile/", href: "/reconcile/" },
-    { prefix: "/", href: "/" }
-  ];
-
-  function setActive(href) {
-    document.querySelectorAll(".offcanvas a.list-group-item").forEach(a => a.classList.remove("active"));
-    const el = document.querySelector(`.offcanvas a.list-group-item[href="${href}"]`);
-    if (el) el.classList.add("active");
-  }
-
-  // Choose the first matching prefix rule (longest first)
-  const sorted = rules.sort((a,b) => b.prefix.length - a.prefix.length);
-  const match = sorted.find(r => path.startsWith(r.prefix));
-  if (match) setActive(match.href);
+  // ---- Theme toggle (persisted) ----
+  (function () {
+    const btn = document.getElementById("themeToggle");
+    const root = document.documentElement;
+    function syncIcon() {
+      const dark = root.getAttribute("data-bs-theme") === "dark";
+      const icon = btn.querySelector("i");
+      if (icon) icon.className = dark ? "bi bi-sun" : "bi bi-moon-stars";
+    }
+    syncIcon();
+    btn.addEventListener("click", function () {
+      const dark = root.getAttribute("data-bs-theme") === "dark";
+      const next = dark ? "light" : "dark";
+      root.setAttribute("data-bs-theme", next);
+      try { localStorage.setItem("skunow-theme", next); } catch (e) {}
+      syncIcon();
+    });
+  })();
 </script>
 
 </body>

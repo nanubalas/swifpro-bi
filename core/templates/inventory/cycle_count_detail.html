@@ -1,6 +1,6 @@
 
 {% extends "base.html" %}
-{% block title %}Cycle Count #{{ cc.id }} — SKUNOW{% endblock %}
+{% block title %}Cycle Count #{{ cc.id }} - SKUNOW{% endblock %}
 {% block body %}
 <div class="d-flex justify-content-between align-items-start mb-4">
   <div>
@@ -53,9 +53,9 @@
           <tr>
             <td class="fw-semibold">{{ l.product.sku }}</td>
             <td>{{ l.product.name }}</td>
-            <td>{% if l.lot_code %}{{ l.lot_code }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if l.serial_number %}{{ l.serial_number }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if l.expiry_date %}{{ l.expiry_date|date:"d M Y" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td>{% if l.lot_code %}{{ l.lot_code }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if l.serial_number %}{{ l.serial_number }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if l.expiry_date %}{{ l.expiry_date|date:"d M Y" }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
             <td class="text-end">{{ l.system_qty|floatformat:2 }}</td>
             <td class="text-end">{{ l.counted_qty|floatformat:2 }}</td>
             <td class="text-end {% if l.variance_qty < 0 %}text-danger{% elif l.variance_qty > 0 %}text-success{% endif %}">

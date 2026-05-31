@@ -30,7 +30,7 @@
           <td>{{ s.from_supplier.name }}</td>
           <td>{{ s.destination.name }}</td>
           <td><span class="pill">{{ s.status }}</span></td>
-          <td>{{ s.eta|default:"—" }}</td>
+          <td>{{ s.eta|default:"-" }}</td>
           <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="/shipments/{{ s.id }}/">Open</a></td>
         </tr>
         {% empty %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Balance Sheet - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small"><a href="{% url 'reports_index' %}" class="text-decoration-none">Reports</a> / Balance Sheet</div>
+    <h2 class="fw-bold mb-0">Balance Sheet</h2>
+  </div>
+  <form method="get" class="d-flex align-items-end gap-2">
+    <div>
+      <label class="form-label mb-1">As of</label>
+      <input type="date" name="as_of" value="{{ as_of|date:'Y-m-d' }}" class="form-control form-control-sm">
+    </div>
+    <button class="btn btn-primary btn-sm">Apply</button>
+  </form>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Assets</div>
+      <div class="card-body">
+        <table class="table align-middle mb-0">
+          <tbody>
+            {% for r in data.assets %}
+            <tr><td>{{ r.account.code }} {{ r.account.name }}</td><td class="text-end">{{ r.amount|money:tenant.currency_code }}</td></tr>
+            {% empty %}<tr><td class="text-muted" colspan="2">No assets.</td></tr>{% endfor %}
+          </tbody>
+          <tfoot><tr class="fw-bold border-top"><td>Total assets</td><td class="text-end">{{ data.asset_total|money:tenant.currency_code }}</td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card mb-4">
+      <div class="card-header">Liabilities</div>
+      <div class="card-body">
+        <table class="table align-middle mb-0">
+          <tbody>
+            {% for r in data.liabilities %}
+            <tr><td>{{ r.account.code }} {{ r.account.name }}</td><td class="text-end">{{ r.amount|money:tenant.currency_code }}</td></tr>
+            {% empty %}<tr><td class="text-muted" colspan="2">No liabilities.</td></tr>{% endfor %}
+          </tbody>
+          <tfoot><tr class="fw-bold border-top"><td>Total liabilities</td><td class="text-end">{{ data.liability_total|money:tenant.currency_code }}</td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">Equity</div>
+      <div class="card-body">
+        <table class="table align-middle mb-0">
+          <tbody>
+            {% for r in data.equity %}
+            <tr><td>{{ r.account.code }} {{ r.account.name }}</td><td class="text-end">{{ r.amount|money:tenant.currency_code }}</td></tr>
+            {% endfor %}
+            <tr><td>Retained earnings (current)</td><td class="text-end">{{ data.retained_earnings|money:tenant.currency_code }}</td></tr>
+          </tbody>
+          <tfoot><tr class="fw-bold border-top"><td>Total equity</td><td class="text-end">{{ data.equity_total_with_earnings|money:tenant.currency_code }}</td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tile p-4 mt-4 d-flex justify-content-between align-items-center">
+  <div>
+    <div class="text-muted small">Assets</div>
+    <div class="fs-5 fw-bold">{{ data.asset_total|money:tenant.currency_code }}</div>
+  </div>
+  <div class="text-muted">vs</div>
+  <div class="text-end">
+    <div class="text-muted small">Liabilities + Equity</div>
+    <div class="fs-5 fw-bold">{{ data.liabilities_equity_total|money:tenant.currency_code }}</div>
+  </div>
+  <div>
+    {% if data.balanced %}
+      <span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i>Balanced</span>
+    {% else %}
+      <span class="badge text-bg-danger"><i class="bi bi-exclamation-triangle me-1"></i>Out of balance</span>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -19,7 +19,7 @@
         <div class="mb-2"><span class="text-muted">Supplier:</span> <b>{{ po.supplier.name }}</b></div>
         <div class="mb-2"><span class="text-muted">Destination:</span> <b>{{ shipment.destination.name }}</b></div>
         <div class="mb-2"><span class="text-muted">Expected:</span>
-          {% if po.expected_date %}<b>{{ po.expected_date|date:"d M Y" }}</b>{% else %}<span class="text-muted">—</span>{% endif %}
+          {% if po.expected_date %}<b>{{ po.expected_date|date:"d M Y" }}</b>{% else %}<span class="text-muted">-</span>{% endif %}
         </div>
 
         <div class="alert alert-warning mt-3 mb-0">

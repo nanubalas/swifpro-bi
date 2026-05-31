@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Reports - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Financial Reports</h2>
+    <div class="text-muted">Live statements built from your General Ledger.</div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6 col-lg-4">
+    <a class="tile p-4 h-100 d-block text-decoration-none text-reset" href="{% url 'report_trial_balance' %}">
+      <span class="workflow-icon mb-3"><i class="bi bi-list-columns-reverse"></i></span>
+      <h6 class="fw-semibold mb-1">Trial Balance</h6>
+      <div class="text-muted small">Every account's debit/credit balance, with a balanced check.</div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="tile p-4 h-100 d-block text-decoration-none text-reset" href="{% url 'report_pnl' %}">
+      <span class="workflow-icon mb-3"><i class="bi bi-graph-up-arrow"></i></span>
+      <h6 class="fw-semibold mb-1">Profit &amp; Loss</h6>
+      <div class="text-muted small">Income vs. expenses and net profit over a period.</div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="tile p-4 h-100 d-block text-decoration-none text-reset" href="{% url 'report_balance_sheet' %}">
+      <span class="workflow-icon mb-3"><i class="bi bi-bank2"></i></span>
+      <h6 class="fw-semibold mb-1">Balance Sheet</h6>
+      <div class="text-muted small">Assets, liabilities and equity as of a date.</div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="tile p-4 h-100 d-block text-decoration-none text-reset" href="{% url 'report_aged_receivables' %}">
+      <span class="workflow-icon mb-3"><i class="bi bi-cash-coin"></i></span>
+      <h6 class="fw-semibold mb-1">Aged Debtors</h6>
+      <div class="text-muted small">Outstanding customer invoices by age bucket.</div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="tile p-4 h-100 d-block text-decoration-none text-reset" href="{% url 'report_aged_payables' %}">
+      <span class="workflow-icon mb-3"><i class="bi bi-credit-card"></i></span>
+      <h6 class="fw-semibold mb-1">Aged Creditors</h6>
+      <div class="text-muted small">Outstanding supplier invoices by age bucket.</div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="tile p-4 h-100 d-block text-decoration-none text-reset" href="{% url 'report_stock_valuation' %}">
+      <span class="workflow-icon mb-3"><i class="bi bi-box-seam"></i></span>
+      <h6 class="fw-semibold mb-1">Stock Valuation</h6>
+      <div class="text-muted small">On-hand quantity valued at moving-average cost.</div>
+    </a>
+  </div>
+</div>
+{% endblock %}

@@ -1,5 +1,6 @@
 from django import forms
 from django.forms import inlineformset_factory
+from core.current import get_current_tenant
 from core.models import (
     CycleCount, CycleCountLine, InventoryLotBalance, InventoryReservation,
     PurchaseOrder, PurchaseOrderLine, Shipment,
@@ -9,10 +10,31 @@ from core.models import (
     InventoryTransfer, InventoryTransferLine,
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
-    TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount
+    TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount,
+    Payment
 )
 
-class PurchaseOrderForm(forms.ModelForm):
+
+class TenantModelForm(forms.ModelForm):
+    """Base form that scopes FK choice fields to the request's active tenant.
+
+    Any field whose related model has a `tenant` column is filtered, so
+    dropdowns (suppliers, products, locations, customers, tax codes, …) never
+    expose another tenant's records.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        tenant = get_current_tenant()
+        if not tenant:
+            return
+        for field in self.fields.values():
+            qs = getattr(field, "queryset", None)
+            if qs is None:
+                continue
+            if any(f.name == "tenant" for f in qs.model._meta.fields):
+                field.queryset = qs.filter(tenant=tenant)
+
+class PurchaseOrderForm(TenantModelForm):
     action = forms.ChoiceField(
         choices=(("save", "Save Draft"), ("submit", "Submit PO")),
         required=False
@@ -25,17 +47,18 @@ class PurchaseOrderForm(forms.ModelForm):
 PurchaseOrderLineFormSet = inlineformset_factory(
     PurchaseOrder,
     PurchaseOrderLine,
+    form=TenantModelForm,
     fields=("product", "ordered_qty", "unit_cost"),
     extra=1,
     can_delete=True
 )
 
-class ShipmentUpdateForm(forms.ModelForm):
+class ShipmentUpdateForm(TenantModelForm):
     class Meta:
         model = Shipment
         fields = ["carrier", "tracking_number", "status"]
 
-class ProductForm(forms.ModelForm):
+class ProductForm(TenantModelForm):
     barcode = forms.CharField(required=False, help_text="Optional EAN/UPC/Barcode")
 
     class Meta:
@@ -43,17 +66,17 @@ class ProductForm(forms.ModelForm):
         fields = ["parent", "sku", "name", "variant_name", "option1", "option2", "option3",
                   "base_uom", "uom", "cost_method", "standard_cost"]
 
-class SupplierForm(forms.ModelForm):
+class SupplierForm(TenantModelForm):
     class Meta:
         model = Supplier
         fields = ["name","email","phone","currency_code"]
 
-class LocationForm(forms.ModelForm):
+class LocationForm(TenantModelForm):
     class Meta:
         model = Location
         fields = ["name", "type"]
 
-class ChannelConnectionForm(forms.ModelForm):
+class ChannelConnectionForm(TenantModelForm):
     class Meta:
         model = ChannelConnection
         fields = ["channel", "name", "shop_domain", "access_token"]
@@ -61,7 +84,7 @@ class ChannelConnectionForm(forms.ModelForm):
             "access_token": forms.Textarea(attrs={"rows": 3}),
         }
 
-class SalesOrderForm(forms.ModelForm):
+class SalesOrderForm(TenantModelForm):
     action = forms.ChoiceField(
         choices=(("save", "Save Draft"), ("post", "Post (deduct inventory)")),
         required=False
@@ -73,12 +96,13 @@ class SalesOrderForm(forms.ModelForm):
 SalesOrderLineFormSet = inlineformset_factory(
     SalesOrder,
     SalesOrderLine,
+    form=TenantModelForm,
     fields=("product", "ship_from_location", "qty", "unit_price", "lot_code", "serial_number", "expiry_date"),
     extra=1,
     can_delete=True
 )
 
-class TenantSettingsForm(forms.ModelForm):
+class TenantSettingsForm(TenantModelForm):
     CURRENCY_CHOICES = (
         ("GBP", "GBP (£)"),
         ("USD", "USD ($)"),
@@ -91,19 +115,19 @@ class TenantSettingsForm(forms.ModelForm):
         model = Tenant
         fields = ["name", "currency_code", "po_approval_threshold"]
 
-class UnitOfMeasureForm(forms.ModelForm):
+class UnitOfMeasureForm(TenantModelForm):
     class Meta:
         model = UnitOfMeasure
         fields = ["code", "name"]
 
 
-class UOMConversionForm(forms.ModelForm):
+class UOMConversionForm(TenantModelForm):
     class Meta:
         model = UOMConversion
         fields = ["product", "from_uom", "to_uom", "multiplier"]
 
 
-class BillOfMaterialsForm(forms.ModelForm):
+class BillOfMaterialsForm(TenantModelForm):
     class Meta:
         model = BillOfMaterials
         fields = ["product", "name", "is_active"]
@@ -112,6 +136,7 @@ class BillOfMaterialsForm(forms.ModelForm):
 BOMLineFormSet = inlineformset_factory(
     BillOfMaterials,
     BillOfMaterialsLine,
+    form=TenantModelForm,
     fields=("component", "qty", "uom"),
     extra=1,
     can_delete=True
@@ -120,12 +145,12 @@ BOMLineFormSet = inlineformset_factory(
 
 # ---------------- Inventory Controls ----------------
 
-class CycleCountForm(forms.ModelForm):
+class CycleCountForm(TenantModelForm):
     class Meta:
         model = CycleCount
         fields = ["location", "count_date", "notes"]
 
-class CycleCountLineForm(forms.ModelForm):
+class CycleCountLineForm(TenantModelForm):
     class Meta:
         model = CycleCountLine
         fields = ["product", "lot_code", "serial_number", "expiry_date", "counted_qty"]
@@ -140,7 +165,7 @@ CycleCountLineFormSet = inlineformset_factory(
 
 
 # --- Transfers ---
-class InventoryTransferForm(forms.ModelForm):
+class InventoryTransferForm(TenantModelForm):
     action = forms.ChoiceField(
         choices=(("save","Save Draft"),("post","Post Transfer")),
         required=False
@@ -152,6 +177,7 @@ class InventoryTransferForm(forms.ModelForm):
 InventoryTransferLineFormSet = inlineformset_factory(
     InventoryTransfer,
     InventoryTransferLine,
+    form=TenantModelForm,
     fields=("product","qty","lot_code","serial_number","expiry_date"),
     extra=1,
     can_delete=True
@@ -159,7 +185,7 @@ InventoryTransferLineFormSet = inlineformset_factory(
 
 
 # --- Goods Receipt (GRN) ---
-class GoodsReceiptForm(forms.ModelForm):
+class GoodsReceiptForm(TenantModelForm):
     action = forms.ChoiceField(
         choices=(("save","Save Draft"),("post","Post GRN")),
         required=False
@@ -171,19 +197,20 @@ class GoodsReceiptForm(forms.ModelForm):
 GoodsReceiptLineFormSet = inlineformset_factory(
     GoodsReceipt,
     GoodsReceiptLine,
+    form=TenantModelForm,
     fields=("po_line","product","qty_received","unit_cost","lot_code","serial_number","expiry_date"),
     extra=1,
     can_delete=True
 )
 
-class LandedCostChargeForm(forms.ModelForm):
+class LandedCostChargeForm(TenantModelForm):
     class Meta:
         model = LandedCostCharge
         fields = ["name","amount","currency_code"]
 
 
 # --- Supplier Invoice (3-way match) ---
-class SupplierInvoiceForm(forms.ModelForm):
+class SupplierInvoiceForm(TenantModelForm):
     action = forms.ChoiceField(
         choices=(("save","Save Draft"),("submit","Run Match"),("approve","Approve"),("post","Post")),
         required=False
@@ -195,7 +222,8 @@ class SupplierInvoiceForm(forms.ModelForm):
 SupplierInvoiceLineFormSet = inlineformset_factory(
     SupplierInvoice,
     SupplierInvoiceLine,
-    fields=("product","po_line","receipt_line","qty","unit_cost"),
+    form=TenantModelForm,
+    fields=("product","po_line","receipt_line","qty","unit_cost","tax_code"),
     extra=1,
     can_delete=True
 )
@@ -203,7 +231,7 @@ SupplierInvoiceLineFormSet = inlineformset_factory(
 
 from core.models import ReturnAuthorization, ReturnLine
 
-class ReturnAuthorizationForm(forms.ModelForm):
+class ReturnAuthorizationForm(TenantModelForm):
     action = forms.ChoiceField(
         choices=(("save", "Save Draft"), ("approve", "Approve"), ("receive", "Receive & Restock")),
         required=False
@@ -215,24 +243,25 @@ class ReturnAuthorizationForm(forms.ModelForm):
 ReturnLineFormSet = inlineformset_factory(
     ReturnAuthorization,
     ReturnLine,
+    form=TenantModelForm,
     fields=("product", "qty", "reason", "lot_code", "serial_number", "expiry_date"),
     extra=1,
     can_delete=True
 )
 
 
-class TaxCodeForm(forms.ModelForm):
+class TaxCodeForm(TenantModelForm):
     class Meta:
         model = TaxCode
         fields = ["code", "name", "rate", "is_active"]
 
-class CustomerForm(forms.ModelForm):
+class CustomerForm(TenantModelForm):
     class Meta:
         model = Customer
         fields = ["name", "email", "phone", "vat_number", "billing_address"]
         widgets = {"billing_address": forms.Textarea(attrs={"rows": 3})}
 
-class CustomerInvoiceForm(forms.ModelForm):
+class CustomerInvoiceForm(TenantModelForm):
     action = forms.ChoiceField(
         choices=(("save", "Save Draft"), ("issue", "Issue (Post to GL)")),
         required=False
@@ -244,12 +273,29 @@ class CustomerInvoiceForm(forms.ModelForm):
 CustomerInvoiceLineFormSet = inlineformset_factory(
     CustomerInvoice,
     CustomerInvoiceLine,
+    form=TenantModelForm,
     fields=("product", "description", "qty", "unit_price", "tax_code"),
     extra=1,
     can_delete=True
 )
 
-class GLAccountForm(forms.ModelForm):
+class GLAccountForm(TenantModelForm):
     class Meta:
         model = GLAccount
         fields = ["code", "name", "type", "is_active"]
+
+
+class ReceiptForm(TenantModelForm):
+    """Record money received from a customer."""
+    class Meta:
+        model = Payment
+        fields = ["customer", "payment_date", "amount", "method", "reference", "notes"]
+        widgets = {"notes": forms.Textarea(attrs={"rows": 2})}
+
+
+class SupplierPaymentForm(TenantModelForm):
+    """Record money paid to a supplier."""
+    class Meta:
+        model = Payment
+        fields = ["supplier", "payment_date", "amount", "method", "reference", "notes"]
+        widgets = {"notes": forms.Textarea(attrs={"rows": 2})}

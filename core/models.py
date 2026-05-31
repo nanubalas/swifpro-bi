@@ -25,6 +25,18 @@ class Tenant(models.Model):
         return self.name
 
 
+class UserProfile(models.Model):
+    """Binds a Django auth user to the tenant whose data they may access.
+
+    Until full multi-tenancy/onboarding is built, a user without a profile
+    falls back to the first tenant (see views._get_default_tenant)."""
+    user = models.OneToOneField("auth.User", on_delete=models.CASCADE, related_name="profile")
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="members")
+
+    def __str__(self):
+        return f"{self.user} @ {self.tenant}"
+
+
 class Location(models.Model):
     class Type(models.TextChoices):
         WAREHOUSE = "WAREHOUSE", "Warehouse"
@@ -112,6 +124,8 @@ class Product(models.Model):
     # Costing
     cost_method = models.CharField(max_length=20, choices=CostMethod.choices, default=CostMethod.AVERAGE)
     standard_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    # Running moving-average cost, maintained on inbound movements.
+    average_cost = models.DecimalField(max_digits=12, decimal_places=4, default=Decimal("0.0000"))
 
     class Meta:
         unique_together = ("tenant", "sku")
@@ -397,6 +411,10 @@ class InventoryMovement(models.Model):
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
     movement_type = models.CharField(max_length=20, choices=MovementType.choices)
     qty_delta = models.DecimalField(max_digits=12, decimal_places=2)
+    # Cost captured at the time of the movement (unit_cost = cost per unit;
+    # value = qty_delta * unit_cost, so it carries the same sign as qty_delta).
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    value = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     ref_type = models.CharField(max_length=50)  # "PO", "ORDER", "MANUAL"
     ref_id = models.CharField(max_length=100)   # po_number or order_id
     notes = models.CharField(max_length=255, blank=True, null=True)
@@ -404,6 +422,26 @@ class InventoryMovement(models.Model):
     serial_number = models.CharField(max_length=100, blank=True, null=True)
     expiry_date = models.DateField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
+
+
+class InventoryCostLayer(models.Model):
+    """A FIFO cost layer: a tranche of stock received at a known unit cost.
+
+    Used only for products whose cost_method is FIFO. Outbound movements
+    consume layers oldest-first (by received_at, id)."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="cost_layers")
+    received_at = models.DateTimeField(default=timezone.now)
+    qty_received = models.DecimalField(max_digits=12, decimal_places=2)
+    qty_remaining = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=4)
+    ref_type = models.CharField(max_length=50, blank=True, null=True)
+    ref_id = models.CharField(max_length=100, blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        indexes = [models.Index(fields=["tenant", "product", "qty_remaining"])]
+        ordering = ["received_at", "id"]
 
 
 # ---------- Phase 2 (Channel Sync) ----------
@@ -533,6 +571,7 @@ class GoodsReceipt(models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     po = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="receipts")
+    shipment = models.ForeignKey(Shipment, on_delete=models.PROTECT, related_name="receipts", null=True, blank=True)
     grn_number = models.CharField(max_length=50)
     received_at = models.DateTimeField(default=timezone.now)
     received_to = models.ForeignKey(Location, on_delete=models.PROTECT)
@@ -602,6 +641,26 @@ class SupplierInvoice(models.Model):
     def __str__(self):
         return self.invoice_number
 
+    @property
+    def subtotal(self):
+        return sum((l.line_total for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def tax_total(self):
+        return sum((l.tax_amount for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def total(self):
+        return self.subtotal + self.tax_total
+
+    @property
+    def amount_paid(self):
+        return sum((a.amount for a in self.payment_allocations.all()), Decimal("0.00"))
+
+    @property
+    def outstanding(self):
+        return self.total - self.amount_paid
+
 
 class SupplierInvoiceLine(models.Model):
     invoice = models.ForeignKey(SupplierInvoice, related_name="lines", on_delete=models.CASCADE)
@@ -610,9 +669,19 @@ class SupplierInvoiceLine(models.Model):
     receipt_line = models.ForeignKey(GoodsReceiptLine, on_delete=models.PROTECT, null=True, blank=True)
     qty = models.DecimalField(max_digits=12, decimal_places=2)
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    tax_code = models.ForeignKey("TaxCode", on_delete=models.PROTECT, null=True, blank=True)
 
     class Meta:
         unique_together = ("invoice", "product", "po_line", "receipt_line")
+
+    @property
+    def line_total(self):
+        return (self.qty or Decimal("0.00")) * (self.unit_cost or Decimal("0.00"))
+
+    @property
+    def tax_amount(self):
+        rate = self.tax_code.rate if self.tax_code else Decimal("0.00")
+        return self.line_total * rate
 
 
 class ReturnAuthorization(models.Model):
@@ -716,6 +785,14 @@ class CustomerInvoice(models.Model):
     def total(self):
         return self.subtotal + self.tax_total
 
+    @property
+    def amount_paid(self):
+        return sum((a.amount for a in self.payment_allocations.all()), Decimal("0.00"))
+
+    @property
+    def outstanding(self):
+        return self.total - self.amount_paid
+
 
 class CustomerInvoiceLine(models.Model):
     invoice = models.ForeignKey(CustomerInvoice, related_name="lines", on_delete=models.CASCADE)
@@ -787,3 +864,106 @@ class JournalLine(models.Model):
     description = models.CharField(max_length=255, blank=True, null=True)
     debit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     credit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+
+# ============================
+# Payments (AR receipts / AP payments) + bank reconciliation
+# ============================
+
+class Payment(models.Model):
+    class Direction(models.TextChoices):
+        RECEIPT = "RECEIPT", "Customer receipt"   # money in
+        PAYMENT = "PAYMENT", "Supplier payment"   # money out
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        POSTED = "POSTED", "Posted"
+
+    class Method(models.TextChoices):
+        BANK = "BANK", "Bank transfer"
+        CARD = "CARD", "Card"
+        CASH = "CASH", "Cash"
+        CHEQUE = "CHEQUE", "Cheque"
+        OTHER = "OTHER", "Other"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    direction = models.CharField(max_length=10, choices=Direction.choices)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True, related_name="payments")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True, related_name="payments")
+    payment_date = models.DateField(default=timezone.now)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=10, choices=Method.choices, default=Method.BANK)
+    reference = models.CharField(max_length=100, blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    currency_code = models.CharField(max_length=3, default="GBP")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+
+    # Bank reconciliation
+    is_reconciled = models.BooleanField(default=False)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        party = self.customer or self.supplier
+        return f"{self.get_direction_display()} {self.amount} ({party})"
+
+    @property
+    def party_name(self):
+        if self.customer_id:
+            return self.customer.name
+        if self.supplier_id:
+            return self.supplier.name
+        return ""
+
+    @property
+    def allocated(self):
+        return sum((a.amount for a in self.allocations.all()), Decimal("0.00"))
+
+    @property
+    def unallocated(self):
+        return self.amount - self.allocated
+
+
+class PaymentAllocation(models.Model):
+    payment = models.ForeignKey(Payment, related_name="allocations", on_delete=models.CASCADE)
+    customer_invoice = models.ForeignKey(CustomerInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name="payment_allocations")
+    supplier_invoice = models.ForeignKey(SupplierInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name="payment_allocations")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+
+# ============================
+# VAT return (UK MTD 9-box)
+# ============================
+
+class VatReturn(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    period_from = models.DateField()
+    period_to = models.DateField()
+
+    # The nine HMRC boxes (1-5 to the penny, 6-9 whole pounds in real returns).
+    box1_vat_due_sales = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box2_vat_due_acquisitions = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box3_total_vat_due = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box4_vat_reclaimed = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box5_net_vat = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box6_total_sales_ex_vat = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box7_total_purchases_ex_vat = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box8_eu_supplies = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box9_eu_acquisitions = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    created_at = models.DateTimeField(default=timezone.now)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    hmrc_reference = models.CharField(max_length=100, blank=True, null=True)
+
+    class Meta:
+        unique_together = ("tenant", "period_from", "period_to")
+        ordering = ["-period_to"]
+
+    def __str__(self):
+        return f"VAT {self.period_from} to {self.period_to}"

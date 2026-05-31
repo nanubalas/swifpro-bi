@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}VAT Return - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+  <a href="{% url 'vat_index' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+  <h2 class="fw-bold mb-0">VAT Return</h2>
+  {% if vr.status == 'SUBMITTED' %}<span class="badge text-bg-success">Submitted</span>{% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
+  <span class="text-muted">{{ vr.period_from|date:'d M Y' }} - {{ vr.period_to|date:'d M Y' }}</span>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">9-box summary</div>
+      <div class="card-body">
+        <table class="table align-middle mb-0">
+          <tbody>
+            <tr><td>Box 1 - VAT due on sales</td><td class="text-end fw-semibold">{{ vr.box1_vat_due_sales|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 2 - VAT due on acquisitions</td><td class="text-end">{{ vr.box2_vat_due_acquisitions|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 3 - Total VAT due</td><td class="text-end fw-semibold">{{ vr.box3_total_vat_due|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 4 - VAT reclaimed on purchases</td><td class="text-end fw-semibold">{{ vr.box4_vat_reclaimed|money:tenant.currency_code }}</td></tr>
+            <tr class="table-light"><td class="fw-bold">Box 5 - Net VAT to pay / reclaim</td><td class="text-end fw-bold">{{ vr.box5_net_vat|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 6 - Total sales ex VAT</td><td class="text-end">{{ vr.box6_total_sales_ex_vat|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 7 - Total purchases ex VAT</td><td class="text-end">{{ vr.box7_total_purchases_ex_vat|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 8 - EU supplies</td><td class="text-end">{{ vr.box8_eu_supplies|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 9 - EU acquisitions</td><td class="text-end">{{ vr.box9_eu_acquisitions|money:tenant.currency_code }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="tile p-4">
+      {% if vr.status == 'SUBMITTED' %}
+        <div class="text-muted small mb-1">Submitted</div>
+        <div class="fw-semibold mb-2">{{ vr.submitted_at|date:'d M Y H:i' }}</div>
+        <div class="text-muted small mb-1">Reference</div>
+        <div class="fw-semibold">{{ vr.hmrc_reference }}</div>
+        <div class="alert alert-warning mt-3 mb-0 small"><i class="bi bi-exclamation-triangle me-1"></i> Local stub - not filed with HMRC.</div>
+      {% else %}
+        <p class="text-muted">Submitting records a local draft filing. Live HMRC MTD submission requires HMRC credentials (not yet connected).</p>
+        <form method="post" action="{% url 'vat_submit' vr.id %}">
+          {% csrf_token %}
+          <button class="btn btn-primary w-100"><i class="bi bi-send me-1"></i> Submit (local stub)</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

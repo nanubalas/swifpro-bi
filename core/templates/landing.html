@@ -1,175 +1,189 @@
 {% extends "base.html" %}
-{% block title %}SKUNOW — Know your SKU better!{% endblock %}
+{% block title %}SKUNOW - Know your SKU better!{% endblock %}
 
 {% block body %}
 <style>
-  .tile {
-    border-radius: 18px;
-    border: 1px solid rgba(0,0,0,.06);
-    background: #fff;
-    box-shadow: 0 10px 28px rgba(0,0,0,.05);
+  .skn-hero {
+    border-radius: 22px;
+    padding: 2.2rem 2.2rem;
+    color: #fff;
+    background:
+      radial-gradient(900px 380px at 110% -40%, rgba(255,255,255,.20), transparent 60%),
+      linear-gradient(120deg, var(--skn-brand), var(--skn-accent));
+    box-shadow: var(--skn-shadow-lg);
+    position: relative; overflow: hidden;
   }
-  .tile h5 { margin-bottom: 6px; }
-  .muted { color: #6c757d; }
+  .skn-hero h1 { font-weight: 800; letter-spacing: -.02em; }
+  .skn-hero .eyebrow {
+    text-transform: uppercase; letter-spacing: .18em; font-size: .72rem;
+    font-weight: 700; opacity: .85;
+  }
+  .skn-hero .btn-light { font-weight: 700; }
+  .workflow-card { display: block; height: 100%; text-decoration: none; color: inherit; }
+  .workflow-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 1.25rem; background: var(--skn-brand-soft); color: var(--skn-brand);
+  }
+  .workflow-step { font-size: .72rem; font-weight: 700; letter-spacing: .1em; color: var(--skn-muted); text-transform: uppercase; }
+  .kpi-value { font-size: 2rem; font-weight: 800; letter-spacing: -.02em; }
 </style>
 
-<div class="d-flex justify-content-between align-items-start mb-4">
-  <div>
-    <div class="text-primary fw-semibold">SKUNOW</div>
-    <h2 class="fw-bold mb-1">Stock Knowledge & Unified Network for Operations Worldwide</h2>
-    <div class="muted">Create → Track → Receive → Sell → Reconcile</div>
+<!-- HERO -->
+<div class="skn-hero mb-4">
+  <div class="row align-items-center g-3">
+    <div class="col-lg-8">
+      <div class="eyebrow mb-2">Stock Knowledge &amp; Unified Network for Operations</div>
+      <h1 class="mb-2">{% if tenant %}Welcome back to {{ tenant.name }}{% else %}Welcome to SKUNOW{% endif %}</h1>
+      <p class="mb-0 opacity-75">Create → Track → Receive → Sell → Reconcile, all in one system of record.</p>
+    </div>
+    <div class="col-lg-4 text-lg-end">
+      <a class="btn btn-light btn-lg" href="/po/new/"><i class="bi bi-plus-lg me-1"></i> Raise Purchase Order</a>
+    </div>
   </div>
 </div>
 
 {% if needs_setup %}
-  <div class="alert alert-warning">
+  <div class="alert alert-warning d-flex align-items-center">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i>
     Your database isn’t set up yet. Run migrations and create a Tenant in Admin.
   </div>
 {% endif %}
 
 <!-- WORKFLOW TILES -->
 <div class="row g-3 mb-4">
-  <div class="col-md-3">
-    <div class="tile p-3 h-100">
-      <h5 class="fw-semibold">1) Create PO</h5>
-      <div class="muted small mb-3">Raise supplier-ready purchase orders.</div>
-      <a class="btn btn-sm btn-primary" href="/po/new/">Create PO</a>
-    </div>
-  </div>
-
-  <div class="col-md-3">
-    <div class="tile p-3 h-100">
-      <h5 class="fw-semibold">2) Track Inbound</h5>
-      <div class="muted small mb-3">Monitor supplier shipments to WH/3PL.</div>
-      <a class="btn btn-sm btn-outline-primary" href="/po/">View POs</a>
-    </div>
-  </div>
-
-  <div class="col-md-3">
-    <div class="tile p-3 h-100">
-      <h5 class="fw-semibold">3) Receive Goods</h5>
-      <div class="muted small mb-3">Post GRN and update inventory balances.</div>
-      <a class="btn btn-sm btn-outline-success" href="/po/">Receive</a>
-    </div>
-  </div>
-
-  <div class="col-md-3">
-  <div class="card card-soft p-3 h-100">
-    <h5 class="fw-semibold">4) Sell Goods</h5>
-    <div class="text-muted small mb-3">
-      Create and post sales orders to automatically deduct inventory from selected locations.
-    </div>
-    <a class="btn btn-sm btn-outline-success" href="/sales-orders/">
-      Create SO
+  <div class="col-6 col-lg">
+    <a class="tile p-3 h-100 workflow-card" href="/po/new/">
+      <span class="workflow-icon mb-3"><i class="bi bi-plus-square"></i></span>
+      <div class="workflow-step">Step 1</div>
+      <h6 class="fw-semibold mb-1">Create PO</h6>
+      <div class="text-muted small">Raise supplier-ready purchase orders.</div>
     </a>
   </div>
-</div>
-
-  <div class="col-md-3">
-    <div class="tile p-3 h-100">
-      <h5 class="fw-semibold">5) Reconcile</h5>
-      <div class="muted small mb-3">Compare channel inventory and detect drift.</div>
-      <a class="btn btn-sm btn-outline-secondary" href="/reconcile/">Reconcile</a>
-    </div>
+  <div class="col-6 col-lg">
+    <a class="tile p-3 h-100 workflow-card" href="/shipments/">
+      <span class="workflow-icon mb-3"><i class="bi bi-truck"></i></span>
+      <div class="workflow-step">Step 2</div>
+      <h6 class="fw-semibold mb-1">Track Inbound</h6>
+      <div class="text-muted small">Monitor supplier shipments to WH / 3PL.</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <a class="tile p-3 h-100 workflow-card" href="/po/">
+      <span class="workflow-icon mb-3"><i class="bi bi-box-arrow-in-down"></i></span>
+      <div class="workflow-step">Step 3</div>
+      <h6 class="fw-semibold mb-1">Receive Goods</h6>
+      <div class="text-muted small">Post GRN and update inventory balances.</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <a class="tile p-3 h-100 workflow-card" href="/sales-orders/">
+      <span class="workflow-icon mb-3"><i class="bi bi-cart-check"></i></span>
+      <div class="workflow-step">Step 4</div>
+      <h6 class="fw-semibold mb-1">Sell Goods</h6>
+      <div class="text-muted small">Post sales orders to deduct inventory.</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <a class="tile p-3 h-100 workflow-card" href="/reconcile/">
+      <span class="workflow-icon mb-3"><i class="bi bi-shuffle"></i></span>
+      <div class="workflow-step">Step 5</div>
+      <h6 class="fw-semibold mb-1">Reconcile</h6>
+      <div class="text-muted small">Compare channel stock and detect drift.</div>
+    </a>
   </div>
 </div>
 
 <!-- MAIN GRID: WORK QUEUE + KPI -->
 <div class="row g-4">
   <div class="col-lg-7">
-    <div class="tile p-4">
+    <div class="tile p-4 h-100">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="fw-semibold mb-0">Work queue</h5>
-        <a href="/po/" class="small text-decoration-none">View all POs</a>
+        <h5 class="fw-semibold mb-0"><i class="bi bi-inboxes me-2 text-primary"></i>Work queue</h5>
+        <a href="/po/" class="small text-decoration-none">View all POs <i class="bi bi-arrow-right"></i></a>
       </div>
 
       {% if not needs_setup and recent_pos %}
-        <div class="list-group">
+        <div class="list-group list-group-flush">
           {% for po in recent_pos %}
-            <div class="list-group-item d-flex justify-content-between align-items-center py-3">
+            <div class="list-group-item d-flex justify-content-between align-items-center py-3 px-0 bg-transparent">
               <div>
                 <div class="fw-semibold">{{ po.po_number }}</div>
-                <div class="muted small">{{ po.supplier.name }}</div>
+                <div class="text-muted small">{{ po.supplier.name }}</div>
               </div>
-
               <div class="d-flex align-items-center gap-2">
-                <span class="badge bg-light text-dark">{{ po.status }}</span>
-                <a class="btn btn-sm btn-outline-dark" href="/po/{{ po.id }}/print/" target="_blank">Print</a>
+                <span class="badge text-bg-secondary">{{ po.get_status_display }}</span>
+                <a class="btn btn-sm btn-outline-secondary" href="/po/{{ po.id }}/print/" target="_blank"><i class="bi bi-printer"></i></a>
                 <a class="btn btn-sm btn-outline-primary" href="/po/{{ po.id }}/">Open</a>
                 {% if po.status != "RECEIVED" %}
-                  <a class="btn btn-sm btn-success" href="/po/{{ po.id }}/receive/">Receive</a>
+                  <a class="btn btn-sm btn-primary" href="/po/{{ po.id }}/receive/">Receive</a>
                 {% endif %}
               </div>
             </div>
           {% endfor %}
         </div>
       {% else %}
-        <div class="muted">No POs yet. Create your first PO to start the workflow.</div>
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-clipboard-plus fs-1 d-block mb-2 opacity-50"></i>
+          No POs yet. Create your first PO to start the workflow.
+        </div>
       {% endif %}
     </div>
   </div>
 
   <div class="col-lg-5">
-    <div class="tile p-4">
+    <div class="tile p-4 mb-3">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="fw-semibold mb-0">At a glance</h5>
-        <span class="muted small">{% if needs_setup %}Setup{% else %}Live{% endif %}</span>
+        <h5 class="fw-semibold mb-0"><i class="bi bi-speedometer2 me-2 text-primary"></i>At a glance</h5>
+        <span class="pill">{% if needs_setup %}Setup{% else %}Live{% endif %}</span>
       </div>
-
       <div class="row g-3">
         <div class="col-6">
-          <div class="p-3 rounded-4 border">
-            <div class="muted small">Total POs</div>
-            <div class="fs-3 fw-bold">{{ kpis.po_count|default:0 }}</div>
+          <div class="card stat-card p-3 h-100">
+            <div class="text-muted small mb-1">Total POs</div>
+            <div class="kpi-value">{{ kpis.po_count|default:0 }}</div>
           </div>
         </div>
         <div class="col-6">
-          <div class="p-3 rounded-4 border">
-            <div class="muted small">Inventory Lines</div>
-            <div class="fs-3 fw-bold">{{ kpis.inventory_lines|default:0 }}</div>
+          <div class="card stat-card p-3 h-100">
+            <div class="text-muted small mb-1">Inventory Lines</div>
+            <div class="kpi-value">{{ kpis.inventory_lines|default:0 }}</div>
           </div>
         </div>
       </div>
+    </div>
 
-      <hr class="my-4"/>
-
+    <div class="tile p-4">
+      <h6 class="fw-semibold mb-3"><i class="bi bi-lightning-charge me-2 text-primary"></i>Quick actions</h6>
       <div class="d-grid gap-2">
-        <a class="btn btn-outline-primary" href="/po/new/">Raise Purchase Order</a>
-        <a class="btn btn-outline-secondary" href="/inventory/">View Inventory</a>
-        <a class="btn btn-outline-dark" href="/reconcile/">Reconcile Channels</a>
+        <a class="btn btn-outline-primary" href="/po/new/"><i class="bi bi-plus-square me-1"></i> Raise Purchase Order</a>
+        <a class="btn btn-outline-secondary" href="/inventory/"><i class="bi bi-boxes me-1"></i> View Inventory</a>
+        <a class="btn btn-outline-secondary" href="/reconcile/"><i class="bi bi-shuffle me-1"></i> Reconcile Channels</a>
       </div>
     </div>
   </div>
 </div>
 
-<!-- COLLAPSIBLE ABOUT (YOUR TEXT, NOT REPEATED) -->
+<!-- ABOUT -->
 <div class="tile p-4 mt-4">
   <div class="d-flex justify-content-between align-items-center">
-    <h5 class="fw-semibold mb-0">About SKUNOW</h5>
+    <h5 class="fw-semibold mb-0"><i class="bi bi-info-circle me-2 text-primary"></i>About SKUNOW</h5>
     <button class="btn btn-sm btn-outline-secondary" type="button"
             data-bs-toggle="collapse" data-bs-target="#aboutSkunow">
       Toggle
     </button>
   </div>
-
   <div id="aboutSkunow" class="collapse show mt-3">
     <p class="text-muted mb-3">
       SKUNOW is an inventory intelligence platform built for startups, SMEs, and growing eCommerce brands.
-      It centralizes purchasing, stock control, and channel reconciliation into a single system of record eliminating spreadsheet chaos and fragmented tools.
+      It centralizes purchasing, stock control, and channel reconciliation into a single system of record - eliminating spreadsheet chaos and fragmented tools.
     </p>
-
     <p class="text-muted mb-3">
-      Raise and manage purchase orders with full lifecycle tracking, monitor shipments from suppliers to warehouses or 3PLs, and receive stock with complete audit trails all while maintaining accurate multi-location inventory balances.
+      Raise and manage purchase orders with full lifecycle tracking, monitor shipments from suppliers to warehouses or 3PLs, and receive stock with complete audit trails - all while maintaining accurate multi-location inventory balances.
     </p>
-
-    <p class="text-muted mb-3">
-      Sync and reconcile inventory with Amazon and Shopify, detect stock drift early, and prevent costly stockouts or overselling before they impact operations.
-    </p>
-
     <p class="text-muted mb-0">
-      SKUNOW goes beyond tracking inventory it delivers structured operational control over working capital, supply flow, and stock accuracy.
+      Sync and reconcile inventory with Amazon and Shopify, detect stock drift early, and prevent costly stockouts or overselling before they impact operations.
     </p>
   </div>
 </div>
-
 {% endblock %}

@@ -41,7 +41,7 @@
     <div class="muted" style="margin-top:10px;">Issue Date</div>
     <div>{{ po.created_at|date:"d M Y" }}</div>
     <div class="muted" style="margin-top:10px;">Expected Delivery</div>
-    <div>{% if po.expected_date %}{{ po.expected_date|date:"d M Y" }}{% else %}—{% endif %}</div>
+    <div>{% if po.expected_date %}{{ po.expected_date|date:"d M Y" }}{% else %}-{% endif %}</div>
   </div>
 
   <div class="box" style="min-width: 320px;">
@@ -128,7 +128,7 @@
 <div class="footer">
   <div style="flex:1;">
     <div class="muted">Notes</div>
-    <div style="margin-top:6px;">{% if po.notes %}{{ po.notes }}{% else %}—{% endif %}</div>
+    <div style="margin-top:6px;">{% if po.notes %}{{ po.notes }}{% else %}-{% endif %}</div>
 
     <div style="margin-top:16px;">
       <div><b>Payment Terms:</b> Net 30 days</div>

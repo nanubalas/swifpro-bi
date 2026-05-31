@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}VAT Returns - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">VAT Returns (MTD)</h2>
+    <div class="text-muted">Compute the 9-box return from your issued and posted invoices.</div>
+  </div>
+</div>
+
+<div class="alert alert-info d-flex align-items-center">
+  <i class="bi bi-info-circle me-2"></i>
+  <div>Live submission to HMRC's Making Tax Digital API isn't connected yet (it needs an HMRC developer account &amp; credentials). You can compute, save and review returns now; submission records a local draft filing.</div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Compute a period</div>
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label mb-1">From</label>
+        <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control" required>
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-1">To</label>
+        <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control" required>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary"><i class="bi bi-calculator me-1"></i> Compute</button>
+      </div>
+    </form>
+
+    {% if preview %}
+    <hr>
+    <div class="row">
+      <div class="col-lg-8">
+        <table class="table align-middle mb-0">
+          <tbody>
+            <tr><td>Box 1 - VAT due on sales</td><td class="text-end fw-semibold">{{ preview.box1_vat_due_sales|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 2 - VAT due on acquisitions</td><td class="text-end">{{ preview.box2_vat_due_acquisitions|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 3 - Total VAT due</td><td class="text-end fw-semibold">{{ preview.box3_total_vat_due|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 4 - VAT reclaimed on purchases</td><td class="text-end fw-semibold">{{ preview.box4_vat_reclaimed|money:tenant.currency_code }}</td></tr>
+            <tr class="table-light"><td class="fw-bold">Box 5 - Net VAT to pay / reclaim</td><td class="text-end fw-bold">{{ preview.box5_net_vat|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 6 - Total sales ex VAT</td><td class="text-end">{{ preview.box6_total_sales_ex_vat|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 7 - Total purchases ex VAT</td><td class="text-end">{{ preview.box7_total_purchases_ex_vat|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 8 - EU supplies</td><td class="text-end">{{ preview.box8_eu_supplies|money:tenant.currency_code }}</td></tr>
+            <tr><td>Box 9 - EU acquisitions</td><td class="text-end">{{ preview.box9_eu_acquisitions|money:tenant.currency_code }}</td></tr>
+          </tbody>
+        </table>
+        <div class="text-muted small mt-2">{{ preview.sales_count }} sales invoice(s), {{ preview.purchases_count }} purchase invoice(s) in period.</div>
+      </div>
+      <div class="col-lg-4">
+        <form method="post" action="{% url 'vat_save' %}">
+          {% csrf_token %}
+          <input type="hidden" name="from" value="{{ date_from|date:'Y-m-d' }}">
+          <input type="hidden" name="to" value="{{ date_to|date:'Y-m-d' }}">
+          <button class="btn btn-primary w-100"><i class="bi bi-save me-1"></i> Save as draft return</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Saved returns</div>
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light"><tr><th>Period</th><th class="text-end">Box 5 (net VAT)</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          {% for r in returns %}
+          <tr>
+            <td>{{ r.period_from|date:'d M Y' }} - {{ r.period_to|date:'d M Y' }}</td>
+            <td class="text-end fw-semibold">{{ r.box5_net_vat|money:tenant.currency_code }}</td>
+            <td>{% if r.status == 'SUBMITTED' %}<span class="badge text-bg-success">Submitted</span>{% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}</td>
+            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'vat_detail' r.id %}">Open</a></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" class="text-center text-muted py-4">No saved returns yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
