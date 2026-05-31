@@ -256,7 +256,7 @@ class AccessRequestTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership
         self.tenant = Tenant.objects.create(name="Req Co")
-        self.admin = User.objects.create_user("adminu", password="pw")
+        self.admin = User.objects.create_user("adminu", password="pw", email="admin@req.test")
         OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
 
     def test_public_can_submit_request(self):
@@ -301,6 +301,21 @@ class AccessRequestTests(TestCase):
         req.refresh_from_db()
         self.assertEqual(req.status, "REJECTED")
         self.assertIsNone(req.created_user)
+
+    def test_submit_emails_admin(self):
+        from django.core import mail
+        self.client.post("/request-access/", {"name": "Jane", "email": "jane@acme.test", "team": "Sales"})
+        self.assertTrue(any("admin@req.test" in m.to for m in mail.outbox))
+
+    def test_approve_emails_applicant_with_credentials(self):
+        from django.core import mail
+        from core.models import AccessRequest
+        req = AccessRequest.objects.create(name="Bob", email="bob@acme.test", tenant=self.tenant)
+        self.client.login(username="adminu", password="pw")
+        self.client.post(f"/access-requests/{req.id}/action/", {"action": "approve", "role": "SALES"})
+        applicant_mails = [m for m in mail.outbox if "bob@acme.test" in m.to]
+        self.assertTrue(applicant_mails)
+        self.assertIn("Temporary password", applicant_mails[-1].body)
 
 
 class PerOrgEnforcementTests(TestCase):
