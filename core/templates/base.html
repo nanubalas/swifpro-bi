@@ -276,6 +276,11 @@
     .wm-img-light { display: none; }
     [data-bs-theme="dark"] .wm-img-dark { display: none; }
     [data-bs-theme="dark"] .wm-img-light { display: inline; }
+
+    /* ---------- Logo: swap to the light variant in dark mode ---------- */
+    .logo-dark { display: none; }
+    [data-bs-theme="dark"] .logo-light { display: none; }
+    [data-bs-theme="dark"] .logo-dark { display: inline; }
   </style>
 </head>
 
@@ -293,7 +298,7 @@
     {% endif %}
 
     <a class="navbar-brand d-flex align-items-center gap-2 fs-5" href="/">
-      <img src="{% static 'img/logo.png' %}" alt="SwifPro BI" height="30" width="30" style="border-radius:7px;"> {% include "_wordmark.html" %}
+      <img src="{% static 'img/logo.png' %}" alt="SwifPro BI" height="30" width="30" class="logo-light" style="border-radius:7px;"><img src="{% static 'img/logo-dark.png' %}" alt="SwifPro BI" height="30" width="30" class="logo-dark" style="border-radius:7px;"> {% include "_wordmark.html" %}
     </a>
 
     <div class="ms-auto d-flex align-items-center gap-2">
@@ -330,7 +335,7 @@
 <div class="offcanvas offcanvas-start" tabindex="-1" id="skunowMenu">
   <div class="offcanvas-header">
     <div>
-      <h5 class="offcanvas-title mb-0 fs-5 d-flex align-items-center gap-2"><img src="{% static 'img/logo.png' %}" alt="SwifPro BI" height="28" width="28" style="border-radius:6px;"> {% include "_wordmark.html" %}</h5>
+      <h5 class="offcanvas-title mb-0 fs-5 d-flex align-items-center gap-2"><img src="{% static 'img/logo.png' %}" alt="SwifPro BI" height="28" width="28" class="logo-light" style="border-radius:6px;"><img src="{% static 'img/logo-dark.png' %}" alt="SwifPro BI" height="28" width="28" class="logo-dark" style="border-radius:6px;"> {% include "_wordmark.html" %}</h5>
       <div class="text-muted small">Business intelligence, simplified!</div>
     </div>
     <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
