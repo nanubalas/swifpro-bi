@@ -21,6 +21,9 @@
     font-size: 1.35rem; background: var(--skn-brand-soft); color: var(--skn-brand);
   }
   .launch-card:hover .launch-icon { background: var(--skn-brand); color: #fff; }
+  /* Gold accent reserved for Finance & Reports/BI cards */
+  .launch-icon.gold { background: var(--skn-gold-soft); color: var(--skn-gold); }
+  .launch-card:hover .launch-icon.gold { background: var(--skn-gold); color: #fff; }
   .launch-section-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 700; color: var(--skn-muted); }
 </style>
 
@@ -38,7 +41,7 @@
     {% for label, url, icon in items %}
     <div class="col-6 col-md-4 col-xl-3">
       <a href="{{ url }}" class="launch-card">
-        <span class="launch-icon"><i class="bi bi-{{ icon }}"></i></span>
+        <span class="launch-icon{% if section_title == 'Finance' or section_title == 'Reports' %} gold{% endif %}"><i class="bi bi-{{ icon }}"></i></span>
         <div class="fw-semibold">{{ label }}</div>
       </a>
     </div>

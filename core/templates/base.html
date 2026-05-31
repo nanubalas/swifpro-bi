@@ -29,27 +29,37 @@
     /* ============================================================
        SwifPro BI design tokens - calm, professional, easy on the eyes
        ============================================================ */
+    /* Brand palette (navy + teal identity, gold as a rare premium accent) */
     :root {
-      --skn-brand: #4f46e5;          /* indigo 600 */
-      --skn-brand-strong: #4338ca;   /* indigo 700 */
-      --skn-brand-soft: #eef2ff;     /* indigo 50  */
-      --skn-accent: #7c6cf0;
-      --skn-brand-rgb: 79, 70, 229;
+      --brand-navy: #071F49;
+      --brand-navy-soft: #0B2A5B;
+      --brand-teal: #00AFA6;
+      --brand-teal-bright: #18D6C9;
+      --brand-gold: #D9A129;
 
-      --skn-bg: #f4f6fb;
-      --skn-surface: #ffffff;
-      --skn-surface-2: #f8fafc;
-      --skn-border: #e6eaf1;
-      --skn-text: #1f2a37;
-      --skn-muted: #6b7280;
+      /* ----- LIGHT MODE (60 light / 30 navy / 10 teal+gold) ----- */
+      --skn-brand: #00AFA6;          /* teal - primary CTA / accent (10%) */
+      --skn-brand-strong: #00908A;   /* teal hover */
+      --skn-brand-soft: #E1F5F3;     /* teal tint - active/hover surfaces */
+      --skn-brand-rgb: 0, 175, 166;
+      --skn-accent: #18D6C9;
+      --skn-gold: #D9A129;
+      --skn-gold-soft: #FBF1DA;
+
+      --skn-bg: #F7F9FC;             /* 60% - off-white / light blue-grey */
+      --skn-surface: #FFFFFF;
+      --skn-surface-2: #EEF3FA;
+      --skn-border: #DDE6F0;
+      --skn-text: #071F49;          /* 30% - deep navy headings/text */
+      --skn-muted: #5D6B7C;
 
       --skn-radius: 14px;
       --skn-radius-sm: 10px;
-      --skn-shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
-      --skn-shadow: 0 4px 6px -2px rgba(16,24,40,.04), 0 12px 28px -6px rgba(16,24,40,.10);
-      --skn-shadow-lg: 0 18px 48px -12px rgba(16,24,40,.22);
+      --skn-shadow-sm: 0 1px 2px rgba(7,31,73,.05), 0 1px 3px rgba(7,31,73,.06);
+      --skn-shadow: 0 4px 6px -2px rgba(7,31,73,.05), 0 12px 28px -6px rgba(7,31,73,.10);
+      --skn-shadow-lg: 0 18px 48px -12px rgba(7,31,73,.20);
+      --skn-cta-shadow: 0 6px 16px -6px rgba(0,175,166,.45);
 
-      /* Map Bootstrap globals onto our palette */
       --bs-body-bg: var(--skn-bg);
       --bs-body-color: var(--skn-text);
       --bs-body-font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -59,43 +69,48 @@
       --bs-link-hover-color: var(--skn-brand-strong);
       --bs-border-color: var(--skn-border);
       --bs-border-radius: var(--skn-radius-sm);
+      --bs-emphasis-color: var(--brand-navy);
     }
 
+    /* ----- DARK MODE (60 deep navy / 30 softer navy panels+light text / 10 teal glow+gold) ----- */
     [data-bs-theme="dark"] {
-      --skn-brand: #818cf8;
-      --skn-brand-strong: #6366f1;
-      --skn-brand-soft: #1e2236;
-      --skn-accent: #a78bfa;
-      --skn-brand-rgb: 129, 140, 248;
+      --skn-brand: #18D6C9;          /* bright teal CTA */
+      --skn-brand-strong: #00AFA6;
+      --skn-brand-soft: #0E3A55;     /* deep teal tint for active surfaces */
+      --skn-brand-rgb: 24, 214, 201;
+      --skn-accent: #18D6C9;
+      --skn-gold: #E7B948;
+      --skn-gold-soft: #2A2410;
 
-      --skn-bg: #0e1320;
-      --skn-surface: #161d2e;
-      --skn-surface-2: #1b2438;
-      --skn-border: #273249;
-      --skn-text: #e5e9f2;
-      --skn-muted: #94a3b8;
+      --skn-bg: #020817;             /* 60% - deep navy / near-black */
+      --skn-surface: #102B4E;        /* 30% - softer navy panels */
+      --skn-surface-2: #173B66;      /* blue-grey cards */
+      --skn-border: #1E3A63;
+      --skn-text: #EAF2FF;           /* readable light text */
+      --skn-muted: #AAB8CC;
 
-      --skn-shadow-sm: 0 1px 2px rgba(0,0,0,.30);
-      --skn-shadow: 0 10px 28px -8px rgba(0,0,0,.55);
-      --skn-shadow-lg: 0 22px 50px -14px rgba(0,0,0,.70);
+      --skn-shadow-sm: 0 1px 2px rgba(0,0,0,.40);
+      --skn-shadow: 0 10px 28px -8px rgba(0,0,0,.60);
+      --skn-shadow-lg: 0 22px 50px -14px rgba(0,0,0,.75);
+      --skn-cta-shadow: 0 0 24px rgba(24,214,201,.35);
 
       --bs-body-bg: var(--skn-bg);
       --bs-body-color: var(--skn-text);
       --bs-border-color: var(--skn-border);
-      --bs-emphasis-color: #f8fafc;
+      --bs-emphasis-color: #FFFFFF;
       --bs-secondary-color: var(--skn-muted);
       --bs-tertiary-bg: var(--skn-surface-2);
     }
 
     body {
       background:
-        radial-gradient(1200px 600px at 100% -10%, rgba(var(--skn-brand-rgb), .07), transparent 60%),
-        radial-gradient(1000px 500px at -10% 0%, rgba(124,108,240,.06), transparent 55%),
+        radial-gradient(1100px 560px at 100% -12%, rgba(var(--skn-brand-rgb), .06), transparent 60%),
         var(--skn-bg);
       background-attachment: fixed;
       color: var(--skn-text);
       letter-spacing: .1px;
     }
+    h1,h2,h3,h4,h5,h6,.fw-bold,.fw-semibold { color: var(--bs-emphasis-color); }
     .text-muted, .muted { color: var(--skn-muted) !important; }
 
     /* ---------- Navbar ---------- */
@@ -158,18 +173,29 @@
       content: ""; position: absolute; inset: 0 auto 0 0; width: 4px;
       background: linear-gradient(180deg, var(--skn-brand), var(--skn-accent));
     }
+    /* Gold accent strip - reserved for finance / reports / key metrics */
+    .stat-card.gold::before { background: linear-gradient(180deg, var(--skn-gold), #E7B948); }
+    .text-gold { color: var(--skn-gold) !important; }
+    .badge.text-bg-gold { background: var(--skn-gold-soft) !important; color: var(--skn-gold) !important; }
 
     /* ---------- Buttons ---------- */
     .btn { border-radius: var(--skn-radius-sm); font-weight: 600; transition: all .16s ease; }
     .btn:active { transform: translateY(1px); }
     .btn-primary {
       --bs-btn-bg: var(--skn-brand); --bs-btn-border-color: var(--skn-brand);
+      --bs-btn-color: #fff;
       --bs-btn-hover-bg: var(--skn-brand-strong); --bs-btn-hover-border-color: var(--skn-brand-strong);
+      --bs-btn-hover-color: #fff;
       --bs-btn-active-bg: var(--skn-brand-strong); --bs-btn-active-border-color: var(--skn-brand-strong);
+      --bs-btn-active-color: #fff;
       --bs-btn-disabled-bg: var(--skn-brand); --bs-btn-disabled-border-color: var(--skn-brand);
-      box-shadow: 0 6px 16px -6px rgba(var(--skn-brand-rgb), .65);
+      box-shadow: var(--skn-cta-shadow);
     }
-    .btn-primary:hover { box-shadow: 0 10px 22px -6px rgba(var(--skn-brand-rgb), .75); transform: translateY(-1px); }
+    .btn-primary:hover { transform: translateY(-1px); }
+    /* Dark-mode CTA: bright teal on near-black text, with teal glow */
+    [data-bs-theme="dark"] .btn-primary {
+      --bs-btn-color: #020817; --bs-btn-hover-color: #020817; --bs-btn-active-color: #020817;
+    }
     .btn-outline-primary {
       --bs-btn-color: var(--skn-brand); --bs-btn-border-color: color-mix(in srgb, var(--skn-brand) 45%, var(--skn-border));
       --bs-btn-hover-bg: var(--skn-brand); --bs-btn-hover-border-color: var(--skn-brand);
@@ -219,12 +245,12 @@
     .text-bg-success   { background: #dcfce7 !important; color: #15803d !important; }
     .text-bg-danger    { background: #fee2e2 !important; color: #b91c1c !important; }
     .text-bg-dark      { background: #e5e9f2 !important; color: #334155 !important; }
-    [data-bs-theme="dark"] .text-bg-secondary { background: #232c40 !important; color: #aab4cb !important; }
+    [data-bs-theme="dark"] .text-bg-secondary { background: #173B66 !important; color: #AAB8CC !important; }
     [data-bs-theme="dark"] .text-bg-info      { background: #0b2c3f !important; color: #7dd3fc !important; }
     [data-bs-theme="dark"] .text-bg-warning   { background: #3a2c0b !important; color: #fcd34d !important; }
     [data-bs-theme="dark"] .text-bg-success   { background: #0e2f1c !important; color: #6ee7a8 !important; }
     [data-bs-theme="dark"] .text-bg-danger    { background: #3a1414 !important; color: #fca5a5 !important; }
-    [data-bs-theme="dark"] .text-bg-dark      { background: #232c40 !important; color: #cbd5e1 !important; }
+    [data-bs-theme="dark"] .text-bg-dark      { background: #173B66 !important; color: #cbd5e1 !important; }
 
     .pill {
       padding: 4px 12px; border-radius: 999px; background: var(--skn-brand-soft);
