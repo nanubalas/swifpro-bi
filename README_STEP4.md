@@ -1,4 +1,4 @@
-# SKUNOW Step 4 - Transfers + PO approvals + GRN + Landed Cost + 3-way match
+# SwifPro BI Step 4 - Transfers + PO approvals + GRN + Landed Cost + 3-way match
 
 ## What's new
 - Location Transfers (lot/serial/expiry aware)

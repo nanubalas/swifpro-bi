@@ -826,7 +826,7 @@ def reconcile(request):
         if s.sku not in latest:
             latest[s.sku] = s
 
-    # SKUNOW totals per SKU (sum across locations)
+    # SwifPro BI totals per SKU (sum across locations)
     skunow_totals = {}
     for b in InventoryBalance.objects.filter(tenant=tenant).select_related("product"):
         skunow_totals.setdefault(b.product.sku, Decimal("0.00"))

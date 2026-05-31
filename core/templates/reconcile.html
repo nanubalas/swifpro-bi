@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block body %}
-<h2>Reconciliation (Shopify snapshot vs SKUNOW)</h2>
+<h2>Reconciliation (Shopify snapshot vs SwifPro BI)</h2>
 <table class="table table-hover bg-white">
-  <tr><th>SKU</th><th>SKUNOW Qty</th><th>Shopify Qty</th><th>Drift (Shopify - SKUNOW)</th></tr>
+  <tr><th>SKU</th><th>SwifPro BI Qty</th><th>Shopify Qty</th><th>Drift (Shopify - SwifPro BI)</th></tr>
   {% for r in rows %}
     <tr>
       <td>{{ r.sku }}</td>

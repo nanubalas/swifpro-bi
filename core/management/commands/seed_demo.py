@@ -31,9 +31,9 @@ class Command(BaseCommand):
 
         # Tenant - the post_save signal bootstraps VAT codes + GL accounts.
         tenant, created = Tenant.objects.get_or_create(
-            name="SKUNOW Demo Ltd",
+            name="SwifPro BI Demo Ltd",
             defaults={
-                "email": "ops@skunow-demo.co.uk",
+                "email": "ops@swifpro-demo.co.uk",
                 "phone": "+44 20 7946 0000",
                 "vat_number": "GB123456789",
                 "company_number": "12345678",
@@ -61,7 +61,7 @@ class Command(BaseCommand):
             ("viewer", roles_mod.READONLY),
         ]
         for username, role in role_users:
-            u, created = User.objects.get_or_create(username=username, defaults={"email": f"{username}@skunow-demo.co.uk"})
+            u, created = User.objects.get_or_create(username=username, defaults={"email": f"{username}@swifpro-demo.co.uk"})
             if created:
                 u.set_password("Skunow@2026")
                 u.save()
@@ -71,13 +71,13 @@ class Command(BaseCommand):
 
         # Multi-org demo: a second organisation where 'manager' is the Accountant.
         north, _ = Tenant.objects.get_or_create(
-            name="SKUNOW North Ltd",
-            defaults={"currency_code": "GBP", "email": "north@skunow-demo.co.uk"},
+            name="SwifPro BI North Ltd",
+            defaults={"currency_code": "GBP", "email": "north@swifpro-demo.co.uk"},
         )
         mgr = User.objects.filter(username="manager").first()
         if mgr:
             OrgMembership.objects.get_or_create(user=mgr, tenant=north, defaults={"role": roles_mod.ACCOUNTANT})
-            self.stdout.write("Added 'manager' as Accountant in SKUNOW North Ltd (multi-org demo).")
+            self.stdout.write("Added 'manager' as Accountant in SwifPro BI North Ltd (multi-org demo).")
 
         # UOM
         each, _ = UnitOfMeasure.objects.get_or_create(tenant=tenant, code="each", defaults={"name": "Each"})
@@ -189,7 +189,7 @@ class Command(BaseCommand):
         # Shopify channel + a sync run (populates snapshot + sales movements)
         ChannelConnection.objects.get_or_create(
             tenant=tenant, channel=SalesChannel.SHOPIFY, name="default",
-            defaults={"shop_domain": "skunow-demo.myshopify.com"},
+            defaults={"shop_domain": "swifpro-demo.myshopify.com"},
         )
         if not SyncRun.objects.filter(tenant=tenant).exists():
             detail = sync_shopify_for_tenant(tenant)

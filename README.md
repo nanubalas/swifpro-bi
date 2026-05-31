@@ -1,4 +1,4 @@
-# SKUNOW
+# SwifPro BI
 
 A Django, server-rendered **mini-ERP for UK SMEs** - purchasing, inventory,
 sales, and finance in one system of record. Server-rendered with Bootstrap 5
@@ -69,7 +69,7 @@ python manage.py createsuperuser
 ```bash
 python manage.py seed_demo
 ```
-This creates the **SKUNOW Demo Ltd** tenant with products, suppliers,
+This creates the **SwifPro BI Demo Ltd** tenant with products, suppliers,
 locations, a PO + shipment, a posted sales order (COGS), an issued AR invoice,
 a customer receipt, a Shopify sync, and a draft VAT return - so every page
 shows real data. It binds the `admin` user to the tenant and is idempotent

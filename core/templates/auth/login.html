@@ -1,17 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Login - SKUNOW{% endblock %}
+{% load static %}
+{% block title %}Login - SwifPro BI{% endblock %}
 
 {% block body %}
 <div class="row justify-content-center align-items-center" style="min-height: 70vh;">
   <div class="col-md-6 col-lg-5 col-xl-4">
     <div class="card-soft p-4 p-md-5">
       <div class="text-center mb-4">
-        <div class="d-inline-flex align-items-center justify-content-center mb-3"
-             style="width:58px;height:58px;border-radius:16px;font-size:1.6rem;color:#fff;background:linear-gradient(135deg,var(--skn-brand),var(--skn-accent));box-shadow:0 10px 24px -8px rgba(var(--skn-brand-rgb),.7);">
-          <i class="bi bi-boxes"></i>
-        </div>
-        <h3 class="fw-bold mb-1">Sign in to SKUNOW</h3>
-        <p class="text-muted mb-0">Know your SKU better.</p>
+        <img src="{% static 'img/logo.png' %}" alt="SwifPro BI" width="76" height="76" class="mb-3">
+        <h3 class="fw-bold mb-1">Sign in to SwifPro BI</h3>
+        <p class="text-muted mb-0">Business intelligence, simplified.</p>
       </div>
 
       {% if form.errors %}

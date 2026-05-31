@@ -1,4 +1,4 @@
-# SKUNOW – Complete PO Cycle (Procurement + Logistics)
+# SwifPro BI – Complete PO Cycle (Procurement + Logistics)
 
 This build implements a full PO lifecycle with:
 - Draft → Submit → (Approval Pending) → Approved → Sent → Shipments/Containers/Timeline → Receive (GRN) → Supplier Invoice (3-way match)

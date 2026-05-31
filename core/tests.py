@@ -90,13 +90,13 @@ class TemplateRenderTests(TestCase):
     def test_login_page_renders(self):
         resp = self.client.get("/login/")
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "Sign in to SKUNOW")
+        self.assertContains(resp, "Sign in to SwifPro BI")
 
     def test_landing_page_renders(self):
         self.client.login(username="u", password="pw")
         resp = self.client.get("/", follow=True)
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "SKUNOW")
+        self.assertContains(resp, "SwifPro BI")
         self.assertContains(resp, "Dashboard")
         self.assertContains(resp, "Action required")
 
