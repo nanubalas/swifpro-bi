@@ -35,6 +35,7 @@ from core.forms import (
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
 from core.services.gl import post_customer_invoice, post_supplier_invoice
+from core.services import reports as reports_service
 from django.db.utils import OperationalError
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib import messages
@@ -1940,4 +1941,73 @@ def shipment_new(request, po_id):
         return redirect("shipment_detail", shipment_id=shipment.id)
 
     return render(request, "shipments/shipment_new.html", {"tenant": tenant, "po": po, "dests": dests})
+
+
+# ============================
+# Financial Reports
+# ============================
+
+def _parse_date(raw):
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return timezone.datetime.fromisoformat(raw).date()
+    except (ValueError, TypeError):
+        return None
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def reports_index(request):
+    tenant = _get_default_tenant(request)
+    return render(request, "reports/index.html", {"tenant": tenant})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_trial_balance(request):
+    tenant = _get_default_tenant(request)
+    as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()
+    data = reports_service.trial_balance(tenant, date_to=as_of)
+    return render(request, "reports/trial_balance.html", {"tenant": tenant, "as_of": as_of, "data": data})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_pnl(request):
+    tenant = _get_default_tenant(request)
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to")) or timezone.localdate()
+    data = reports_service.profit_and_loss(tenant, date_from=date_from, date_to=date_to)
+    return render(request, "reports/pnl.html", {
+        "tenant": tenant, "date_from": date_from, "date_to": date_to, "data": data,
+    })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_balance_sheet(request):
+    tenant = _get_default_tenant(request)
+    as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()
+    data = reports_service.balance_sheet(tenant, as_of=as_of)
+    return render(request, "reports/balance_sheet.html", {"tenant": tenant, "as_of": as_of, "data": data})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_aged_receivables(request):
+    tenant = _get_default_tenant(request)
+    as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()
+    data = reports_service.aged_receivables(tenant, as_of=as_of)
+    return render(request, "reports/aged.html", {
+        "tenant": tenant, "as_of": as_of, "data": data,
+        "title": "Aged Debtors (Receivables)", "party_label": "Customer",
+    })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_aged_payables(request):
+    tenant = _get_default_tenant(request)
+    as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()
+    data = reports_service.aged_payables(tenant, as_of=as_of)
+    return render(request, "reports/aged.html", {
+        "tenant": tenant, "as_of": as_of, "data": data,
+        "title": "Aged Creditors (Payables)", "party_label": "Supplier",
+    })
 

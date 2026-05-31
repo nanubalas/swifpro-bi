@@ -179,3 +179,51 @@ class GLBalanceTests(TestCase):
         self.assertEqual(je.total_debit, Decimal("240.00"))  # 200 net + 20% VAT
         inv.refresh_from_db()
         self.assertEqual(inv.status, "ISSUED")
+
+
+class FinancialReportsTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Reports Co")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-R1")
+        std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="Item", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=std)
+        post_customer_invoice(inv)  # DR AR 240 / CR Sales 200 / CR VAT 40
+
+        self.user = User.objects.create_user("fin", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Finance")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="fin", password="pw")
+
+    def test_trial_balance_is_balanced(self):
+        from core.services import reports
+        tb = reports.trial_balance(self.tenant)
+        self.assertTrue(tb["balanced"])
+        self.assertEqual(tb["total_debit"], Decimal("240.00"))
+
+    def test_pnl_net_profit(self):
+        from core.services import reports
+        pnl = reports.profit_and_loss(self.tenant)
+        self.assertEqual(pnl["income_total"], Decimal("200.00"))
+        self.assertEqual(pnl["expense_total"], Decimal("0.00"))
+        self.assertEqual(pnl["net_profit"], Decimal("200.00"))
+
+    def test_balance_sheet_balances(self):
+        from core.services import reports
+        bs = reports.balance_sheet(self.tenant)
+        self.assertEqual(bs["asset_total"], Decimal("240.00"))          # AR
+        self.assertEqual(bs["liability_total"], Decimal("40.00"))       # VAT output
+        self.assertEqual(bs["retained_earnings"], Decimal("200.00"))    # net income
+        self.assertTrue(bs["balanced"])
+
+    def test_aged_receivables_lists_issued_invoice(self):
+        from core.services import reports
+        ar = reports.aged_receivables(self.tenant)
+        self.assertEqual(ar["total"], Decimal("240.00"))
+        self.assertEqual(len(ar["rows"]), 1)
+
+    def test_report_pages_render(self):
+        for path in ["/reports/", "/reports/trial-balance/", "/reports/profit-and-loss/",
+                     "/reports/balance-sheet/", "/reports/aged-receivables/", "/reports/aged-payables/"]:
+            resp = self.client.get(path)
+            self.assertEqual(resp.status_code, 200, f"{path} -> {resp.status_code}")

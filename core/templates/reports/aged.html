@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}{{ title }} - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small"><a href="{% url 'reports_index' %}" class="text-decoration-none">Reports</a> / {{ title }}</div>
+    <h2 class="fw-bold mb-0">{{ title }}</h2>
+  </div>
+  <form method="get" class="d-flex align-items-end gap-2">
+    <div>
+      <label class="form-label mb-1">As of</label>
+      <input type="date" name="as_of" value="{{ as_of|date:'Y-m-d' }}" class="form-control form-control-sm">
+    </div>
+    <button class="btn btn-primary btn-sm">Apply</button>
+  </form>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col"><div class="card stat-card p-3"><div class="text-muted small">Current</div><div class="fw-bold">{{ data.buckets.current|money:tenant.currency_code }}</div></div></div>
+  <div class="col"><div class="card stat-card p-3"><div class="text-muted small">1-30 days</div><div class="fw-bold">{{ data.buckets.d1_30|money:tenant.currency_code }}</div></div></div>
+  <div class="col"><div class="card stat-card p-3"><div class="text-muted small">31-60 days</div><div class="fw-bold">{{ data.buckets.d31_60|money:tenant.currency_code }}</div></div></div>
+  <div class="col"><div class="card stat-card p-3"><div class="text-muted small">61-90 days</div><div class="fw-bold">{{ data.buckets.d61_90|money:tenant.currency_code }}</div></div></div>
+  <div class="col"><div class="card stat-card p-3"><div class="text-muted small">90+ days</div><div class="fw-bold">{{ data.buckets.d90_plus|money:tenant.currency_code }}</div></div></div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>{{ party_label }}</th><th>Reference</th><th>Date</th><th class="text-end">Days</th><th class="text-end">Amount</th></tr>
+        </thead>
+        <tbody>
+          {% for r in data.rows %}
+          <tr>
+            <td class="fw-semibold">{{ r.party }}</td>
+            <td>{{ r.ref }}</td>
+            <td class="text-muted">{{ r.date|date:'d M Y' }}</td>
+            <td class="text-end">{{ r.days }}</td>
+            <td class="text-end">{{ r.amount|money:tenant.currency_code }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-5">Nothing outstanding.</td></tr>
+          {% endfor %}
+        </tbody>
+        <tfoot><tr class="fw-bold border-top"><td colspan="4" class="text-end">Total outstanding</td><td class="text-end">{{ data.total|money:tenant.currency_code }}</td></tr></tfoot>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

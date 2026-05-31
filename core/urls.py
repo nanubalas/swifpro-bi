@@ -125,4 +125,12 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("returns/new/", views.return_create, name="return_create"),
     path("returns/<int:rma_id>/", views.return_detail, name="return_detail"),
     path("returns/<int:rma_id>/process/", views.return_process, name="return_process"),
+
+    # Financial reports
+    path("reports/", views.reports_index, name="reports_index"),
+    path("reports/trial-balance/", views.report_trial_balance, name="report_trial_balance"),
+    path("reports/profit-and-loss/", views.report_pnl, name="report_pnl"),
+    path("reports/balance-sheet/", views.report_balance_sheet, name="report_balance_sheet"),
+    path("reports/aged-receivables/", views.report_aged_receivables, name="report_aged_receivables"),
+    path("reports/aged-payables/", views.report_aged_payables, name="report_aged_payables"),
 ]
