@@ -145,3 +145,35 @@ def post_payment(payment, user=None) -> JournalEntry:
     payment.status = Payment.Status.POSTED
     payment.save(update_fields=["status"])
     return je
+
+
+@transaction.atomic
+def post_inventory_receipt(tenant, value, ref_id, user=None, entry_date=None):
+    """Capitalize received stock: DR Inventory / CR GRNI."""
+    value = Decimal(value)
+    if value <= Decimal("0.00"):
+        return None
+    je = JournalEntry.objects.create(
+        tenant=tenant, entry_date=entry_date or timezone.now().date(),
+        ref_type="GRN", ref_id=str(ref_id), memo=f"Goods received {ref_id}",
+        posted_by=user, posted_at=timezone.now(),
+    )
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory"), description="Inventory", debit=value, credit=Decimal("0.00"))
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "grni"), description="GRNI", debit=Decimal("0.00"), credit=value)
+    return je
+
+
+@transaction.atomic
+def post_cogs(tenant, value, ref_id, user=None, entry_date=None):
+    """Expense cost of goods sold: DR COGS / CR Inventory."""
+    value = Decimal(value)
+    if value <= Decimal("0.00"):
+        return None
+    je = JournalEntry.objects.create(
+        tenant=tenant, entry_date=entry_date or timezone.now().date(),
+        ref_type="COGS", ref_id=str(ref_id), memo=f"COGS {ref_id}",
+        posted_by=user, posted_at=timezone.now(),
+    )
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "cogs"), description="Cost of Goods Sold", debit=value, credit=Decimal("0.00"))
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory"), description="Inventory", debit=Decimal("0.00"), credit=value)
+    return je

@@ -85,6 +85,7 @@ class Command(BaseCommand):
                     movement_type=InventoryMovement.MovementType.RECEIVE,
                     qty_delta=Decimal(qty), ref_type="SEED", ref_id="INIT",
                     notes="Opening balance (demo seed)",
+                    unit_cost=product.standard_cost,  # sets moving-average cost
                 )
             self.stdout.write("Seeded opening inventory balances.")
 

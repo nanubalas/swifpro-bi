@@ -124,6 +124,8 @@ class Product(models.Model):
     # Costing
     cost_method = models.CharField(max_length=20, choices=CostMethod.choices, default=CostMethod.AVERAGE)
     standard_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    # Running moving-average cost, maintained on inbound movements.
+    average_cost = models.DecimalField(max_digits=12, decimal_places=4, default=Decimal("0.0000"))
 
     class Meta:
         unique_together = ("tenant", "sku")
@@ -409,6 +411,10 @@ class InventoryMovement(models.Model):
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
     movement_type = models.CharField(max_length=20, choices=MovementType.choices)
     qty_delta = models.DecimalField(max_digits=12, decimal_places=2)
+    # Cost captured at the time of the movement (unit_cost = cost per unit;
+    # value = qty_delta * unit_cost, so it carries the same sign as qty_delta).
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    value = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     ref_type = models.CharField(max_length=50)  # "PO", "ORDER", "MANUAL"
     ref_id = models.CharField(max_length=100)   # po_number or order_id
     notes = models.CharField(max_length=255, blank=True, null=True)

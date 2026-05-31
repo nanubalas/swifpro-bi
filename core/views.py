@@ -34,7 +34,7 @@ from core.forms import (
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
-from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment
+from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment, post_inventory_receipt, post_cogs
 from core.services import reports as reports_service
 from core.services import vat as vat_service
 from django.db.utils import OperationalError
@@ -624,6 +624,7 @@ def receive_po(request, po_id):
                         pass
 
                 any_received = False
+                total_cost = Decimal("0.00")
                 for sl in shipment.lines.select_related("po_line", "po_line__product"):
                     key = f"recv_{sl.id}"
                     qty_raw = (request.POST.get(key) or "").strip()
@@ -674,7 +675,9 @@ def receive_po(request, po_id):
                         lot_code=lot_code,
                         serial_number=serial,
                         expiry_date=expiry,
+                        unit_cost=sl.po_line.unit_cost,
                     )
+                    total_cost += qty * sl.po_line.unit_cost
 
                     # Update received quantities
                     sl.received_qty += qty
@@ -687,6 +690,9 @@ def receive_po(request, po_id):
                 if not any_received:
                     # Nothing actually received: abort the whole transaction.
                     raise ValueError("Nothing received.")
+
+                # Capitalize received stock into the GL: DR Inventory / CR GRNI.
+                post_inventory_receipt(tenant, total_cost, receipt.grn_number, user=request.user, entry_date=received_at.date())
 
                 # Update PO status
                 if all((l.open_qty == Decimal("0.00") for l in po.lines.all())):
@@ -1099,6 +1105,7 @@ def _post_sales_order(order: SalesOrder):
     # Release reserved qty first (we still post even if insufficient; warn)
     release_reservations(tenant=order.tenant, ref_type="SALES_ORDER", ref_id=ref_id)
 
+    cogs_total = Decimal("0.00")
     for line in order.lines.select_related("product").all():
         ship_loc = line.ship_from_location or order.ship_from_location
         if not ship_loc:
@@ -1129,7 +1136,7 @@ def _post_sales_order(order: SalesOrder):
                     "short_by": str(comp_qty - available),
                 })
 
-            apply_movement(
+            movement = apply_movement(
                 tenant=order.tenant,
                 product=comp,
                 location=ship_loc,
@@ -1142,6 +1149,11 @@ def _post_sales_order(order: SalesOrder):
                 serial_number=line.serial_number,
                 expiry_date=line.expiry_date,
             )
+            # movement.value is negative for outbound; COGS is its absolute value.
+            cogs_total += -(movement.value or Decimal("0.00"))
+
+    # Expense cost of goods sold: DR COGS / CR Inventory.
+    post_cogs(order.tenant, cogs_total, ref_id, entry_date=order.order_date.date())
 
     order.status = SalesOrder.Status.POSTED
     order.save()
@@ -2000,6 +2012,13 @@ def report_aged_receivables(request):
         "tenant": tenant, "as_of": as_of, "data": data,
         "title": "Aged Debtors (Receivables)", "party_label": "Customer",
     })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_stock_valuation(request):
+    tenant = _get_default_tenant(request)
+    data = reports_service.stock_valuation(tenant)
+    return render(request, "reports/stock_valuation.html", {"tenant": tenant, "data": data})
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])

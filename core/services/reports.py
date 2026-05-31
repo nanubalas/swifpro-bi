@@ -11,7 +11,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from core.models import (
-    GLAccount, JournalLine, CustomerInvoice, SupplierInvoice,
+    GLAccount, JournalLine, CustomerInvoice, SupplierInvoice, InventoryBalance,
 )
 
 DEBIT_NORMAL = {GLAccount.Type.ASSET, GLAccount.Type.EXPENSE}
@@ -174,6 +174,26 @@ def aged_receivables(tenant, as_of=None):
             "amount": outstanding,
         })
     return _aged(items, as_of)
+
+
+def stock_valuation(tenant):
+    """On-hand quantity x moving-average cost, per product, with a grand total."""
+    rows = []
+    total = ZERO
+    balances = (InventoryBalance.objects.filter(tenant=tenant)
+                .select_related("product").order_by("product__sku"))
+    by_product = {}
+    for b in balances:
+        p = b.product
+        by_product.setdefault(p, ZERO)
+        by_product[p] += (b.on_hand or ZERO)
+    for product, qty in by_product.items():
+        avg = product.average_cost or ZERO
+        value = (qty * avg).quantize(Decimal("0.01"))
+        total += value
+        rows.append({"product": product, "qty": qty, "avg_cost": avg, "value": value})
+    rows.sort(key=lambda r: r["product"].sku)
+    return {"rows": rows, "total": total}
 
 
 def aged_payables(tenant, as_of=None):

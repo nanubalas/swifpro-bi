@@ -1,9 +1,30 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
+from django.db.models import Sum
 from core.models import InventoryBalance, InventoryLotBalance, InventoryMovement, InventoryReservation
 
+CENTS = Decimal("0.01")
+COST_DP = Decimal("0.0001")
+
+
+def _total_on_hand(tenant, product):
+    agg = InventoryBalance.objects.filter(tenant=tenant, product=product).aggregate(s=Sum("on_hand"))
+    return agg["s"] or Decimal("0.00")
+
+
 @transaction.atomic
-def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_type, ref_id, notes=None, lot_code=None, serial_number=None, expiry_date=None):
+def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_type, ref_id,
+                   notes=None, lot_code=None, serial_number=None, expiry_date=None, unit_cost=None):
+    """Apply an inventory movement and maintain valuation.
+
+    Inbound (qty_delta > 0) with a unit_cost updates the product's moving
+    weighted-average cost. Outbound movements are valued at the current
+    average cost. Every movement stores unit_cost + signed value so the GL
+    and stock-valuation reports can rely on it.
+    """
+    # Quantity on hand BEFORE this movement (company-wide, for the average).
+    prior_qty = _total_on_hand(tenant, product)
+
     bal, _ = InventoryBalance.objects.select_for_update().get_or_create(
         tenant=tenant, product=product, location=location,
         defaults={"on_hand": Decimal("0.00"), "reserved": Decimal("0.00")}
@@ -21,12 +42,31 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
         lot_bal.on_hand = (lot_bal.on_hand or Decimal("0.00")) + qty_delta
         lot_bal.save()
 
-    InventoryMovement.objects.create(
+    # ----- Valuation -----
+    prior_avg = product.average_cost or Decimal("0.0000")
+    if qty_delta > 0 and unit_cost is not None:
+        # Inbound at a known cost -> recompute moving average.
+        unit_cost = Decimal(unit_cost)
+        new_qty = prior_qty + qty_delta
+        if new_qty > 0:
+            new_avg = ((prior_qty * prior_avg) + (qty_delta * unit_cost)) / new_qty
+            product.average_cost = new_avg.quantize(COST_DP, rounding=ROUND_HALF_UP)
+            product.save(update_fields=["average_cost"])
+        move_unit_cost = unit_cost
+    else:
+        # Outbound, or inbound without an explicit cost: value at current average.
+        move_unit_cost = prior_avg
+
+    value = (qty_delta * move_unit_cost).quantize(CENTS, rounding=ROUND_HALF_UP)
+
+    movement = InventoryMovement.objects.create(
         tenant=tenant,
         product=product,
         location=location,
         movement_type=movement_type,
         qty_delta=qty_delta,
+        unit_cost=move_unit_cost,
+        value=value,
         ref_type=ref_type,
         ref_id=str(ref_id),
         notes=notes or "",
@@ -34,7 +74,7 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
         serial_number=serial_number,
         expiry_date=expiry_date,
     )
-    return bal
+    return movement
 
 
 @transaction.atomic

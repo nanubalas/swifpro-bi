@@ -5,6 +5,7 @@ from core.models import (
     ChannelOrder, ChannelSnapshot, Product, Location
 )
 from core.services.inventory import apply_movement
+from core.services.gl import post_cogs
 
 
 def _shopify_default_location(tenant: Tenant) -> Location:
@@ -52,6 +53,7 @@ def sync_shopify_for_tenant(tenant: Tenant):
             if not created:
                 continue
 
+            cogs_total = Decimal("0.00")
             for li in o.get("line_items", []):
                 sku = li["sku"]
                 qty = Decimal(str(li["quantity"]))
@@ -60,7 +62,7 @@ def sync_shopify_for_tenant(tenant: Tenant):
                 if not product:
                     continue
 
-                apply_movement(
+                movement = apply_movement(
                     tenant=tenant,
                     product=product,
                     location=location,
@@ -70,6 +72,10 @@ def sync_shopify_for_tenant(tenant: Tenant):
                     ref_id=external_id,
                     notes="Shopify order sync"
                 )
+                cogs_total += -(movement.value or Decimal("0.00"))
+
+            # Expense COGS for the synced order.
+            post_cogs(tenant, cogs_total, external_id)
 
         snap = fake_fetch_shopify_inventory_snapshot(conn)
         for row in snap:

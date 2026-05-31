@@ -58,6 +58,12 @@ class ReceivingFlowTests(TestCase):
         self.po.refresh_from_db()
         self.assertEqual(self.po.status, PurchaseOrder.Status.PARTIALLY_RECEIVED)
 
+        # Receipt capitalizes stock: DR Inventory / CR GRNI at 4 x 2.50 = 10.00
+        from core.models import JournalEntry
+        je = JournalEntry.objects.get(tenant=self.tenant, ref_type="GRN")
+        self.assertEqual(je.total_debit, je.total_credit)
+        self.assertEqual(je.total_debit, Decimal("10.00"))
+
     def test_over_receipt_is_rolled_back(self):
         self.client.post(f"/po/{self.po.id}/receive/", {f"recv_{self.sl.id}": "999"})
         # Whole transaction rolls back: no balance, no movement, no orphan GRN.
@@ -246,6 +252,55 @@ class PaymentsTests(TestCase):
     def test_payment_pages_render(self):
         for path in ["/payments/", "/payments/receipts/new/", "/payments/payments/new/", "/bank/reconcile/"]:
             self.assertEqual(self.client.get(path).status_code, 200, path)
+
+
+class CostingTests(TestCase):
+    def setUp(self):
+        from core.models import Location
+        self.tenant = Tenant.objects.create(name="Cost Co")
+        self.product = Product.objects.create(tenant=self.tenant, sku="SKU-C", name="P")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH")
+
+    def test_moving_average_and_outbound_valuation(self):
+        from core.services.inventory import apply_movement
+        from core.services import reports
+
+        apply_movement(tenant=self.tenant, product=self.product, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="1",
+                       unit_cost=Decimal("2.00"))
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.average_cost, Decimal("2.0000"))
+
+        apply_movement(tenant=self.tenant, product=self.product, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="2",
+                       unit_cost=Decimal("4.00"))
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.average_cost, Decimal("3.0000"))  # (20+40)/20
+
+        sale = apply_movement(tenant=self.tenant, product=self.product, location=self.loc,
+                              movement_type="SALE", qty_delta=Decimal("-5"), ref_type="T", ref_id="3")
+        self.assertEqual(sale.unit_cost, Decimal("3.0000"))
+        self.assertEqual(sale.value, Decimal("-15.00"))
+
+        val = reports.stock_valuation(self.tenant)
+        self.assertEqual(val["total"], Decimal("45.00"))  # 15 on hand x 3.00
+
+    def test_sales_order_posts_cogs_journal(self):
+        from core.services.inventory import apply_movement
+        from core.views import _post_sales_order
+        from core.models import SalesOrder, SalesOrderLine, JournalEntry
+
+        apply_movement(tenant=self.tenant, product=self.product, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="1",
+                       unit_cost=Decimal("3.00"))
+        order = SalesOrder.objects.create(tenant=self.tenant, order_number="SO-C1", ship_from_location=self.loc)
+        SalesOrderLine.objects.create(order=order, product=self.product, qty=Decimal("4"), unit_price=Decimal("10.00"))
+
+        _post_sales_order(order)
+
+        je = JournalEntry.objects.get(tenant=self.tenant, ref_type="COGS")
+        self.assertEqual(je.total_debit, je.total_credit)
+        self.assertEqual(je.total_debit, Decimal("12.00"))  # 4 x 3.00
 
 
 class VatReturnTests(TestCase):
