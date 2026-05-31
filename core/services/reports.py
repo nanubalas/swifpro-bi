@@ -161,14 +161,17 @@ def _aged(items, as_of):
 def aged_receivables(tenant, as_of=None):
     as_of = as_of or timezone.localdate()
     items = []
-    qs = CustomerInvoice.objects.filter(tenant=tenant, status="ISSUED").select_related("customer").prefetch_related("lines", "lines__tax_code")
+    qs = CustomerInvoice.objects.filter(tenant=tenant, status="ISSUED").select_related("customer").prefetch_related("lines", "lines__tax_code", "payment_allocations")
     for inv in qs:
+        outstanding = inv.outstanding
+        if outstanding <= ZERO:
+            continue
         items.append({
             "party": inv.customer.name,
             "ref": inv.invoice_number,
             "date": inv.invoice_date,
             "due": inv.due_date or inv.invoice_date,
-            "amount": inv.total,
+            "amount": outstanding,
         })
     return _aged(items, as_of)
 
@@ -176,14 +179,16 @@ def aged_receivables(tenant, as_of=None):
 def aged_payables(tenant, as_of=None):
     as_of = as_of or timezone.localdate()
     items = []
-    qs = SupplierInvoice.objects.filter(tenant=tenant, status="POSTED").select_related("supplier").prefetch_related("lines", "lines__tax_code")
+    qs = SupplierInvoice.objects.filter(tenant=tenant, status="POSTED").select_related("supplier").prefetch_related("lines", "lines__tax_code", "payment_allocations")
     for inv in qs:
-        amount = sum((l.line_total + l.tax_amount for l in inv.lines.all()), ZERO)
+        outstanding = inv.outstanding
+        if outstanding <= ZERO:
+            continue
         items.append({
             "party": inv.supplier.name,
             "ref": inv.invoice_number,
             "date": inv.invoice_date,
             "due": inv.invoice_date,
-            "amount": amount,
+            "amount": outstanding,
         })
     return _aged(items, as_of)

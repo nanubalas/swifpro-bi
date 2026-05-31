@@ -126,6 +126,13 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("returns/<int:rma_id>/", views.return_detail, name="return_detail"),
     path("returns/<int:rma_id>/process/", views.return_process, name="return_process"),
 
+    # Payments + bank reconciliation
+    path("payments/", views.payment_list, name="payment_list"),
+    path("payments/receipts/new/", views.receipt_create, name="receipt_create"),
+    path("payments/payments/new/", views.supplier_payment_create, name="supplier_payment_create"),
+    path("payments/<int:payment_id>/", views.payment_detail, name="payment_detail"),
+    path("bank/reconcile/", views.bank_reconciliation, name="bank_reconciliation"),
+
     # Financial reports
     path("reports/", views.reports_index, name="reports_index"),
     path("reports/trial-balance/", views.report_trial_balance, name="report_trial_balance"),

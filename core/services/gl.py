@@ -6,6 +6,7 @@ from core.models import JournalEntry, JournalLine, GLAccount, CustomerInvoice, S
 
 DEFAULT_ACCOUNT_CODES = {
     "inventory": "1000",
+    "bank": "1050",
     "ar": "1100",
     "ap": "2000",
     "grni": "2100",
@@ -91,4 +92,56 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
 
     inv.status = "POSTED"
     inv.save()
+    return je
+
+
+@transaction.atomic
+def post_payment(payment, user=None) -> JournalEntry:
+    """Post a payment to the GL and mark fully-settled invoices as paid.
+
+    Customer receipt: DR Bank / CR Accounts Receivable.
+    Supplier payment: DR Accounts Payable / CR Bank.
+    """
+    from core.models import Payment  # avoid circular import at module load
+
+    if payment.status == Payment.Status.POSTED:
+        je = JournalEntry.objects.filter(tenant=payment.tenant, ref_type="PAYMENT", ref_id=str(payment.id)).order_by("-id").first()
+        if je:
+            return je
+
+    tenant = payment.tenant
+    amount = payment.amount
+
+    je = JournalEntry.objects.create(
+        tenant=tenant,
+        entry_date=payment.payment_date,
+        ref_type="PAYMENT",
+        ref_id=str(payment.id),
+        memo=f"{payment.get_direction_display()} {payment.reference or ''}".strip(),
+        posted_by=user,
+        posted_at=timezone.now(),
+    )
+
+    if payment.direction == Payment.Direction.RECEIPT:
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "bank"), description="Bank", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "ar"), description="Accounts Receivable", debit=Decimal("0.00"), credit=amount)
+    else:
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "ap"), description="Accounts Payable", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "bank"), description="Bank", debit=Decimal("0.00"), credit=amount)
+
+    # Mark fully-settled invoices as paid.
+    for alloc in payment.allocations.select_related("customer_invoice", "supplier_invoice").all():
+        inv = alloc.customer_invoice or alloc.supplier_invoice
+        if inv is None:
+            continue
+        if inv.outstanding <= Decimal("0.00"):
+            if alloc.customer_invoice_id:
+                inv.status = CustomerInvoice.Status.PAID
+            else:
+                # Supplier invoices have no PAID state; leave POSTED (settled).
+                pass
+            inv.save(update_fields=["status"])
+
+    payment.status = Payment.Status.POSTED
+    payment.save(update_fields=["status"])
     return je

@@ -10,7 +10,8 @@ from core.models import (
     InventoryTransfer, InventoryTransferLine,
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
-    TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount
+    TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount,
+    Payment
 )
 
 
@@ -282,3 +283,19 @@ class GLAccountForm(TenantModelForm):
     class Meta:
         model = GLAccount
         fields = ["code", "name", "type", "is_active"]
+
+
+class ReceiptForm(TenantModelForm):
+    """Record money received from a customer."""
+    class Meta:
+        model = Payment
+        fields = ["customer", "payment_date", "amount", "method", "reference", "notes"]
+        widgets = {"notes": forms.Textarea(attrs={"rows": 2})}
+
+
+class SupplierPaymentForm(TenantModelForm):
+    """Record money paid to a supplier."""
+    class Meta:
+        model = Payment
+        fields = ["supplier", "payment_date", "amount", "method", "reference", "notes"]
+        widgets = {"notes": forms.Textarea(attrs={"rows": 2})}

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{% if mode == 'receipt' %}Record Receipt{% else %}Pay Supplier{% endif %} - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <a href="{% url 'payment_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+      <h2 class="fw-bold mb-0">
+        {% if mode == 'receipt' %}Record Customer Receipt{% else %}Record Supplier Payment{% endif %}
+      </h2>
+    </div>
+
+    <div class="alert alert-info d-flex align-items-center">
+      <i class="bi bi-info-circle me-2"></i>
+      <div>The amount is automatically allocated to the {% if mode == 'receipt' %}customer's{% else %}supplier's{% endif %} oldest open invoices first, then posted to the ledger.</div>
+    </div>
+
+    <div class="card-soft p-4">
+      <form method="post">
+        {% csrf_token %}
+        {% for field in form %}
+          <div class="mb-3">
+            <label class="form-label">{{ field.label }}</label>
+            {{ field }}
+            {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+            {% for err in field.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
+          </div>
+        {% endfor %}
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i> Record &amp; Post</button>
+          <a class="btn btn-outline-secondary" href="{% url 'payment_list' %}">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Apply Bootstrap styling to plain widgets rendered by Django.
+  document.querySelectorAll("form select").forEach(e => e.classList.add("form-select"));
+  document.querySelectorAll("form input, form textarea").forEach(e => {
+    if (e.type !== "checkbox" && e.type !== "hidden") e.classList.add("form-control");
+  });
+</script>
+{% endblock %}

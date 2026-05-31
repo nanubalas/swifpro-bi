@@ -16,7 +16,7 @@ from core.models import (
     SupplierInvoice, SupplierInvoiceLine,
     ReturnAuthorization, ReturnLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
-    GLAccount, JournalEntry
+    GLAccount, JournalEntry, Payment, PaymentAllocation
 )
 from core.forms import (
     PurchaseOrderForm, PurchaseOrderLineFormSet,
@@ -30,11 +30,11 @@ from core.forms import (
     ReturnAuthorizationForm, ReturnLineFormSet,
     TaxCodeForm, CustomerForm,
     CustomerInvoiceForm, CustomerInvoiceLineFormSet,
-    GLAccountForm
+    GLAccountForm, ReceiptForm, SupplierPaymentForm
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
-from core.services.gl import post_customer_invoice, post_supplier_invoice
+from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment
 from core.services import reports as reports_service
 from django.db.utils import OperationalError
 from django.shortcuts import get_object_or_404, render, redirect
@@ -2009,5 +2009,110 @@ def report_aged_payables(request):
     return render(request, "reports/aged.html", {
         "tenant": tenant, "as_of": as_of, "data": data,
         "title": "Aged Creditors (Payables)", "party_label": "Supplier",
+    })
+
+
+# ============================
+# Payments (AR receipts / AP payments) + bank reconciliation
+# ============================
+
+def _allocate_fifo(payment, open_invoices, invoice_field):
+    """Allocate the payment amount across open invoices oldest-first."""
+    remaining = payment.amount
+    for inv in open_invoices:
+        if remaining <= Decimal("0.00"):
+            break
+        outstanding = inv.outstanding
+        if outstanding <= Decimal("0.00"):
+            continue
+        alloc = min(remaining, outstanding)
+        PaymentAllocation.objects.create(payment=payment, amount=alloc, **{invoice_field: inv})
+        remaining -= alloc
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def payment_list(request):
+    tenant = _get_default_tenant(request)
+    payments = Payment.objects.filter(tenant=tenant).select_related("customer", "supplier").order_by("-payment_date", "-id")
+    return render(request, "payments/payment_list.html", {"tenant": tenant, "payments": payments})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def receipt_create(request):
+    tenant = _get_default_tenant(request)
+    form = ReceiptForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        payment = form.save(commit=False)
+        payment.tenant = tenant
+        payment.direction = Payment.Direction.RECEIPT
+        payment.currency_code = tenant.currency_code
+        payment.save()
+        open_invoices = (CustomerInvoice.objects
+                         .filter(tenant=tenant, customer=payment.customer, status=CustomerInvoice.Status.ISSUED)
+                         .order_by("invoice_date", "id"))
+        _allocate_fifo(payment, open_invoices, "customer_invoice")
+        post_payment(payment, user=request.user)
+        messages.success(request, f"Receipt of {payment.amount} recorded and allocated.")
+        return redirect("payment_detail", payment_id=payment.id)
+    return render(request, "payments/payment_form.html", {"tenant": tenant, "form": form, "mode": "receipt"})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def supplier_payment_create(request):
+    tenant = _get_default_tenant(request)
+    form = SupplierPaymentForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        payment = form.save(commit=False)
+        payment.tenant = tenant
+        payment.direction = Payment.Direction.PAYMENT
+        payment.currency_code = tenant.currency_code
+        payment.save()
+        open_invoices = (SupplierInvoice.objects
+                         .filter(tenant=tenant, supplier=payment.supplier, status=SupplierInvoice.Status.POSTED)
+                         .order_by("invoice_date", "id"))
+        _allocate_fifo(payment, open_invoices, "supplier_invoice")
+        post_payment(payment, user=request.user)
+        messages.success(request, f"Payment of {payment.amount} recorded and allocated.")
+        return redirect("payment_detail", payment_id=payment.id)
+    return render(request, "payments/payment_form.html", {"tenant": tenant, "form": form, "mode": "payment"})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def payment_detail(request, payment_id):
+    tenant = _get_default_tenant(request)
+    payment = get_object_or_404(Payment, id=payment_id, tenant=tenant)
+    allocations = payment.allocations.select_related("customer_invoice", "supplier_invoice").all()
+    return render(request, "payments/payment_detail.html", {
+        "tenant": tenant, "payment": payment, "allocations": allocations,
+    })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def bank_reconciliation(request):
+    tenant = _get_default_tenant(request)
+    payments = Payment.objects.filter(tenant=tenant, status=Payment.Status.POSTED).select_related("customer", "supplier").order_by("payment_date", "id")
+
+    if request.method == "POST":
+        cleared_ids = set(request.POST.getlist("cleared"))
+        for p in payments:
+            should = str(p.id) in cleared_ids
+            if should != p.is_reconciled:
+                p.is_reconciled = should
+                p.reconciled_at = timezone.now() if should else None
+                p.save(update_fields=["is_reconciled", "reconciled_at"])
+        messages.success(request, "Reconciliation saved.")
+        return redirect("bank_reconciliation")
+
+    def signed(p):
+        return p.amount if p.direction == Payment.Direction.RECEIPT else -p.amount
+
+    book_balance = sum((signed(p) for p in payments), Decimal("0.00"))
+    cleared_balance = sum((signed(p) for p in payments if p.is_reconciled), Decimal("0.00"))
+    return render(request, "payments/bank_reconciliation.html", {
+        "tenant": tenant, "payments": payments,
+        "book_balance": book_balance, "cleared_balance": cleared_balance,
+        "uncleared": book_balance - cleared_balance,
     })
 

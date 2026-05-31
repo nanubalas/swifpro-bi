@@ -615,6 +615,26 @@ class SupplierInvoice(models.Model):
     def __str__(self):
         return self.invoice_number
 
+    @property
+    def subtotal(self):
+        return sum((l.line_total for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def tax_total(self):
+        return sum((l.tax_amount for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def total(self):
+        return self.subtotal + self.tax_total
+
+    @property
+    def amount_paid(self):
+        return sum((a.amount for a in self.payment_allocations.all()), Decimal("0.00"))
+
+    @property
+    def outstanding(self):
+        return self.total - self.amount_paid
+
 
 class SupplierInvoiceLine(models.Model):
     invoice = models.ForeignKey(SupplierInvoice, related_name="lines", on_delete=models.CASCADE)
@@ -739,6 +759,14 @@ class CustomerInvoice(models.Model):
     def total(self):
         return self.subtotal + self.tax_total
 
+    @property
+    def amount_paid(self):
+        return sum((a.amount for a in self.payment_allocations.all()), Decimal("0.00"))
+
+    @property
+    def outstanding(self):
+        return self.total - self.amount_paid
+
 
 class CustomerInvoiceLine(models.Model):
     invoice = models.ForeignKey(CustomerInvoice, related_name="lines", on_delete=models.CASCADE)
@@ -810,3 +838,69 @@ class JournalLine(models.Model):
     description = models.CharField(max_length=255, blank=True, null=True)
     debit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     credit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+
+# ============================
+# Payments (AR receipts / AP payments) + bank reconciliation
+# ============================
+
+class Payment(models.Model):
+    class Direction(models.TextChoices):
+        RECEIPT = "RECEIPT", "Customer receipt"   # money in
+        PAYMENT = "PAYMENT", "Supplier payment"   # money out
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        POSTED = "POSTED", "Posted"
+
+    class Method(models.TextChoices):
+        BANK = "BANK", "Bank transfer"
+        CARD = "CARD", "Card"
+        CASH = "CASH", "Cash"
+        CHEQUE = "CHEQUE", "Cheque"
+        OTHER = "OTHER", "Other"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    direction = models.CharField(max_length=10, choices=Direction.choices)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True, related_name="payments")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True, related_name="payments")
+    payment_date = models.DateField(default=timezone.now)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=10, choices=Method.choices, default=Method.BANK)
+    reference = models.CharField(max_length=100, blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    currency_code = models.CharField(max_length=3, default="GBP")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+
+    # Bank reconciliation
+    is_reconciled = models.BooleanField(default=False)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        party = self.customer or self.supplier
+        return f"{self.get_direction_display()} {self.amount} ({party})"
+
+    @property
+    def party_name(self):
+        if self.customer_id:
+            return self.customer.name
+        if self.supplier_id:
+            return self.supplier.name
+        return ""
+
+    @property
+    def allocated(self):
+        return sum((a.amount for a in self.allocations.all()), Decimal("0.00"))
+
+    @property
+    def unallocated(self):
+        return self.amount - self.allocated
+
+
+class PaymentAllocation(models.Model):
+    payment = models.ForeignKey(Payment, related_name="allocations", on_delete=models.CASCADE)
+    customer_invoice = models.ForeignKey(CustomerInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name="payment_allocations")
+    supplier_invoice = models.ForeignKey(SupplierInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name="payment_allocations")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)

@@ -181,6 +181,73 @@ class GLBalanceTests(TestCase):
         self.assertEqual(inv.status, "ISSUED")
 
 
+class PaymentsTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Pay Co")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-P1")
+        CustomerInvoiceLine.objects.create(invoice=self.inv, description="Item", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(self.inv)  # total 240, status ISSUED
+
+        self.user = User.objects.create_user("pay", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Finance")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="pay", password="pw")
+
+    def test_full_receipt_settles_invoice_and_clears_ar(self):
+        from core.services import reports
+        from core.models import GLAccount, Payment
+
+        resp = self.client.post("/payments/receipts/new/", {
+            "customer": self.customer.id, "payment_date": "2026-05-30",
+            "amount": "240.00", "method": "BANK", "reference": "FPS-1",
+        })
+        self.assertEqual(resp.status_code, 302)
+
+        payment = Payment.objects.get(tenant=self.tenant)
+        self.assertEqual(payment.status, "POSTED")
+        self.assertEqual(payment.allocated, Decimal("240.00"))
+
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.status, "PAID")
+
+        # AR account nets to zero (invoice DR 240, receipt CR 240).
+        balances = reports.account_balances(self.tenant)
+        ar = GLAccount.objects.get(tenant=self.tenant, code="1100")
+        bank = GLAccount.objects.get(tenant=self.tenant, code="1050")
+        self.assertEqual(balances[ar]["balance"], Decimal("0.00"))
+        self.assertEqual(balances[bank]["balance"], Decimal("240.00"))
+
+    def test_partial_receipt_leaves_invoice_open(self):
+        from core.models import Payment
+        self.client.post("/payments/receipts/new/", {
+            "customer": self.customer.id, "payment_date": "2026-05-30",
+            "amount": "100.00", "method": "BANK", "reference": "FPS-2",
+        })
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.status, "ISSUED")
+        self.assertEqual(self.inv.outstanding, Decimal("140.00"))
+
+    def test_bank_reconciliation_toggles_cleared(self):
+        from core.models import Payment
+        self.client.post("/payments/receipts/new/", {
+            "customer": self.customer.id, "payment_date": "2026-05-30",
+            "amount": "240.00", "method": "BANK",
+        })
+        payment = Payment.objects.get(tenant=self.tenant)
+        self.assertFalse(payment.is_reconciled)
+
+        resp = self.client.post("/bank/reconcile/", {"cleared": [str(payment.id)]})
+        self.assertEqual(resp.status_code, 302)
+        payment.refresh_from_db()
+        self.assertTrue(payment.is_reconciled)
+
+    def test_payment_pages_render(self):
+        for path in ["/payments/", "/payments/receipts/new/", "/payments/payments/new/", "/bank/reconcile/"]:
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+
+
 class FinancialReportsTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Reports Co")
