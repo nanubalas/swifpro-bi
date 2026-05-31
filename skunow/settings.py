@@ -133,9 +133,14 @@ if not DEBUG:
     X_FRAME_OPTIONS = "DENY"
 
 
-# Email (SMTP) for sending supplier POs
-EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+# Email (SMTP) for supplier POs + access-request notifications.
 EMAIL_HOST = os.getenv('EMAIL_HOST', '')
+# Default to SMTP; but in dev with no SMTP host configured, print emails to the
+# console so notifications are visible without real mail credentials.
+_default_email_backend = 'django.core.mail.backends.smtp.EmailBackend'
+if DEBUG and not EMAIL_HOST:
+    _default_email_backend = 'django.core.mail.backends.console.EmailBackend'
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', _default_email_backend)
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')

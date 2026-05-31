@@ -369,6 +369,8 @@ def request_access(request):
         req = form.save()
         log_audit(action="ACCESS_REQUEST", request=request,
                   detail=f"{req.name} <{req.email}> team={req.team or '-'}", username=req.email)
+        from core import notify
+        notify.notify_admins_new_request(req, request)
         messages.success(request, "Thanks! Your request has been sent to the administrator.")
         return redirect("login")
     return render(request, "auth/request_access.html", {"form": form})
@@ -414,6 +416,8 @@ def access_request_action(request, req_id):
         req.reviewed_at = timezone.now()
         req.save()
         log_audit(action="ACCESS_REQUEST_REJECTED", request=request, user=request.user, tenant=tenant, detail=req.email)
+        from core import notify
+        notify.notify_applicant_rejected(req, request)
         messages.warning(request, f"Request from {req.name} rejected.")
         return redirect("access_request_list")
 
@@ -442,6 +446,8 @@ def access_request_action(request, req_id):
         req.save()
         log_audit(action="ACCESS_REQUEST_APPROVED", request=request, user=request.user, tenant=tenant,
                   detail=f"{req.email} -> {username} ({role})")
+        from core import notify
+        notify.notify_applicant_approved(req, username, temp_password, request)
         messages.success(
             request,
             f"Account created for {req.name}: username '{username}', temporary password '{temp_password}' "
