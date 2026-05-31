@@ -11,7 +11,7 @@ from core.models import (
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount,
-    Payment
+    Payment, AccessRequest
 )
 
 
@@ -283,6 +283,17 @@ class GLAccountForm(TenantModelForm):
     class Meta:
         model = GLAccount
         fields = ["code", "name", "type", "is_active"]
+
+
+class AccessRequestForm(forms.ModelForm):
+    """Public form - a prospective user requests an account from the admin."""
+    class Meta:
+        model = AccessRequest
+        fields = ["name", "employee_id", "email", "team", "message"]
+        widgets = {
+            "message": forms.Textarea(attrs={"rows": 2, "placeholder": "Anything the admin should know (optional)"}),
+        }
+        labels = {"employee_id": "Employee ID", "email": "Email", "team": "Team / Department"}
 
 
 class ReceiptForm(TenantModelForm):

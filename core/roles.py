@@ -132,6 +132,7 @@ NAV = [
     ]),
     ("Administration", [
         ("Users & Roles", "/admin/", "people-fill", {ADMIN}),
+        ("Access Requests", "/access-requests/", "person-plus", {ADMIN}),
         ("Settings", "/settings/tenant/", "gear", {ADMIN}),
         ("Audit Log", "/audit/", "shield-lock", {ADMIN}),
     ]),

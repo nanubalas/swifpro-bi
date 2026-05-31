@@ -252,6 +252,57 @@ class RoleDashboardTests(TestCase):
         self.assertEqual(resp.url, "/reports/")
 
 
+class AccessRequestTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Req Co")
+        self.admin = User.objects.create_user("adminu", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+
+    def test_public_can_submit_request(self):
+        from core.models import AccessRequest
+        resp = self.client.post("/request-access/", {
+            "name": "Jane Doe", "employee_id": "E123", "email": "jane@acme.test", "team": "Sales",
+        })
+        self.assertEqual(resp.status_code, 302)
+        r = AccessRequest.objects.get(email="jane@acme.test")
+        self.assertEqual(r.status, "PENDING")
+        self.assertEqual(r.name, "Jane Doe")
+
+    def test_request_form_public_and_get(self):
+        self.assertEqual(self.client.get("/request-access/").status_code, 200)
+
+    def test_list_requires_admin(self):
+        staff = User.objects.create_user("sales2", password="pw")
+        from core.models import OrgMembership
+        OrgMembership.objects.create(user=staff, tenant=self.tenant, role="SALES", is_default=True)
+        self.client.login(username="sales2", password="pw")
+        self.assertEqual(self.client.get("/access-requests/").status_code, 403)
+
+    def test_admin_approve_creates_account(self):
+        from core.models import AccessRequest, OrgMembership
+        from django.contrib.auth.models import User as U
+        req = AccessRequest.objects.create(name="Bob Lee", email="bob@acme.test", team="Warehouse")
+        self.client.login(username="adminu", password="pw")
+        resp = self.client.post(f"/access-requests/{req.id}/action/", {"action": "approve", "role": "WAREHOUSE"})
+        self.assertEqual(resp.status_code, 302)
+        req.refresh_from_db()
+        self.assertEqual(req.status, "APPROVED")
+        self.assertIsNotNone(req.created_user)
+        # The created user has a Warehouse membership in this tenant.
+        self.assertTrue(OrgMembership.objects.filter(user=req.created_user, tenant=self.tenant, role="WAREHOUSE").exists())
+        self.assertEqual(U.objects.filter(username=req.created_user.username).count(), 1)
+
+    def test_admin_reject(self):
+        from core.models import AccessRequest
+        req = AccessRequest.objects.create(name="Eve", email="eve@acme.test")
+        self.client.login(username="adminu", password="pw")
+        self.client.post(f"/access-requests/{req.id}/action/", {"action": "reject"})
+        req.refresh_from_db()
+        self.assertEqual(req.status, "REJECTED")
+        self.assertIsNone(req.created_user)
+
+
 class PerOrgEnforcementTests(TestCase):
     """A multi-org user's module access must follow their ACTIVE org's role."""
     def setUp(self):

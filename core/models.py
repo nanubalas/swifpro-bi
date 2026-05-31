@@ -56,6 +56,35 @@ class OrgMembership(models.Model):
         return f"{self.user} - {self.get_role_display()} @ {self.tenant}"
 
 
+class AccessRequest(models.Model):
+    """A request from a prospective user to be granted access. Submitted from
+    the public request-access form; an Admin reviews and approves (which
+    provisions the account) or rejects."""
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    name = models.CharField(max_length=200)
+    employee_id = models.CharField(max_length=50, blank=True, null=True)
+    email = models.EmailField()
+    team = models.CharField(max_length=100, blank=True, null=True)
+    message = models.TextField(blank=True, null=True)
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.SET_NULL, null=True, blank=True, related_name="access_requests")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(default=timezone.now)
+    reviewed_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="reviewed_access_requests")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_user = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="from_access_request")
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_status_display()})"
+
+
 class AuditLog(models.Model):
     """Security/audit trail: logins, access-denied, and sensitive actions."""
     tenant = models.ForeignKey(Tenant, on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_logs")
