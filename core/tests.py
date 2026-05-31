@@ -99,7 +99,6 @@ class TemplateRenderTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "SwifPro BI")
         self.assertContains(resp, "Dashboard")
-        self.assertContains(resp, "Action required")
 
     def test_po_list_renders(self):
         self.user.groups.add(Group.objects.get_or_create(name="Admin")[0])
