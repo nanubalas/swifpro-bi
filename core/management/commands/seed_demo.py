@@ -11,8 +11,9 @@ from core.models import (
     BillOfMaterials, BillOfMaterialsLine, PurchaseOrder, PurchaseOrderLine,
     Shipment, ShipmentLine, InventoryMovement, Customer, CustomerInvoice,
     CustomerInvoiceLine, TaxCode, SalesOrder, SalesOrderLine, ChannelConnection,
-    SalesChannel, SyncRun, Payment, PaymentAllocation,
+    SalesChannel, SyncRun, Payment, PaymentAllocation, OrgMembership,
 )
+from core import roles as roles_mod
 from core.services.inventory import apply_movement
 from core.services.gl import post_customer_invoice, post_inventory_receipt, post_payment
 from core.services.sync_shopify import sync_shopify_for_tenant
@@ -46,6 +47,37 @@ class Command(BaseCommand):
         admin = User.objects.filter(username="admin").first()
         if admin:
             UserProfile.objects.update_or_create(user=admin, defaults={"tenant": tenant})
+            OrgMembership.objects.get_or_create(user=admin, tenant=tenant, defaults={"role": roles_mod.ADMIN, "is_default": True})
+
+        # Sample users, one per role (password: Skunow@2026)
+        role_users = [
+            ("owner", roles_mod.ADMIN),
+            ("accountant", roles_mod.ACCOUNTANT),
+            ("manager", roles_mod.MANAGER),
+            ("sales", roles_mod.SALES),
+            ("warehouse", roles_mod.WAREHOUSE),
+            ("purchasing", roles_mod.PURCHASING),
+            ("finance", roles_mod.FINANCE),
+            ("viewer", roles_mod.READONLY),
+        ]
+        for username, role in role_users:
+            u, created = User.objects.get_or_create(username=username, defaults={"email": f"{username}@skunow-demo.co.uk"})
+            if created:
+                u.set_password("Skunow@2026")
+                u.save()
+            UserProfile.objects.update_or_create(user=u, defaults={"tenant": tenant})
+            OrgMembership.objects.get_or_create(user=u, tenant=tenant, defaults={"role": role, "is_default": True})
+        self.stdout.write("Seeded role users (owner/accountant/manager/sales/warehouse/purchasing/finance/viewer).")
+
+        # Multi-org demo: a second organisation where 'manager' is the Accountant.
+        north, _ = Tenant.objects.get_or_create(
+            name="SKUNOW North Ltd",
+            defaults={"currency_code": "GBP", "email": "north@skunow-demo.co.uk"},
+        )
+        mgr = User.objects.filter(username="manager").first()
+        if mgr:
+            OrgMembership.objects.get_or_create(user=mgr, tenant=north, defaults={"role": roles_mod.ACCOUNTANT})
+            self.stdout.write("Added 'manager' as Accountant in SKUNOW North Ltd (multi-org demo).")
 
         # UOM
         each, _ = UnitOfMeasure.objects.get_or_create(tenant=tenant, code="each", defaults={"name": "Each"})

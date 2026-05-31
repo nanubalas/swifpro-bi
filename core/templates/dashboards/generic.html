@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}{{ title }} - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small">{{ tenant.name }} · {{ active_role_label }}</div>
+    <h2 class="fw-bold mb-0">{{ title }}</h2>
+  </div>
+</div>
+
+<!-- KPI cards -->
+<div class="row g-3 mb-4">
+  {% for s in stats %}
+  <div class="col-6 col-md-4 col-xl-3">
+    <div class="card kpi-card p-3 h-100">
+      <i class="bi bi-{{ s.icon }} kpi-icon"></i>
+      <div class="kpi-label">{{ s.label }}</div>
+      <div class="kpi-value">{% if s.money %}{{ s.value|money:tenant.currency_code }}{% else %}{{ s.value }}{% endif %}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="row g-4">
+  <!-- Panels -->
+  <div class="col-lg-8">
+    {% for p in panels %}
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-{{ p.icon }} me-2 text-primary"></i>{{ p.title }}</span>
+        {% if p.url %}<a href="{{ p.url }}" class="small text-decoration-none">View all <i class="bi bi-arrow-right"></i></a>{% endif %}
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover align-middle mb-0">
+          <tbody>
+            {% for row in p.rows %}
+            <tr>
+              {% for cell in row %}
+              <td class="{% if cell.align == 'end' %}text-end{% endif %} {% if cell.muted %}text-muted small{% endif %} {% if forloop.first %}ps-3{% endif %} {% if forloop.last %}pe-3{% endif %}">
+                {% if cell.badge %}<span class="badge text-bg-{{ cell.badge }}">{{ cell.text }}</span>
+                {% elif cell.url %}<a href="{{ cell.url }}" class="text-decoration-none fw-semibold">{{ cell.text }}</a>
+                {% else %}{{ cell.text }}{% endif %}
+              </td>
+              {% endfor %}
+            </tr>
+            {% empty %}
+            <tr><td class="text-center text-muted py-4">{{ p.empty|default:"Nothing to show." }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Sidebar: alerts + quick actions -->
+  <div class="col-lg-4">
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-bell me-2 text-primary"></i>Action required</div>
+      <div class="card-body">
+        {% for a in alerts %}
+          <a href="{{ a.url }}" class="d-flex align-items-center gap-2 text-decoration-none text-reset mb-2">
+            <span class="badge text-bg-{{ a.level }}"><i class="bi bi-{{ a.icon }}"></i></span>
+            <span class="small">{{ a.text }}</span>
+          </a>
+        {% empty %}
+          <div class="text-muted small d-flex align-items-center"><i class="bi bi-check-circle text-success me-2"></i>All clear.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><i class="bi bi-lightning-charge me-2 text-primary"></i>Quick actions</div>
+      <div class="card-body d-grid gap-2">
+        {% for act in actions %}
+          <a class="quick-link" href="{{ act.url }}"><i class="bi bi-{{ act.icon }}"></i> {{ act.label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

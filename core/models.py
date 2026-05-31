@@ -2,6 +2,8 @@ from django.db import models
 from django.utils import timezone
 from decimal import Decimal
 
+from core.roles import ROLE_CHOICES
+
 
 class Tenant(models.Model):
     name = models.CharField(max_length=255)
@@ -21,20 +23,56 @@ class Tenant(models.Model):
         max_digits=12, decimal_places=2, default=0
     )
 
+    # Admin-configurable default landing route per role: {role_code: url_name}.
+    role_landing = models.JSONField(default=dict, blank=True)
+
     def __str__(self):
         return self.name
 
 
 class UserProfile(models.Model):
-    """Binds a Django auth user to the tenant whose data they may access.
-
-    Until full multi-tenancy/onboarding is built, a user without a profile
-    falls back to the first tenant (see views._get_default_tenant)."""
+    """Binds a Django auth user to a primary tenant (fallback when the user
+    has no org membership). Multi-org membership lives in OrgMembership."""
     user = models.OneToOneField("auth.User", on_delete=models.CASCADE, related_name="profile")
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="members")
 
     def __str__(self):
         return f"{self.user} @ {self.tenant}"
+
+
+class OrgMembership(models.Model):
+    """A user's role within an organisation (tenant). A user may belong to many
+    organisations with a different role in each."""
+    user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="memberships")
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="memberships")
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    is_default = models.BooleanField(default=False)  # preferred org at login
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ("user", "tenant")
+
+    def __str__(self):
+        return f"{self.user} - {self.get_role_display()} @ {self.tenant}"
+
+
+class AuditLog(models.Model):
+    """Security/audit trail: logins, access-denied, and sensitive actions."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_logs")
+    user = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
+    username = models.CharField(max_length=150, blank=True, null=True)
+    action = models.CharField(max_length=50)          # LOGIN, LOGOUT, ACCESS_DENIED, ...
+    detail = models.CharField(max_length=255, blank=True, null=True)
+    path = models.CharField(max_length=255, blank=True, null=True)
+    ip = models.CharField(max_length=64, blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["tenant", "-created_at"]), models.Index(fields=["action"])]
+
+    def __str__(self):
+        return f"{self.created_at:%Y-%m-%d %H:%M} {self.action} {self.username or ''}"
 
 
 class Location(models.Model):

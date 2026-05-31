@@ -15,14 +15,8 @@ class CurrentTenantMiddleware:
 
     @staticmethod
     def _resolve(request):
-        # Import lazily so app registry is ready.
-        from core.models import Tenant
-
         user = getattr(request, "user", None)
-        if user is not None and user.is_authenticated:
-            profile = getattr(user, "profile", None)
-            if profile is not None:
-                return profile.tenant
-            # Profile-less (e.g. initial superuser): fall back to first tenant.
-            return Tenant.objects.order_by("id").first()
-        return None
+        if user is None or not user.is_authenticated:
+            return None
+        from core.access import get_active_tenant
+        return get_active_tenant(request)

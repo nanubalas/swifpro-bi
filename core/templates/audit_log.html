@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Audit Log - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Audit Log</h2>
+    <div class="text-muted">Logins and permission-sensitive events for {{ tenant.name }}.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>When</th><th>Action</th><th>User</th><th>Detail</th><th>Path</th><th>IP</th></tr>
+        </thead>
+        <tbody>
+          {% for log in logs %}
+          <tr>
+            <td class="text-muted small">{{ log.created_at|date:'d M Y H:i' }}</td>
+            <td>
+              {% if log.action == 'LOGIN' %}<span class="badge text-bg-success">Login</span>
+              {% elif log.action == 'LOGOUT' %}<span class="badge text-bg-secondary">Logout</span>
+              {% elif log.action == 'LOGIN_FAILED' %}<span class="badge text-bg-warning">Login failed</span>
+              {% elif log.action == 'ACCESS_DENIED' %}<span class="badge text-bg-danger">Access denied</span>
+              {% else %}<span class="badge text-bg-secondary">{{ log.action }}</span>{% endif %}
+            </td>
+            <td>{{ log.username|default:'-' }}</td>
+            <td class="small">{{ log.detail|default:'' }}</td>
+            <td class="small text-muted">{{ log.path|default:'' }}</td>
+            <td class="small text-muted">{{ log.ip|default:'' }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-5">No audit events yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

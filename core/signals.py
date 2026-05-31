@@ -1,8 +1,10 @@
 from decimal import Decimal
 from django.db.models.signals import post_save
+from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
 from django.dispatch import receiver
 
 from core.models import Tenant, TaxCode, GLAccount
+from core.audit import log_audit
 
 DEFAULT_TAX_CODES = [
     ("STD", "Standard rate", Decimal("0.20")),
@@ -36,3 +38,35 @@ def bootstrap_tenant_defaults(sender, instance: Tenant, created: bool, **kwargs)
     # GL accounts
     for code, name, acc_type in DEFAULT_ACCOUNTS:
         GLAccount.objects.get_or_create(tenant=instance, code=code, defaults={"name": name, "type": acc_type})
+
+
+@receiver(post_save, sender="core.OrgMembership")
+def _sync_membership_groups(sender, instance, **kwargs):
+    """Keep a member's Django groups in sync with their org role so the
+    existing per-view RBAC enforces correctly."""
+    from django.contrib.auth.models import Group
+    from core.roles import ROLE_TO_GROUPS
+    for name in ROLE_TO_GROUPS.get(instance.role, []):
+        group, _ = Group.objects.get_or_create(name=name)
+        instance.user.groups.add(group)
+
+
+@receiver(user_logged_in)
+def _audit_login(sender, request, user, **kwargs):
+    tenant = None
+    try:
+        from core.access import get_active_tenant
+        tenant = get_active_tenant(request)
+    except Exception:
+        tenant = None
+    log_audit(action="LOGIN", request=request, user=user, tenant=tenant)
+
+
+@receiver(user_logged_out)
+def _audit_logout(sender, request, user, **kwargs):
+    log_audit(action="LOGOUT", request=request, user=user)
+
+
+@receiver(user_login_failed)
+def _audit_login_failed(sender, credentials, request=None, **kwargs):
+    log_audit(action="LOGIN_FAILED", request=request, username=(credentials or {}).get("username"))

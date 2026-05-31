@@ -1,6 +1,5 @@
 from functools import wraps
-from django.http import HttpResponseForbidden
-from django.shortcuts import redirect
+from django.core.exceptions import PermissionDenied
 
 ROLE_ADMIN = "Admin"
 ROLE_PROCUREMENT = "Procurement"
@@ -35,12 +34,12 @@ def role_required(read_groups, write_groups=None):
             if request.method in ("GET", "HEAD", "OPTIONS"):
                 allowed = list(set(read_groups + [ROLE_ADMIN]))
                 if not user_in_any_group(request.user, allowed):
-                    return HttpResponseForbidden("You do not have permission to view this page.")
+                    raise PermissionDenied("You do not have permission to view this page.")
                 return view_func(request, *args, **kwargs)
             else:
                 allowed = list(set(write_groups + [ROLE_ADMIN]))
                 if not user_in_any_group(request.user, allowed):
-                    return HttpResponseForbidden("You do not have permission to perform this action.")
+                    raise PermissionDenied("You do not have permission to perform this action.")
                 return view_func(request, *args, **kwargs)
         return _wrapped
     return decorator

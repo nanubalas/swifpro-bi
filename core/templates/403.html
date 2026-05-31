@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Access denied - SKUNOW{% endblock %}
+
+{% block body %}
+<div class="row justify-content-center">
+  <div class="col-md-7 col-lg-6">
+    <div class="card-soft p-5 text-center">
+      <div class="d-inline-flex align-items-center justify-content-center mb-3 mx-auto"
+           style="width:64px;height:64px;border-radius:18px;font-size:1.8rem;color:#fff;background:linear-gradient(135deg,#ef4444,#f97316);">
+        <i class="bi bi-shield-lock"></i>
+      </div>
+      <h2 class="fw-bold mb-2">403 - Access denied</h2>
+      <p class="text-muted mb-4">You don't have permission to view this page with your current role.
+        If you think this is a mistake, contact your administrator.</p>
+      <div class="d-flex gap-2 justify-content-center">
+        <a href="/" class="btn btn-primary"><i class="bi bi-house me-1"></i> My dashboard</a>
+        <a href="/logout/" class="btn btn-outline-secondary">Sign out</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -4,6 +4,20 @@ from core import views
 urlpatterns = [
     path("", views.landing, name="landing"),
 
+    # Role-based dashboards
+    path("dashboard/", views.landing, name="dashboard"),
+    path("dashboard/admin", views.dashboard_admin, name="dashboard_admin"),
+    path("dashboard/accountant", views.dashboard_accountant, name="dashboard_accountant"),
+    path("dashboard/manager", views.dashboard_manager, name="dashboard_manager"),
+    path("dashboard/sales", views.dashboard_sales, name="dashboard_sales"),
+    path("dashboard/warehouse", views.dashboard_warehouse, name="dashboard_warehouse"),
+    path("dashboard/purchasing", views.dashboard_purchasing, name="dashboard_purchasing"),
+    path("dashboard/finance", views.dashboard_finance, name="dashboard_finance"),
+    path("dashboard/read-only", views.dashboard_readonly, name="dashboard_readonly"),
+    path("select-org/", views.select_org, name="select_org"),
+    path("audit/", views.audit_log_list, name="audit_log_list"),
+    path("settings/role-landing/", views.settings_role_landing, name="settings_role_landing"),
+
     # Purchase Orders
     path("po/", views.po_list, name="po_list"),
     path("po/new/", views.po_create, name="po_create"),

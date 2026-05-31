@@ -16,8 +16,16 @@ from core.models import (
     SupplierInvoice, SupplierInvoiceLine,
     ReturnAuthorization, ReturnLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
-    GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn
+    GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn,
+    OrgMembership, AuditLog
 )
+from django.core.exceptions import PermissionDenied
+from core import roles as roles_mod
+from core import dashboards as dash
+from core.access import (
+    get_active_role, get_memberships, default_landing_url, SESSION_TENANT_KEY,
+)
+from core.audit import log_audit
 from core.forms import (
     PurchaseOrderForm, PurchaseOrderLineFormSet,
     ShipmentUpdateForm, ProductForm, SupplierForm,
@@ -47,15 +55,10 @@ from core.auth import role_required, ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUS
 
 
 def _get_default_tenant(request=None):
-    # Resolve the active tenant for the request's user via their profile.
-    # Falls back to the first tenant for users without a profile (e.g.
-    # the initial superuser) so existing single-tenant setups keep working.
-    user = getattr(request, "user", None)
-    if user is not None and user.is_authenticated:
-        profile = getattr(user, "profile", None)
-        if profile is not None:
-            return profile.tenant
-    return Tenant.objects.order_by("id").first()
+    # Resolve the active tenant for the request (session org -> membership ->
+    # profile -> first tenant). See core.access.
+    from core.access import get_active_tenant
+    return get_active_tenant(request)
 
 
 def _generate_po_number():
@@ -248,74 +251,100 @@ def _safe_default_tenant(request=None):
         return None
 
 @login_required
-@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES, ROLE_FINANCE, ROLE_READONLY])
-
 def landing(request):
+    """Post-login dispatcher: route the user to their role dashboard (or the
+    org picker when they belong to more than one organisation)."""
     tenant = _safe_default_tenant(request)
     if not tenant:
-        return render(request, "landing.html", {
-            "tenant": None,
-            "needs_setup": True,
-        })
+        return render(request, "landing.html", {"tenant": None, "needs_setup": True})
 
-    today = timezone.localdate()
+    memberships = get_memberships(request.user)
+    if len(memberships) > 1 and not request.session.get(SESSION_TENANT_KEY):
+        return redirect("select_org")
 
-    # ----- Financial KPIs (from the GL + reports services) -----
-    balances = reports_service.account_balances(tenant)
-    by_code = {acc.code: vals["balance"] for acc, vals in balances.items()}
-    cash = by_code.get("1050", Decimal("0.00"))
-    pnl = reports_service.profit_and_loss(tenant)
-    ar_total = reports_service.aged_receivables(tenant)["total"]
-    ap_total = reports_service.aged_payables(tenant)["total"]
-    stock_value = reports_service.stock_valuation(tenant)["total"]
+    role = get_active_role(request)
+    return redirect(default_landing_url(tenant, role))
 
-    kpis = {
-        "cash": cash,
-        "inventory_value": stock_value,
-        "receivables": ar_total,
-        "payables": ap_total,
-        "net_profit": pnl["net_profit"],
-        "revenue": pnl["income_total"],
-    }
 
-    # ----- Operational counts -----
-    open_po_statuses = [
-        PurchaseOrder.Status.SUBMITTED, PurchaseOrder.Status.APPROVAL_PENDING,
-        PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.SENT,
-        PurchaseOrder.Status.IN_TRANSIT, PurchaseOrder.Status.PARTIALLY_RECEIVED,
-    ]
-    counts = {
-        "open_pos": PurchaseOrder.objects.filter(tenant=tenant, status__in=open_po_statuses).count(),
-        "in_transit": Shipment.objects.filter(tenant=tenant, status__in=[Shipment.Status.IN_TRANSIT, Shipment.Status.PICKED_UP]).count(),
-        "sales_orders": SalesOrder.objects.filter(tenant=tenant).count(),
-        "products": Product.objects.filter(tenant=tenant).count(),
-    }
+@login_required
+def select_org(request):
+    """Organisation chooser for users belonging to multiple organisations."""
+    memberships = get_memberships(request.user)
+    if request.method == "POST":
+        tid = request.POST.get("tenant")
+        m = OrgMembership.objects.filter(user=request.user, tenant_id=tid).first()
+        if m:
+            request.session[SESSION_TENANT_KEY] = m.tenant_id
+            return redirect("landing")
+        messages.error(request, "Please choose a valid organisation.")
+    return render(request, "select_org.html", {"memberships": memberships})
 
-    # ----- Action-required alerts -----
-    awaiting_approval = PurchaseOrder.objects.filter(tenant=tenant, status=PurchaseOrder.Status.APPROVAL_PENDING).count()
-    overdue_invoices = CustomerInvoice.objects.filter(tenant=tenant, status=CustomerInvoice.Status.ISSUED, due_date__lt=today).count()
-    out_of_stock = InventoryBalance.objects.filter(tenant=tenant, on_hand__lte=Decimal("0.00")).count()
-    alerts = []
-    if awaiting_approval:
-        alerts.append({"icon": "patch-question", "level": "warning", "text": f"{awaiting_approval} purchase order(s) awaiting approval", "url": "/po/"})
-    if overdue_invoices:
-        alerts.append({"icon": "exclamation-octagon", "level": "danger", "text": f"{overdue_invoices} overdue customer invoice(s)", "url": "/reports/aged-receivables/"})
-    if out_of_stock:
-        alerts.append({"icon": "box", "level": "secondary", "text": f"{out_of_stock} stock line(s) at or below zero", "url": "/inventory/"})
 
-    # ----- Recent activity -----
-    recent_pos = PurchaseOrder.objects.filter(tenant=tenant).select_related("supplier").order_by("-created_at")[:6]
-    recent_payments = Payment.objects.filter(tenant=tenant).select_related("customer", "supplier").order_by("-created_at")[:6]
+def _render_dashboard(request, role_code):
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "landing.html", {"tenant": None, "needs_setup": True})
+    ctx = dash.BUILDERS[role_code](tenant, request)
+    ctx.update({"tenant": tenant, "role_code": role_code})
+    return render(request, "dashboards/generic.html", ctx)
 
-    return render(request, "landing.html", {
+
+def _make_dashboard(role_code):
+    @login_required
+    def _view(request):
+        active = get_active_role(request)
+        # Owner/Admin may view any dashboard; others only their own.
+        if active != role_code and active != roles_mod.ADMIN:
+            raise PermissionDenied("This dashboard is not available for your role.")
+        return _render_dashboard(request, role_code)
+    return _view
+
+
+dashboard_admin = _make_dashboard(roles_mod.ADMIN)
+dashboard_accountant = _make_dashboard(roles_mod.ACCOUNTANT)
+dashboard_manager = _make_dashboard(roles_mod.MANAGER)
+dashboard_sales = _make_dashboard(roles_mod.SALES)
+dashboard_warehouse = _make_dashboard(roles_mod.WAREHOUSE)
+dashboard_purchasing = _make_dashboard(roles_mod.PURCHASING)
+dashboard_finance = _make_dashboard(roles_mod.FINANCE)
+dashboard_readonly = _make_dashboard(roles_mod.READONLY)
+
+
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def audit_log_list(request):
+    tenant = _get_default_tenant(request)
+    logs = AuditLog.objects.filter(tenant=tenant)[:300]
+    return render(request, "audit_log.html", {"tenant": tenant, "logs": logs})
+
+
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def settings_role_landing(request):
+    tenant = _get_default_tenant(request)
+    if request.method == "POST":
+        mapping = {}
+        valid = {c for c, _ in roles_mod.LANDING_CHOICES}
+        for code, _label in roles_mod.ROLE_CHOICES:
+            chosen = request.POST.get(f"landing_{code}")
+            if chosen and chosen in valid:
+                mapping[code] = chosen
+        tenant.role_landing = mapping
+        tenant.save(update_fields=["role_landing"])
+        messages.success(request, "Default landing pages updated.")
+        return redirect("settings_role_landing")
+    current = tenant.role_landing or {}
+    rows = [{"code": code, "label": label, "current": current.get(code, "")}
+            for code, label in roles_mod.ROLE_CHOICES]
+    return render(request, "settings/role_landing.html", {
         "tenant": tenant,
-        "needs_setup": False,
-        "kpis": kpis,
-        "counts": counts,
-        "alerts": alerts,
-        "recent_pos": recent_pos,
-        "recent_payments": recent_payments,
+        "rows": rows,
+        "landing_choices": roles_mod.LANDING_CHOICES,
     })
+
+
+def permission_denied_view(request, exception=None):
+    log_audit(action="ACCESS_DENIED", request=request, user=getattr(request, "user", None),
+              detail=(str(exception)[:200] if exception else None))
+    return render(request, "403.html", status=403)
 
 
 @transaction.atomic

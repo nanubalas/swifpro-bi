@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import User
 from core.models import (
-    UserProfile,
+    UserProfile, OrgMembership, AuditLog,
     Tenant, Location, Supplier, Product,
     PurchaseOrder, PurchaseOrderLine,
     Shipment, ShipmentEvent,
@@ -19,13 +19,31 @@ class UserProfileInline(admin.StackedInline):
     extra = 0
 
 
+class OrgMembershipInline(admin.TabularInline):
+    model = OrgMembership
+    extra = 0
+
+
 class UserAdmin(DjangoUserAdmin):
-    inlines = [UserProfileInline]
+    inlines = [UserProfileInline, OrgMembershipInline]
 
 
 admin.site.unregister(User)
 admin.site.register(User, UserAdmin)
 admin.site.register(UserProfile)
+
+
+@admin.register(OrgMembership)
+class OrgMembershipAdmin(admin.ModelAdmin):
+    list_display = ("user", "tenant", "role", "is_default")
+    list_filter = ("role", "tenant")
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "action", "username", "tenant", "path", "ip")
+    list_filter = ("action", "tenant")
+    search_fields = ("username", "detail", "path")
 
 admin.site.register(Tenant)
 admin.site.register(Location)

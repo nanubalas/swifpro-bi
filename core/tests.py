@@ -94,7 +94,7 @@ class TemplateRenderTests(TestCase):
 
     def test_landing_page_renders(self):
         self.client.login(username="u", password="pw")
-        resp = self.client.get("/")
+        resp = self.client.get("/", follow=True)
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "SKUNOW")
         self.assertContains(resp, "Dashboard")
@@ -186,6 +186,63 @@ class GLBalanceTests(TestCase):
         self.assertEqual(je.total_debit, Decimal("240.00"))  # 200 net + 20% VAT
         inv.refresh_from_db()
         self.assertEqual(inv.status, "ISSUED")
+
+
+class RoleDashboardTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Role Co")
+        self.user = User.objects.create_user("salesuser", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="SALES", is_default=True)
+
+    def test_login_redirects_to_role_dashboard(self):
+        self.client.login(username="salesuser", password="pw")
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, "/dashboard/sales")
+
+    def test_role_dashboard_renders(self):
+        self.client.login(username="salesuser", password="pw")
+        resp = self.client.get("/dashboard/sales")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Sales Dashboard")
+
+    def test_cross_role_dashboard_is_forbidden_and_audited(self):
+        from core.models import AuditLog
+        self.client.login(username="salesuser", password="pw")
+        resp = self.client.get("/dashboard/finance")
+        self.assertEqual(resp.status_code, 403)
+        self.assertContains(resp, "Access denied", status_code=403)
+        self.assertTrue(AuditLog.objects.filter(action="ACCESS_DENIED").exists())
+
+    def test_admin_can_view_any_dashboard(self):
+        from core.models import OrgMembership
+        admin = User.objects.create_user("owneruser", password="pw")
+        OrgMembership.objects.create(user=admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="owneruser", password="pw")
+        self.assertEqual(self.client.get("/dashboard/warehouse").status_code, 200)
+        self.assertEqual(self.client.get("/dashboard/finance").status_code, 200)
+
+    def test_multi_org_redirects_to_picker(self):
+        from core.models import OrgMembership
+        t2 = Tenant.objects.create(name="Org Two")
+        OrgMembership.objects.create(user=self.user, tenant=t2, role="ACCOUNTANT")
+        self.client.login(username="salesuser", password="pw")
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, "/select-org/")
+
+    def test_login_is_audited(self):
+        from core.models import AuditLog
+        self.client.post("/login/", {"username": "salesuser", "password": "pw"})
+        self.assertTrue(AuditLog.objects.filter(action="LOGIN", username="salesuser").exists())
+
+    def test_role_landing_override(self):
+        self.tenant.role_landing = {"SALES": "reports_index"}
+        self.tenant.save()
+        self.client.login(username="salesuser", password="pw")
+        resp = self.client.get("/")
+        self.assertEqual(resp.url, "/reports/")
 
 
 class PaymentsTests(TestCase):

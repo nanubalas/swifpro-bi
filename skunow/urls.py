@@ -9,6 +9,9 @@ urlpatterns = [
     path("", include("core.urls")),
 ]
 
+# Custom 403 page (rendered when a PermissionDenied is raised)
+handler403 = "core.views.permission_denied_view"
+
 from django.conf import settings
 from django.conf.urls.static import static
 

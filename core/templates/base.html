@@ -259,6 +259,16 @@
 
     a { text-underline-offset: 2px; }
     ::selection { background: rgba(var(--skn-brand-rgb), .22); }
+
+    /* ---------- Dashboards ---------- */
+    .kpi-card { position: relative; overflow: hidden; }
+    .kpi-card .kpi-icon { position: absolute; right: 14px; top: 14px; font-size: 1.6rem; opacity: .16; color: var(--skn-brand); }
+    .kpi-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .07em; color: var(--skn-muted); font-weight: 700; }
+    .kpi-value { font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
+    .mini-stat { display: flex; align-items: center; gap: .75rem; }
+    .mini-stat .ico { width: 40px; height: 40px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; background: var(--skn-brand-soft); color: var(--skn-brand); font-size: 1.05rem; }
+    .quick-link { display: flex; align-items: center; gap: .6rem; padding: .6rem .8rem; border-radius: 10px; text-decoration: none; color: var(--skn-text); border: 1px solid var(--skn-border); transition: all .15s ease; }
+    .quick-link:hover { background: var(--skn-brand-soft); color: var(--skn-brand); border-color: transparent; transform: translateY(-1px); }
   </style>
 </head>
 
@@ -284,6 +294,11 @@
         <i class="bi bi-moon-stars"></i>
       </button>
       {% if user.is_authenticated %}
+        {% if membership_count > 1 %}
+          <a class="btn btn-outline-secondary btn-sm" href="/select-org/" title="Switch organisation">
+            <i class="bi bi-building me-1"></i>{{ active_tenant_name }}
+          </a>
+        {% endif %}
         <span class="skn-userchip">
           <span class="skn-avatar">{{ user.username|first|upper }}</span>
           {{ user.username }}
@@ -312,94 +327,21 @@
   </div>
 
   <div class="offcanvas-body">
+    {% if active_role_label %}
+    <div class="skn-userchip mb-3 w-100 justify-content-center">
+      <i class="bi bi-person-badge"></i> {{ active_role_label }}
+    </div>
+    {% endif %}
+    {% for section_title, items in sidebar %}
     <div class="mb-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Dashboard</div>
+      <div class="text-uppercase text-muted mb-2 nav-section-title">{{ section_title }}</div>
       <div class="list-group list-group-flush">
-        <a href="/" class="list-group-item list-group-item-action"><i class="bi bi-grid-1x2"></i> Overview</a>
+        {% for label, url, icon in items %}
+        <a href="{{ url }}" class="list-group-item list-group-item-action"><i class="bi bi-{{ icon }}"></i> {{ label }}</a>
+        {% endfor %}
       </div>
     </div>
-
-    <div class="mb-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Procurement</div>
-      <div class="list-group list-group-flush">
-        <a href="/po/new/" class="list-group-item list-group-item-action"><i class="bi bi-plus-square"></i> Create PO</a>
-        <a href="/po/" class="list-group-item list-group-item-action"><i class="bi bi-file-earmark-text"></i> Purchase Orders</a>
-        <a href="/shipments/" class="list-group-item list-group-item-action"><i class="bi bi-truck"></i> Shipments</a>
-      </div>
-    </div>
-
-    <div class="mb-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Sales</div>
-      <div class="list-group list-group-flush">
-        <a href="/sales-orders/" class="list-group-item list-group-item-action"><i class="bi bi-cart-check"></i> Sales Orders</a>
-        <a href="/returns/" class="list-group-item list-group-item-action"><i class="bi bi-arrow-return-left"></i> Returns (RMA)</a>
-        <a href="/reconcile/" class="list-group-item list-group-item-action"><i class="bi bi-shuffle"></i> Reconcile</a>
-      </div>
-    </div>
-
-    <div class="mb-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Inventory</div>
-      <div class="list-group list-group-flush">
-        <a href="/inventory/" class="list-group-item list-group-item-action"><i class="bi bi-boxes"></i> Inventory Overview</a>
-        <a href="/transfers/" class="list-group-item list-group-item-action"><i class="bi bi-arrow-left-right"></i> Transfers</a>
-        <a href="/locations/" class="list-group-item list-group-item-action"><i class="bi bi-geo-alt"></i> Locations</a>
-        <a href="/cycle-counts/" class="list-group-item list-group-item-action"><i class="bi bi-clipboard-check"></i> Cycle Counts</a>
-      </div>
-    </div>
-
-    <div class="mb-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Master Data</div>
-      <div class="list-group list-group-flush">
-        <a href="/products/" class="list-group-item list-group-item-action"><i class="bi bi-box-seam"></i> Products</a>
-        <a href="/uoms/" class="list-group-item list-group-item-action"><i class="bi bi-rulers"></i> UOMs</a>
-        <a href="/boms/" class="list-group-item list-group-item-action"><i class="bi bi-diagram-3"></i> BOMs / Kits</a>
-        <a href="/suppliers/" class="list-group-item list-group-item-action"><i class="bi bi-shop"></i> Suppliers</a>
-      </div>
-    </div>
-
-    <div class="mb-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Channels</div>
-      <div class="list-group list-group-flush">
-        <a href="/channels/" class="list-group-item list-group-item-action"><i class="bi bi-plug"></i> Connections</a>
-        <a href="/reconcile/" class="list-group-item list-group-item-action"><i class="bi bi-shuffle"></i> Reconciliation</a>
-      </div>
-    </div>
-
-    <div class="mb-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Finance</div>
-      <div class="list-group list-group-flush">
-        <a href="/customers/" class="list-group-item list-group-item-action"><i class="bi bi-people"></i> Customers</a>
-        <a href="/ar/invoices/" class="list-group-item list-group-item-action"><i class="bi bi-receipt"></i> Customer Invoices (AR)</a>
-        <a href="/invoices/" class="list-group-item list-group-item-action"><i class="bi bi-receipt-cutoff"></i> Supplier Invoices (AP)</a>
-        <a href="/payments/" class="list-group-item list-group-item-action"><i class="bi bi-cash-stack"></i> Payments</a>
-        <a href="/bank/reconcile/" class="list-group-item list-group-item-action"><i class="bi bi-check2-square"></i> Bank Reconciliation</a>
-        <a href="/tax-codes/" class="list-group-item list-group-item-action"><i class="bi bi-percent"></i> Tax Codes (VAT)</a>
-        <a href="/vat/" class="list-group-item list-group-item-action"><i class="bi bi-file-earmark-spreadsheet"></i> VAT Returns (MTD)</a>
-        <a href="/gl/journal/" class="list-group-item list-group-item-action"><i class="bi bi-journal-text"></i> Journal</a>
-        <a href="/gl/accounts/" class="list-group-item list-group-item-action"><i class="bi bi-bank"></i> Chart of Accounts</a>
-      </div>
-    </div>
-
-    <div class="mb-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Reports</div>
-      <div class="list-group list-group-flush">
-        <a href="/reports/" class="list-group-item list-group-item-action"><i class="bi bi-bar-chart-line"></i> All Reports</a>
-        <a href="/reports/profit-and-loss/" class="list-group-item list-group-item-action"><i class="bi bi-graph-up-arrow"></i> Profit &amp; Loss</a>
-        <a href="/reports/balance-sheet/" class="list-group-item list-group-item-action"><i class="bi bi-bank2"></i> Balance Sheet</a>
-        <a href="/reports/trial-balance/" class="list-group-item list-group-item-action"><i class="bi bi-list-columns-reverse"></i> Trial Balance</a>
-        <a href="/reports/aged-receivables/" class="list-group-item list-group-item-action"><i class="bi bi-cash-coin"></i> Aged Debtors</a>
-        <a href="/reports/aged-payables/" class="list-group-item list-group-item-action"><i class="bi bi-credit-card"></i> Aged Creditors</a>
-        <a href="/reports/stock-valuation/" class="list-group-item list-group-item-action"><i class="bi bi-box-seam"></i> Stock Valuation</a>
-      </div>
-    </div>
-
-    <div class="mt-4 border-top pt-3">
-      <div class="text-uppercase text-muted mb-2 nav-section-title">Administration</div>
-      <div class="list-group list-group-flush">
-        <a href="/admin/" class="list-group-item list-group-item-action"><i class="bi bi-shield-lock"></i> Admin</a>
-        <a href="/settings/tenant/" class="list-group-item list-group-item-action"><i class="bi bi-gear"></i> Settings</a>
-      </div>
-    </div>
+    {% endfor %}
   </div>
 </div>
 {% endif %}
