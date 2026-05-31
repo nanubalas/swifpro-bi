@@ -7,9 +7,9 @@
   <div class="col-md-6 col-lg-5 col-xl-4">
     <div class="card-soft p-4 p-md-5">
       <div class="text-center mb-4">
-        <img src="{% static 'img/logo.png' %}" alt="SwifPro BI" width="76" height="76" class="mb-3">
-        <h3 class="fw-bold mb-1">Sign in to {% include "_wordmark.html" %}</h3>
-        <p class="text-muted mb-0">Business intelligence, simplified.</p>
+        <img src="{% static 'img/logo.png' %}" alt="SwifPro BI" class="mb-2" style="width:170px;max-width:62%;height:auto;">
+        <div class="mb-1" style="font-size:1.8rem;line-height:1;">{% include "_wordmark.html" %}</div>
+        <p class="text-muted mt-2 mb-0">Business intelligence, simplified.</p>
       </div>
 
       {% if form.errors %}
