@@ -237,6 +237,13 @@ class RoleDashboardTests(TestCase):
         self.client.post("/login/", {"username": "salesuser", "password": "pw"})
         self.assertTrue(AuditLog.objects.filter(action="LOGIN", username="salesuser").exists())
 
+    def test_logout_via_post(self):
+        self.client.login(username="salesuser", password="pw")
+        resp = self.client.post("/logout/")
+        self.assertEqual(resp.status_code, 302)
+        # session cleared -> protected page now redirects to login
+        self.assertEqual(self.client.get("/dashboard/sales").status_code, 302)
+
     def test_role_landing_override(self):
         self.tenant.role_landing = {"SALES": "reports_index"}
         self.tenant.save()
