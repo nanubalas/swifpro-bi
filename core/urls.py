@@ -15,6 +15,9 @@ urlpatterns = [
     path("dashboard/finance", views.dashboard_finance, name="dashboard_finance"),
     path("dashboard/read-only", views.dashboard_readonly, name="dashboard_readonly"),
     path("select-org/", views.select_org, name="select_org"),
+    path("request-access/", views.request_access, name="request_access"),
+    path("access-requests/", views.access_request_list, name="access_request_list"),
+    path("access-requests/<int:req_id>/action/", views.access_request_action, name="access_request_action"),
     path("audit/", views.audit_log_list, name="audit_log_list"),
     path("settings/role-landing/", views.settings_role_landing, name="settings_role_landing"),
 

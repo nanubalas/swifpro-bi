@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import User
 from core.models import (
-    UserProfile, OrgMembership, AuditLog,
+    UserProfile, OrgMembership, AuditLog, AccessRequest,
     Tenant, Location, Supplier, Product,
     PurchaseOrder, PurchaseOrderLine,
     Shipment, ShipmentEvent,
@@ -44,6 +44,13 @@ class AuditLogAdmin(admin.ModelAdmin):
     list_display = ("created_at", "action", "username", "tenant", "path", "ip")
     list_filter = ("action", "tenant")
     search_fields = ("username", "detail", "path")
+
+
+@admin.register(AccessRequest)
+class AccessRequestAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "name", "email", "team", "status", "reviewed_by")
+    list_filter = ("status",)
+    search_fields = ("name", "email", "employee_id")
 
 admin.site.register(Tenant)
 admin.site.register(Location)

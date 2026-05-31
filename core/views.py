@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from django.db import transaction, IntegrityError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
 
@@ -17,7 +18,7 @@ from core.models import (
     ReturnAuthorization, ReturnLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
     GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn,
-    OrgMembership, AuditLog
+    OrgMembership, AuditLog, AccessRequest, UserProfile
 )
 from django.core.exceptions import PermissionDenied
 from core import roles as roles_mod
@@ -37,7 +38,7 @@ from core.forms import (
     ReturnAuthorizationForm, ReturnLineFormSet,
     TaxCodeForm, CustomerForm,
     CustomerInvoiceForm, CustomerInvoiceLineFormSet,
-    GLAccountForm, ReceiptForm, SupplierPaymentForm
+    GLAccountForm, ReceiptForm, SupplierPaymentForm, AccessRequestForm
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
@@ -353,6 +354,102 @@ def permission_denied_view(request, exception=None):
     log_audit(action="ACCESS_DENIED", request=request, user=getattr(request, "user", None),
               detail=(str(exception)[:200] if exception else None))
     return render(request, "403.html", status=403)
+
+
+# ============================
+# Access requests (public sign-up -> admin provisions the account)
+# ============================
+
+def request_access(request):
+    """Public form: a prospective user asks the admin for an account."""
+    if request.user.is_authenticated:
+        return redirect("landing")
+    form = AccessRequestForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        req = form.save()
+        log_audit(action="ACCESS_REQUEST", request=request,
+                  detail=f"{req.name} <{req.email}> team={req.team or '-'}", username=req.email)
+        messages.success(request, "Thanks! Your request has been sent to the administrator.")
+        return redirect("login")
+    return render(request, "auth/request_access.html", {"form": form})
+
+
+def _unique_username(base):
+    from django.contrib.auth.models import User
+    base = "".join(ch for ch in (base or "user").lower() if ch.isalnum() or ch in "._-") or "user"
+    candidate = base[:140]
+    i = 1
+    while User.objects.filter(username=candidate).exists():
+        i += 1
+        candidate = f"{base[:135]}{i}"
+    return candidate
+
+
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def access_request_list(request):
+    tenant = _get_default_tenant(request)
+    requests = AccessRequest.objects.all()
+    return render(request, "access_requests.html", {
+        "tenant": tenant, "requests": requests, "roles": roles_mod.ROLE_CHOICES,
+    })
+
+
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+@transaction.atomic
+def access_request_action(request, req_id):
+    from django.contrib.auth.models import User
+    tenant = _get_default_tenant(request)
+    req = get_object_or_404(AccessRequest, id=req_id)
+    if request.method != "POST":
+        return redirect("access_request_list")
+
+    action = request.POST.get("action")
+    if req.status != AccessRequest.Status.PENDING:
+        messages.info(request, "This request has already been handled.")
+        return redirect("access_request_list")
+
+    if action == "reject":
+        req.status = AccessRequest.Status.REJECTED
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.save()
+        log_audit(action="ACCESS_REQUEST_REJECTED", request=request, user=request.user, tenant=tenant, detail=req.email)
+        messages.warning(request, f"Request from {req.name} rejected.")
+        return redirect("access_request_list")
+
+    if action == "approve":
+        role = request.POST.get("role")
+        if role not in dict(roles_mod.ROLE_CHOICES):
+            messages.error(request, "Please choose a valid role.")
+            return redirect("access_request_list")
+
+        username = _unique_username((req.email.split("@")[0] if req.email else req.employee_id) or req.name)
+        temp_password = get_random_string(10)
+        parts = (req.name or "").split(" ", 1)
+        user = User.objects.create_user(
+            username=username, email=req.email,
+            first_name=parts[0], last_name=(parts[1] if len(parts) > 1 else ""),
+            password=temp_password,
+        )
+        UserProfile.objects.update_or_create(user=user, defaults={"tenant": tenant})
+        OrgMembership.objects.get_or_create(user=user, tenant=tenant, defaults={"role": role, "is_default": True})
+
+        req.status = AccessRequest.Status.APPROVED
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.created_user = user
+        req.tenant = tenant
+        req.save()
+        log_audit(action="ACCESS_REQUEST_APPROVED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{req.email} -> {username} ({role})")
+        messages.success(
+            request,
+            f"Account created for {req.name}: username '{username}', temporary password '{temp_password}' "
+            f"(role {dict(roles_mod.ROLE_CHOICES)[role]}). Share these and ask them to change the password.",
+        )
+        return redirect("access_request_list")
+
+    return redirect("access_request_list")
 
 
 @transaction.atomic

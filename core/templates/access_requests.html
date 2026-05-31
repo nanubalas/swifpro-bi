@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Access Requests - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Access Requests</h2>
+    <div class="text-muted">Review requests for new accounts. Approving creates the user in {{ tenant.name }}.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>Requested</th><th>Name</th><th>Employee ID</th><th>Email</th><th>Team</th><th>Status</th><th style="min-width:320px;">Action</th></tr>
+        </thead>
+        <tbody>
+          {% for r in requests %}
+          <tr>
+            <td class="text-muted small">{{ r.created_at|date:'d M Y H:i' }}</td>
+            <td class="fw-semibold">{{ r.name }}{% if r.message %}<div class="text-muted small fw-normal">{{ r.message }}</div>{% endif %}</td>
+            <td>{{ r.employee_id|default:'-' }}</td>
+            <td>{{ r.email }}</td>
+            <td>{{ r.team|default:'-' }}</td>
+            <td>
+              {% if r.status == 'PENDING' %}<span class="badge text-bg-warning">Pending</span>
+              {% elif r.status == 'APPROVED' %}<span class="badge text-bg-success">Approved</span>
+              {% else %}<span class="badge text-bg-danger">Rejected</span>{% endif %}
+            </td>
+            <td>
+              {% if r.status == 'PENDING' %}
+              <form method="post" action="{% url 'access_request_action' r.id %}" class="d-flex align-items-center gap-2">
+                {% csrf_token %}
+                <select name="role" class="form-select form-select-sm" style="max-width:160px;">
+                  {% for code, label in roles %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+                </select>
+                <button name="action" value="approve" class="btn btn-sm btn-primary">Approve</button>
+                <button name="action" value="reject" class="btn btn-sm btn-outline-danger">Reject</button>
+              </form>
+              {% else %}
+              <span class="text-muted small">
+                {% if r.created_user %}Created: {{ r.created_user.username }} · {% endif %}
+                by {{ r.reviewed_by.username|default:'-' }} on {{ r.reviewed_at|date:'d M Y' }}
+              </span>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-5">No access requests yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
