@@ -248,6 +248,58 @@ class PaymentsTests(TestCase):
             self.assertEqual(self.client.get(path).status_code, 200, path)
 
 
+class VatReturnTests(TestCase):
+    def setUp(self):
+        from datetime import date
+        from core.models import GoodsReceipt, Location, SupplierInvoice, SupplierInvoiceLine
+        self.date = date
+        self.tenant = Tenant.objects.create(name="VAT Co")
+        std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+
+        # Sales: net 200, output VAT 40
+        customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        ci = CustomerInvoice.objects.create(tenant=self.tenant, customer=customer, invoice_number="CINV-1", invoice_date=date(2026, 5, 15))
+        CustomerInvoiceLine.objects.create(invoice=ci, description="X", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=std)
+        post_customer_invoice(ci)
+
+        # Purchases: net 50, input VAT 10
+        supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        product = Product.objects.create(tenant=self.tenant, sku="SKU-V", name="P")
+        loc = Location.objects.create(tenant=self.tenant, name="WH")
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-V", supplier=supplier)
+        grn = GoodsReceipt.objects.create(tenant=self.tenant, po=po, grn_number="GRN-V", received_to=loc, status=GoodsReceipt.Status.POSTED)
+        si = SupplierInvoice.objects.create(tenant=self.tenant, supplier=supplier, po=po, receipt=grn, invoice_number="SINV-V", invoice_date=date(2026, 5, 16), status="POSTED")
+        SupplierInvoiceLine.objects.create(invoice=si, product=product, qty=Decimal("10"), unit_cost=Decimal("5.00"), tax_code=std)
+
+        self.user = User.objects.create_user("vat", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Finance")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="vat", password="pw")
+
+    def test_compute_boxes(self):
+        from core.services import vat
+        b = vat.compute_vat_return(self.tenant, self.date(2026, 5, 1), self.date(2026, 5, 31))
+        self.assertEqual(b["box1_vat_due_sales"], Decimal("40.00"))
+        self.assertEqual(b["box4_vat_reclaimed"], Decimal("10.00"))
+        self.assertEqual(b["box5_net_vat"], Decimal("30.00"))
+        self.assertEqual(b["box6_total_sales_ex_vat"], Decimal("200.00"))
+        self.assertEqual(b["box7_total_purchases_ex_vat"], Decimal("50.00"))
+
+    def test_save_and_submit(self):
+        from core.services import vat
+        from core.models import VatReturn
+        vr = vat.save_vat_return(self.tenant, self.date(2026, 5, 1), self.date(2026, 5, 31))
+        self.assertEqual(vr.box5_net_vat, Decimal("30.00"))
+        vat.submit_vat_return(vr)
+        vr.refresh_from_db()
+        self.assertEqual(vr.status, VatReturn.Status.SUBMITTED)
+        self.assertTrue(vr.hmrc_reference.startswith("LOCAL-STUB"))
+
+    def test_vat_pages_render(self):
+        self.assertEqual(self.client.get("/vat/").status_code, 200)
+        self.assertEqual(self.client.get("/vat/?from=2026-05-01&to=2026-05-31").status_code, 200)
+
+
 class FinancialReportsTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Reports Co")

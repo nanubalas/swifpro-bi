@@ -133,6 +133,12 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("payments/<int:payment_id>/", views.payment_detail, name="payment_detail"),
     path("bank/reconcile/", views.bank_reconciliation, name="bank_reconciliation"),
 
+    # VAT return (MTD)
+    path("vat/", views.vat_index, name="vat_index"),
+    path("vat/save/", views.vat_save, name="vat_save"),
+    path("vat/<int:vr_id>/", views.vat_detail, name="vat_detail"),
+    path("vat/<int:vr_id>/submit/", views.vat_submit, name="vat_submit"),
+
     # Financial reports
     path("reports/", views.reports_index, name="reports_index"),
     path("reports/trial-balance/", views.report_trial_balance, name="report_trial_balance"),

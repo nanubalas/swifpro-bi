@@ -904,3 +904,40 @@ class PaymentAllocation(models.Model):
     customer_invoice = models.ForeignKey(CustomerInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name="payment_allocations")
     supplier_invoice = models.ForeignKey(SupplierInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name="payment_allocations")
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+
+# ============================
+# VAT return (UK MTD 9-box)
+# ============================
+
+class VatReturn(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    period_from = models.DateField()
+    period_to = models.DateField()
+
+    # The nine HMRC boxes (1-5 to the penny, 6-9 whole pounds in real returns).
+    box1_vat_due_sales = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box2_vat_due_acquisitions = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box3_total_vat_due = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box4_vat_reclaimed = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box5_net_vat = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box6_total_sales_ex_vat = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box7_total_purchases_ex_vat = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box8_eu_supplies = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    box9_eu_acquisitions = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    created_at = models.DateTimeField(default=timezone.now)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    hmrc_reference = models.CharField(max_length=100, blank=True, null=True)
+
+    class Meta:
+        unique_together = ("tenant", "period_from", "period_to")
+        ordering = ["-period_to"]
+
+    def __str__(self):
+        return f"VAT {self.period_from} to {self.period_to}"

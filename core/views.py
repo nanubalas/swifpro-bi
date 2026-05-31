@@ -16,7 +16,7 @@ from core.models import (
     SupplierInvoice, SupplierInvoiceLine,
     ReturnAuthorization, ReturnLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
-    GLAccount, JournalEntry, Payment, PaymentAllocation
+    GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn
 )
 from core.forms import (
     PurchaseOrderForm, PurchaseOrderLineFormSet,
@@ -36,6 +36,7 @@ from core.services.inventory import apply_movement, reserve_stock, release_reser
 from core.services.bom import explode_product
 from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment
 from core.services import reports as reports_service
+from core.services import vat as vat_service
 from django.db.utils import OperationalError
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib import messages
@@ -2115,4 +2116,61 @@ def bank_reconciliation(request):
         "book_balance": book_balance, "cleared_balance": cleared_balance,
         "uncleared": book_balance - cleared_balance,
     })
+
+
+# ============================
+# VAT return (MTD 9-box)
+# ============================
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def vat_index(request):
+    tenant = _get_default_tenant(request)
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    preview = None
+    if date_from and date_to:
+        preview = vat_service.compute_vat_return(tenant, date_from, date_to)
+    returns = VatReturn.objects.filter(tenant=tenant)
+    return render(request, "vat/index.html", {
+        "tenant": tenant, "returns": returns, "preview": preview,
+        "date_from": date_from, "date_to": date_to,
+    })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def vat_save(request):
+    tenant = _get_default_tenant(request)
+    if request.method != "POST":
+        return redirect("vat_index")
+    date_from = _parse_date(request.POST.get("from"))
+    date_to = _parse_date(request.POST.get("to"))
+    if not (date_from and date_to) or date_to < date_from:
+        messages.error(request, "Please provide a valid period (from / to).")
+        return redirect("vat_index")
+    vr = vat_service.save_vat_return(tenant, date_from, date_to)
+    messages.success(request, "VAT return saved as draft.")
+    return redirect("vat_detail", vr_id=vr.id)
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def vat_detail(request, vr_id):
+    tenant = _get_default_tenant(request)
+    vr = get_object_or_404(VatReturn, id=vr_id, tenant=tenant)
+    return render(request, "vat/detail.html", {"tenant": tenant, "vr": vr})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def vat_submit(request, vr_id):
+    tenant = _get_default_tenant(request)
+    vr = get_object_or_404(VatReturn, id=vr_id, tenant=tenant)
+    if request.method == "POST":
+        vat_service.submit_vat_return(vr, user=request.user)
+        messages.warning(
+            request,
+            "Return marked submitted locally. Live HMRC MTD filing is not yet "
+            "connected (needs HMRC credentials) - reference is a local stub.",
+        )
+    return redirect("vat_detail", vr_id=vr.id)
 
