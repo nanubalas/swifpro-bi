@@ -34,6 +34,17 @@
   <div class="text-muted">Choose where you'd like to go.</div>
 </div>
 
+{% if role_code == 'ADMIN' and not onboarding_complete %}
+<a href="{% url 'onboarding' %}" class="card-soft p-3 mb-4 d-flex align-items-center gap-3 text-decoration-none text-reset" style="border-left:4px solid var(--skn-brand);">
+  <span class="launch-icon"><i class="bi bi-rocket-takeoff"></i></span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Finish setting up {{ tenant.name }}</div>
+    <div class="text-muted small">Complete your company profile, tax, locations and team.</div>
+  </div>
+  <span class="badge text-bg-primary">Continue setup <i class="bi bi-arrow-right"></i></span>
+</a>
+{% endif %}
+
 {% for section_title, items in sections %}
 <div class="mb-4">
   <div class="launch-section-title mb-2">{{ section_title }}</div>

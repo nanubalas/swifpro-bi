@@ -64,6 +64,8 @@ class Tenant(models.Model):
     # Admin-configurable default landing route per role: {role_code: url_name}.
     role_landing = models.JSONField(default=dict, blank=True)
 
+    onboarding_complete = models.BooleanField(default=False)
+
     def __str__(self):
         return self.name
 

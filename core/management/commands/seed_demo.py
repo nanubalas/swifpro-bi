@@ -41,6 +41,9 @@ class Command(BaseCommand):
                 "po_approval_threshold": Decimal("5000.00"),
             },
         )
+        if not tenant.onboarding_complete:
+            tenant.onboarding_complete = True
+            tenant.save(update_fields=["onboarding_complete"])
         self.stdout.write(("Created" if created else "Reusing") + f" tenant: {tenant.name}")
 
         # Bind the admin user to this tenant (if present)

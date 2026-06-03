@@ -131,9 +131,10 @@ NAV = [
         ("Aged Creditors", "/reports/aged-payables/", "credit-card", {ADMIN, ACCOUNTANT, FINANCE, READONLY}),
     ]),
     ("Administration", [
+        ("Setup &amp; Onboarding", "/onboarding/", "rocket-takeoff", {ADMIN}),
+        ("Company Profile", "/settings/tenant/", "building-gear", {ADMIN}),
         ("Users & Roles", "/admin/", "people-fill", {ADMIN}),
         ("Access Requests", "/access-requests/", "person-plus", {ADMIN}),
-        ("Settings", "/settings/tenant/", "gear", {ADMIN}),
         ("Audit Log", "/audit/", "shield-lock", {ADMIN}),
     ]),
 ]

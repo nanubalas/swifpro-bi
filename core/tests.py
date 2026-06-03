@@ -302,6 +302,47 @@ class CompanyProfileTests(TestCase):
         self.assertContains(resp, "VAT number is required")
 
 
+class OnboardingTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Onboard Co")
+        self.user = User.objects.create_user("oadmin", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="oadmin", password="pw")
+
+    def test_onboarding_page_renders_with_steps(self):
+        resp = self.client.get("/onboarding/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Let's get you set up")
+        self.assertContains(resp, "First location")
+
+    def test_step_completion_detected(self):
+        from core.models import Location
+        Location.objects.create(tenant=self.tenant, name="HQ")
+        resp = self.client.get("/onboarding/")
+        # location step now done -> at least one "Done" badge
+        self.assertContains(resp, "Done")
+
+    def test_finish_sets_flag(self):
+        resp = self.client.post("/onboarding/finish/")
+        self.assertEqual(resp.status_code, 302)
+        self.tenant.refresh_from_db()
+        self.assertTrue(self.tenant.onboarding_complete)
+
+    def test_create_new_organisation(self):
+        from core.models import Tenant as T, OrgMembership
+        resp = self.client.post("/onboarding/new-organisation/", {
+            "name": "Fresh Org", "business_type": "LTD", "currency_code": "GBP", "country": "United Kingdom",
+        })
+        self.assertEqual(resp.status_code, 302)
+        org = T.objects.get(name="Fresh Org")
+        self.assertTrue(OrgMembership.objects.filter(user=self.user, tenant=org, role="ADMIN").exists())
+
+    def test_dashboard_banner_when_not_onboarded(self):
+        resp = self.client.get("/dashboard/admin")
+        self.assertContains(resp, "Finish setting up")
+
+
 class AccessRequestTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership

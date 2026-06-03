@@ -333,6 +333,14 @@ class GLAccountForm(TenantModelForm):
         fields = ["code", "name", "type", "is_active"]
 
 
+class NewOrganisationForm(forms.ModelForm):
+    """Minimal first step - create the organisation; the rest is filled in
+    during onboarding."""
+    class Meta:
+        model = Tenant
+        fields = ["name", "business_type", "currency_code", "country"]
+
+
 class AccessRequestForm(forms.ModelForm):
     """Public form - a prospective user requests an account from the admin."""
     class Meta:

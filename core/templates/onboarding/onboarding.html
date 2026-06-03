@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Set up {{ tenant.name }} - SwifPro BI{% endblock %}
+
+{% block body %}
+<style>
+  .step-card{ display:flex; align-items:center; gap:1rem; border:1px solid var(--skn-border); border-radius:14px; padding:1rem 1.1rem; background:var(--skn-surface); text-decoration:none; color:var(--skn-text); transition:all .15s ease; }
+  .step-card:hover{ border-color:color-mix(in srgb,var(--skn-brand) 35%,var(--skn-border)); transform:translateY(-2px); box-shadow:var(--skn-shadow); color:var(--skn-text); }
+  .step-ico{ width:44px;height:44px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;font-size:1.25rem;background:var(--skn-brand-soft);color:var(--skn-brand);flex:0 0 auto; }
+  .step-done .step-ico{ background:#dcfce7;color:#15803d; }
+</style>
+
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="mb-4">
+      <div class="text-muted small">{{ tenant.name }}</div>
+      <h2 class="fw-bold mb-1">Let's get you set up</h2>
+      <p class="text-muted mb-3">Complete these steps to get the most out of SwifPro BI. You can do them in any order.</p>
+      <div class="d-flex align-items-center gap-3">
+        <div class="progress flex-grow-1" style="height:10px;"><div class="progress-bar" style="width:{{ percent }}%; background:var(--skn-brand);"></div></div>
+        <span class="small fw-semibold">{{ done }}/{{ total }}</span>
+      </div>
+    </div>
+
+    <div class="d-grid gap-3">
+      {% for s in steps %}
+      <a class="step-card {% if s.done %}step-done{% endif %}" href="{{ s.url }}">
+        <span class="step-ico"><i class="bi bi-{% if s.done %}check-lg{% else %}{{ s.icon }}{% endif %}"></i></span>
+        <div class="flex-grow-1">
+          <div class="fw-semibold">{{ s.label }}</div>
+          <div class="text-muted small">{{ s.desc }}</div>
+        </div>
+        {% if s.done %}<span class="badge text-bg-success">Done</span>
+        {% else %}<span class="badge text-bg-secondary">Set up <i class="bi bi-arrow-right"></i></span>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+
+    <form method="post" action="{% url 'onboarding_finish' %}" class="d-flex justify-content-between align-items-center mt-4">
+      {% csrf_token %}
+      <a href="/" class="text-decoration-none text-muted">I'll do this later</a>
+      <button class="btn btn-primary" type="submit"><i class="bi bi-flag me-1"></i> Finish setup</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

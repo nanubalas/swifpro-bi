@@ -38,7 +38,8 @@ from core.forms import (
     ReturnAuthorizationForm, ReturnLineFormSet,
     TaxCodeForm, CustomerForm,
     CustomerInvoiceForm, CustomerInvoiceLineFormSet,
-    GLAccountForm, ReceiptForm, SupplierPaymentForm, AccessRequestForm
+    GLAccountForm, ReceiptForm, SupplierPaymentForm, AccessRequestForm,
+    NewOrganisationForm
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
@@ -295,6 +296,7 @@ def _render_dashboard(request, role_code):
         "role_label": roles_mod.ROLE_LABELS.get(role_code, role_code),
         "title": roles_mod.DASHBOARD_TITLE.get(role_code, "Dashboard"),
         "sections": sections,
+        "onboarding_complete": tenant.onboarding_complete,
     })
 
 
@@ -456,6 +458,78 @@ def access_request_action(request, req_id):
         return redirect("access_request_list")
 
     return redirect("access_request_list")
+
+
+# ============================
+# Onboarding (guided setup)
+# ============================
+
+def _onboarding_steps(tenant):
+    """Compute the guided-setup checklist with completion status for a tenant."""
+    has_details = bool(tenant.company_number or tenant.legal_name or tenant.address_line1)
+    vat_done = bool(tenant.vat_number) if tenant.vat_registered else TaxCode.objects.filter(tenant=tenant).exists()
+    return [
+        {"key": "details", "label": "Business details", "icon": "building",
+         "desc": "Legal name, registration number and address.", "url": "/settings/tenant/",
+         "done": has_details},
+        {"key": "tax", "label": "VAT & tax", "icon": "percent",
+         "desc": "VAT registration and tax codes.", "url": "/tax-codes/",
+         "done": vat_done},
+        {"key": "location", "label": "First location", "icon": "geo-alt",
+         "desc": "A warehouse, store or office.", "url": "/locations/new/",
+         "done": Location.objects.filter(tenant=tenant).exists()},
+        {"key": "team", "label": "Invite your team", "icon": "people",
+         "desc": "Add users and assign roles.", "url": "/access-requests/",
+         "done": OrgMembership.objects.filter(tenant=tenant).count() > 1},
+        {"key": "products", "label": "Add products", "icon": "box-seam",
+         "desc": "Create or import your catalogue.", "url": "/products/",
+         "done": Product.objects.filter(tenant=tenant).exists()},
+        {"key": "customers", "label": "Add customers", "icon": "people-fill",
+         "desc": "Create or import customers.", "url": "/customers/",
+         "done": Customer.objects.filter(tenant=tenant).exists()},
+        {"key": "suppliers", "label": "Add suppliers", "icon": "shop",
+         "desc": "Create or import suppliers.", "url": "/suppliers/",
+         "done": Supplier.objects.filter(tenant=tenant).exists()},
+    ]
+
+
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def onboarding(request):
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return redirect("new_organisation")
+    steps = _onboarding_steps(tenant)
+    done = sum(1 for s in steps if s["done"])
+    return render(request, "onboarding/onboarding.html", {
+        "tenant": tenant, "steps": steps, "done": done, "total": len(steps),
+        "percent": int(done * 100 / len(steps)) if steps else 0,
+    })
+
+
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def onboarding_finish(request):
+    tenant = _get_default_tenant(request)
+    if request.method == "POST" and tenant:
+        tenant.onboarding_complete = True
+        tenant.save(update_fields=["onboarding_complete"])
+        messages.success(request, "Setup complete - welcome aboard!")
+    return redirect("landing")
+
+
+@login_required
+@transaction.atomic
+def new_organisation(request):
+    """Create a brand-new organisation; the creator becomes its Owner/Admin."""
+    form = NewOrganisationForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        tenant = form.save()  # signals seed tax codes + GL accounts
+        OrgMembership.objects.create(user=request.user, tenant=tenant, role=roles_mod.ADMIN, is_default=False)
+        UserProfile.objects.update_or_create(user=request.user, defaults={"tenant": tenant})
+        request.session[SESSION_TENANT_KEY] = tenant.id  # switch to the new org
+        log_audit(action="ORG_CREATED", request=request, user=request.user, tenant=tenant, detail=tenant.name)
+        messages.success(request, f"Organisation '{tenant.name}' created. Let's finish setting it up.")
+        return redirect("onboarding")
+    return render(request, "onboarding/new_organisation.html", {"form": form})
 
 
 @transaction.atomic
