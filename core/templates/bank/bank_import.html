@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Import bank statement - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <a href="{% url 'bank_transactions_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+      <h2 class="fw-bold mb-0">Import bank statement</h2>
+    </div>
+
+    <div class="alert alert-info">
+      <i class="bi bi-info-circle me-1"></i> Upload a CSV with columns
+      <code>date</code>, <code>description</code>, <code>amount</code> (and optionally <code>reference</code>).
+      Use a positive amount for money in and a negative amount for money out.
+    </div>
+
+    <div class="card"><div class="card-body p-4">
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="mb-3">
+          <label class="form-label">CSV file</label>
+          <input class="form-control" type="file" name="file" accept=".csv" required>
+        </div>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-upload me-1"></i> Import</button>
+      </form>
+
+      {% if summary %}
+      <hr>
+      <p class="mb-1"><strong>{{ summary.created }}</strong> transaction(s) imported.</p>
+      {% if summary.errors %}
+      <div class="text-danger small">
+        <div class="fw-semibold">Skipped rows:</div>
+        <ul class="mb-0">{% for n, err in summary.errors %}<li>Row {{ n }}: {{ err }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+      <a class="btn btn-sm btn-outline-primary mt-2" href="{% url 'bank_transactions_list' %}">View transactions</a>
+      {% endif %}
+    </div></div>
+  </div>
+</div>
+{% endblock %}

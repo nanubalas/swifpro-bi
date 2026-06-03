@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Bank Transactions - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">Bank Transactions</h2>
+    <div class="text-muted">Statement lines from your bank, ready to reconcile.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'bank_transaction_import' %}"><i class="bi bi-upload me-1"></i> Import statement</a>
+    <a class="btn btn-outline-secondary" href="{% url 'bank_transaction_add' %}"><i class="bi bi-plus-lg me-1"></i> Add line</a>
+    <a class="btn btn-primary" href="{% url 'bank_reconciliation' %}"><i class="bi bi-check2-square me-1"></i> Reconcile</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4"><div class="card stat-card p-3"><div class="text-muted small">Money in</div><div class="fs-4 fw-bold text-success">{{ total_in|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-4"><div class="card stat-card p-3"><div class="text-muted small">Money out</div><div class="fs-4 fw-bold text-danger">{{ total_out|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-4"><div class="card stat-card p-3"><div class="text-muted small">Net movement</div><div class="fs-4 fw-bold">{{ net|money:tenant.currency_code }}</div></div></div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>Date</th><th>Description</th><th>Reference</th><th class="text-end">Amount</th><th>Matched to</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for t in txns %}
+          <tr>
+            <td class="text-muted small">{{ t.txn_date|date:'d M Y' }}</td>
+            <td>{{ t.description }}</td>
+            <td class="small text-muted">{{ t.reference|default:'-' }}</td>
+            <td class="text-end fw-semibold {% if t.amount < 0 %}text-danger{% else %}text-success{% endif %}">{{ t.amount|money:tenant.currency_code }}</td>
+            <td class="small">{{ t.matched_label|default:'-' }}</td>
+            <td>{% if t.is_reconciled %}<span class="badge text-bg-success">Reconciled</span>{% else %}<span class="badge text-bg-secondary">Open</span>{% endif %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-5">No bank transactions yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

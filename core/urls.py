@@ -167,6 +167,9 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("payments/receipts/new/", views.receipt_create, name="receipt_create"),
     path("payments/payments/new/", views.supplier_payment_create, name="supplier_payment_create"),
     path("payments/<int:payment_id>/", views.payment_detail, name="payment_detail"),
+    path("bank/transactions/", views.bank_transactions_list, name="bank_transactions_list"),
+    path("bank/transactions/new/", views.bank_transaction_add, name="bank_transaction_add"),
+    path("bank/transactions/import/", views.bank_transaction_import, name="bank_transaction_import"),
     path("bank/reconcile/", views.bank_reconciliation, name="bank_reconciliation"),
 
     # Expenses

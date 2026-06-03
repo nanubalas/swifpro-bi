@@ -1195,6 +1195,42 @@ class CreditNoteLine(models.Model):
         return self.line_total * rate
 
 
+class BankTransaction(models.Model):
+    """A line from the bank statement (imported or entered by hand). Positive
+    amount = money in, negative = money out. Reconciliation matches each line to
+    an internal record (a payment or a paid expense) and marks it reconciled;
+    it is preparation only and posts nothing to the ledger."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="bank_transactions")
+    txn_date = models.DateField(default=timezone.now)
+    description = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)  # signed: +in / -out
+    reference = models.CharField(max_length=100, blank=True, null=True)
+
+    matched_payment = models.ForeignKey(Payment, on_delete=models.SET_NULL, null=True, blank=True, related_name="bank_transactions")
+    matched_expense = models.ForeignKey(Expense, on_delete=models.SET_NULL, null=True, blank=True, related_name="bank_transactions")
+    is_reconciled = models.BooleanField(default=False)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-txn_date", "-id"]
+
+    def __str__(self):
+        return f"{self.txn_date} {self.description} {self.amount}"
+
+    @property
+    def direction(self):
+        return "IN" if self.amount >= Decimal("0.00") else "OUT"
+
+    @property
+    def matched_label(self):
+        if self.matched_payment_id:
+            return f"Payment: {self.matched_payment.party_name} {self.matched_payment.amount}"
+        if self.matched_expense_id:
+            return f"Expense: {self.matched_expense.payee} {self.matched_expense.total}"
+        return ""
+
+
 # ============================
 # VAT return (UK MTD 9-box)
 # ============================

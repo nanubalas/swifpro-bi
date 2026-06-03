@@ -19,7 +19,7 @@ from core.models import (
     ReturnAuthorization, ReturnLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
     GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn, Expense,
-    CreditNote, CreditNoteLine,
+    CreditNote, CreditNoteLine, BankTransaction,
     OrgMembership, AuditLog, AccessRequest, UserProfile, UserPermissionOverride
 )
 from django.core.exceptions import PermissionDenied
@@ -42,7 +42,7 @@ from core.forms import (
     CustomerInvoiceForm, CustomerInvoiceLineFormSet,
     GLAccountForm, ReceiptForm, SupplierPaymentForm, AccessRequestForm,
     NewOrganisationForm, InviteUserForm, ExpenseForm,
-    CreditNoteForm, CreditNoteLineFormSet
+    CreditNoteForm, CreditNoteLineFormSet, BankTransactionForm
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
@@ -2864,31 +2864,149 @@ def payment_detail(request, payment_id):
     })
 
 
+# ============================
+# Bank transactions + reconciliation
+# ============================
+
+def _signed_payment(p):
+    return p.amount if p.direction == Payment.Direction.RECEIPT else -p.amount
+
+
+def _recon_rows(tenant, txns):
+    """For each bank transaction, the internal records (payments / paid expenses)
+    it could match: same signed amount, not already matched to another line."""
+    matched_pids = set(BankTransaction.objects.filter(tenant=tenant, matched_payment__isnull=False).values_list("matched_payment_id", flat=True))
+    matched_eids = set(BankTransaction.objects.filter(tenant=tenant, matched_expense__isnull=False).values_list("matched_expense_id", flat=True))
+    payments = list(Payment.objects.filter(tenant=tenant, status=Payment.Status.POSTED).select_related("customer", "supplier"))
+    expenses = list(Expense.objects.filter(tenant=tenant, status=Expense.Status.POSTED, paid=True))
+    rows = []
+    for t in txns:
+        cands = []
+        for p in payments:
+            if p.id in matched_pids and p.id != t.matched_payment_id:
+                continue
+            if _signed_payment(p) == t.amount:
+                cands.append({"value": f"payment:{p.id}", "label": f"Payment - {p.party_name} {p.amount} ({p.payment_date})", "selected": p.id == t.matched_payment_id})
+        for e in expenses:
+            if e.id in matched_eids and e.id != t.matched_expense_id:
+                continue
+            if -e.total == t.amount:
+                cands.append({"value": f"expense:{e.id}", "label": f"Expense - {e.payee} {e.total} ({e.expense_date})", "selected": e.id == t.matched_expense_id})
+        rows.append({"txn": t, "candidates": cands})
+    return rows
+
+
+def _apply_match(t, sel):
+    if sel == "" or sel is None:
+        t.matched_payment = None
+        t.matched_expense = None
+        t.is_reconciled = False
+        t.reconciled_at = None
+    elif sel.startswith("payment:"):
+        t.matched_payment_id = int(sel.split(":")[1])
+        t.matched_expense = None
+        t.is_reconciled = True
+        t.reconciled_at = timezone.now()
+    elif sel.startswith("expense:"):
+        t.matched_expense_id = int(sel.split(":")[1])
+        t.matched_payment = None
+        t.is_reconciled = True
+        t.reconciled_at = timezone.now()
+    t.save()
+    if t.matched_payment_id:
+        Payment.objects.filter(id=t.matched_payment_id).update(is_reconciled=True, reconciled_at=timezone.now())
+
+
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def bank_transactions_list(request):
+    tenant = _get_default_tenant(request)
+    txns = BankTransaction.objects.filter(tenant=tenant)
+    total_in = sum((t.amount for t in txns if t.amount > 0), Decimal("0.00"))
+    total_out = sum((t.amount for t in txns if t.amount < 0), Decimal("0.00"))
+    return render(request, "bank/bank_transactions.html", {
+        "tenant": tenant, "txns": txns, "total_in": total_in,
+        "total_out": total_out, "net": total_in + total_out,
+    })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def bank_transaction_add(request):
+    tenant = _get_default_tenant(request)
+    form = BankTransactionForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        t = form.save(commit=False)
+        t.tenant = tenant
+        t.save()
+        messages.success(request, "Bank transaction added.")
+        return redirect("bank_transactions_list")
+    return render(request, "bank/bank_transaction_form.html", {"tenant": tenant, "form": form})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def bank_transaction_import(request):
+    """Import a bank statement CSV with columns: date, description, amount."""
+    tenant = _get_default_tenant(request)
+    summary = None
+    if request.method == "POST" and request.FILES.get("file"):
+        import csv as _csv, io
+        raw = request.FILES["file"].read().decode("utf-8-sig", errors="replace")
+        reader = _csv.DictReader(io.StringIO(raw))
+        created, errors = 0, []
+        for n, row in enumerate(reader, start=2):
+            row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+            try:
+                d = _parse_date(row.get("date"))
+                if not d:
+                    raise ValueError("invalid or missing date")
+                amount = Decimal((row.get("amount") or "0").replace(",", ""))
+                desc = row.get("description") or "(no description)"
+            except (InvalidOperation, ValueError) as exc:
+                errors.append((n, str(exc)))
+                continue
+            BankTransaction.objects.create(tenant=tenant, txn_date=d, description=desc[:255],
+                                           amount=amount, reference=(row.get("reference") or "")[:100] or None)
+            created += 1
+        summary = {"created": created, "errors": errors}
+        if created:
+            messages.success(request, f"Imported {created} bank transaction(s).")
+    return render(request, "bank/bank_import.html", {"tenant": tenant, "summary": summary})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
 def bank_reconciliation(request):
     tenant = _get_default_tenant(request)
-    payments = Payment.objects.filter(tenant=tenant, status=Payment.Status.POSTED).select_related("customer", "supplier").order_by("payment_date", "id")
+    txns = list(BankTransaction.objects.filter(tenant=tenant).select_related("matched_payment", "matched_expense"))
 
     if request.method == "POST":
-        cleared_ids = set(request.POST.getlist("cleared"))
-        for p in payments:
-            should = str(p.id) in cleared_ids
-            if should != p.is_reconciled:
-                p.is_reconciled = should
-                p.reconciled_at = timezone.now() if should else None
-                p.save(update_fields=["is_reconciled", "reconciled_at"])
-        messages.success(request, "Reconciliation saved.")
+        action = request.POST.get("action") or "save"
+        if action == "auto":
+            matched = 0
+            for r in _recon_rows(tenant, [t for t in txns if not t.is_reconciled]):
+                if len(r["candidates"]) == 1:
+                    _apply_match(r["txn"], r["candidates"][0]["value"])
+                    matched += 1
+            messages.success(request, f"Auto-matched {matched} transaction(s).")
+        else:
+            for t in txns:
+                _apply_match(t, request.POST.get(f"match_{t.id}", ""))
+            messages.success(request, "Reconciliation saved.")
         return redirect("bank_reconciliation")
 
-    def signed(p):
-        return p.amount if p.direction == Payment.Direction.RECEIPT else -p.amount
-
-    book_balance = sum((signed(p) for p in payments), Decimal("0.00"))
-    cleared_balance = sum((signed(p) for p in payments if p.is_reconciled), Decimal("0.00"))
+    rows = _recon_rows(tenant, txns)
+    statement_balance = sum((t.amount for t in txns), Decimal("0.00"))
+    cleared = sum((t.amount for t in txns if t.is_reconciled), Decimal("0.00"))
+    bank_acc = GLAccount.objects.filter(tenant=tenant, code="1050").first()
+    book_balance = Decimal("0.00")
+    if bank_acc:
+        book_balance = reports_service.account_balances(tenant).get(bank_acc, {}).get("balance", Decimal("0.00"))
     return render(request, "payments/bank_reconciliation.html", {
-        "tenant": tenant, "payments": payments,
-        "book_balance": book_balance, "cleared_balance": cleared_balance,
-        "uncleared": book_balance - cleared_balance,
+        "tenant": tenant, "rows": rows,
+        "statement_balance": statement_balance, "cleared": cleared,
+        "uncleared": statement_balance - cleared, "book_balance": book_balance,
+        "difference": book_balance - cleared,
+        "unreconciled_count": sum(1 for t in txns if not t.is_reconciled),
     })
 
 

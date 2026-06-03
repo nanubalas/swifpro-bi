@@ -1213,6 +1213,64 @@ class ExpenseTests(TestCase):
         self.assertNotIn("4000", codes)  # sales income is not an expense category
 
 
+class BankTransactionTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Bank Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-B1")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="Item", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(inv)
+        from core.models import Payment, PaymentAllocation
+        from core.services.gl import post_payment
+        self.payment = Payment.objects.create(tenant=self.tenant, direction=Payment.Direction.RECEIPT,
+                                              customer=self.customer, amount=Decimal("240.00"), method="BANK", reference="FPS-9")
+        PaymentAllocation.objects.create(payment=self.payment, customer_invoice=inv, amount=Decimal("240.00"))
+        post_payment(self.payment)
+        self.user = User.objects.create_user("bk", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Finance")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="bk", password="pw")
+
+    def test_import_creates_transactions(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from core.models import BankTransaction
+        csv = b"date,description,amount,reference\n2026-06-01,FPS CREDIT,240.00,FPS-9\n2026-06-02,BANK FEE,-5.00,\n"
+        resp = self.client.post("/bank/transactions/import/", {"file": SimpleUploadedFile("s.csv", csv, content_type="text/csv")})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(BankTransaction.objects.filter(tenant=self.tenant).count(), 2)
+
+    def test_auto_match_reconciles_exact_amount(self):
+        from core.models import BankTransaction
+        t = BankTransaction.objects.create(tenant=self.tenant, description="FPS CREDIT", amount=Decimal("240.00"))
+        resp = self.client.post("/bank/reconcile/", {"action": "auto"})
+        self.assertEqual(resp.status_code, 302)
+        t.refresh_from_db()
+        self.assertTrue(t.is_reconciled)
+        self.assertEqual(t.matched_payment_id, self.payment.id)
+        self.payment.refresh_from_db()
+        self.assertTrue(self.payment.is_reconciled)
+
+    def test_manual_match_and_unmatch(self):
+        from core.models import BankTransaction
+        t = BankTransaction.objects.create(tenant=self.tenant, description="FPS CREDIT", amount=Decimal("240.00"))
+        self.client.post("/bank/reconcile/", {f"match_{t.id}": f"payment:{self.payment.id}"})
+        t.refresh_from_db()
+        self.assertTrue(t.is_reconciled)
+        self.client.post("/bank/reconcile/", {f"match_{t.id}": ""})
+        t.refresh_from_db()
+        self.assertFalse(t.is_reconciled)
+        self.assertIsNone(t.matched_payment_id)
+
+    def test_reconcile_page_renders_with_book_balance(self):
+        from core.models import BankTransaction
+        BankTransaction.objects.create(tenant=self.tenant, description="FPS CREDIT", amount=Decimal("240.00"))
+        resp = self.client.get("/bank/reconcile/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["book_balance"], Decimal("240.00"))
+        self.assertEqual(resp.context["cleared"], Decimal("0.00"))
+
+
 class CreditNoteTests(TestCase):
     def setUp(self):
         from core.models import GLAccount

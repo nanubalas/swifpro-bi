@@ -13,6 +13,7 @@ from core.models import (
     CustomerInvoiceLine, TaxCode, SalesOrder, SalesOrderLine, ChannelConnection,
     SalesChannel, SyncRun, Payment, PaymentAllocation, OrgMembership,
     AuditLog, UserPermissionOverride, GLAccount, Expense, CreditNote, CreditNoteLine,
+    BankTransaction,
 )
 from core.services.gl import post_expense, post_credit_note
 from core import permissions as permissions_mod
@@ -263,6 +264,20 @@ class Command(BaseCommand):
                 )
                 post_expense(e2)
             self.stdout.write("Seeded sample expenses (posted to GL).")
+
+        # Sample bank statement lines (some match the seeded payment/expenses).
+        if not BankTransaction.objects.filter(tenant=tenant).exists():
+            today = timezone.now().date()
+            td = timezone.timedelta
+            BankTransaction.objects.create(tenant=tenant, txn_date=today - td(days=5),
+                                           description="FPS CREDIT BRIGHT RETAIL", amount=Decimal("300.00"), reference="FPS-DEMO-1")
+            BankTransaction.objects.create(tenant=tenant, txn_date=today - td(days=4),
+                                           description="DD INNOVATION PARK ESTATES", amount=Decimal("-1440.00"), reference="RENT-05")
+            BankTransaction.objects.create(tenant=tenant, txn_date=today - td(days=3),
+                                           description="CARD CLOUD TOOLS LTD", amount=Decimal("-216.00"), reference="SUB-118")
+            BankTransaction.objects.create(tenant=tenant, txn_date=today - td(days=2),
+                                           description="BANK CHARGES", amount=Decimal("-12.50"))
+            self.stdout.write("Seeded sample bank statement lines.")
 
         # A sample sales credit note against the demo AR invoice.
         if not CreditNote.objects.filter(tenant=tenant).exists():

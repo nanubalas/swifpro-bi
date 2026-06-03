@@ -14,7 +14,7 @@ from core.models import (
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount,
-    Payment, AccessRequest, Expense, CreditNote, CreditNoteLine
+    Payment, AccessRequest, Expense, CreditNote, CreditNoteLine, BankTransaction
 )
 
 
@@ -447,3 +447,12 @@ CreditNoteLineFormSet = inlineformset_factory(
     extra=1,
     can_delete=True,
 )
+
+
+class BankTransactionForm(TenantModelForm):
+    """Enter one bank statement line by hand."""
+    class Meta:
+        model = BankTransaction
+        fields = ["txn_date", "description", "amount", "reference"]
+        widgets = {"txn_date": forms.DateInput(attrs={"type": "date"})}
+        help_texts = {"amount": "Positive for money received, negative for money paid out."}
