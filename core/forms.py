@@ -14,7 +14,7 @@ from core.models import (
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount,
-    Payment, AccessRequest, Expense
+    Payment, AccessRequest, Expense, CreditNote, CreditNoteLine
 )
 
 
@@ -408,3 +408,42 @@ class ExpenseForm(TenantModelForm):
             ).order_by("code")
         self.fields["supplier"].required = False
         self.fields["tax_code"].required = False
+
+
+class CreditNoteForm(TenantModelForm):
+    class Meta:
+        model = CreditNote
+        fields = ["kind", "credit_note_number", "credit_note_date", "customer", "supplier",
+                  "customer_invoice", "supplier_invoice", "reason"]
+        widgets = {
+            "credit_note_date": forms.DateInput(attrs={"type": "date"}),
+            "reason": forms.Textarea(attrs={"rows": 2}),
+        }
+        labels = {
+            "customer_invoice": "Apply to customer invoice (optional)",
+            "supplier_invoice": "Apply to supplier invoice (optional)",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for f in ("customer", "supplier", "customer_invoice", "supplier_invoice", "reason"):
+            self.fields[f].required = False
+
+    def clean(self):
+        cleaned = super().clean()
+        kind = cleaned.get("kind")
+        if kind == CreditNote.Kind.SALES and not cleaned.get("customer"):
+            self.add_error("customer", "Choose the customer this credit is for.")
+        if kind == CreditNote.Kind.PURCHASE and not cleaned.get("supplier"):
+            self.add_error("supplier", "Choose the supplier this credit is from.")
+        return cleaned
+
+
+CreditNoteLineFormSet = inlineformset_factory(
+    CreditNote,
+    CreditNoteLine,
+    form=TenantModelForm,
+    fields=("description", "qty", "unit_amount", "tax_code", "account"),
+    extra=1,
+    can_delete=True,
+)

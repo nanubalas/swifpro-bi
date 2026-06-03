@@ -19,6 +19,7 @@ from core.models import (
     ReturnAuthorization, ReturnLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
     GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn, Expense,
+    CreditNote, CreditNoteLine,
     OrgMembership, AuditLog, AccessRequest, UserProfile, UserPermissionOverride
 )
 from django.core.exceptions import PermissionDenied
@@ -40,11 +41,12 @@ from core.forms import (
     TaxCodeForm, CustomerForm,
     CustomerInvoiceForm, CustomerInvoiceLineFormSet,
     GLAccountForm, ReceiptForm, SupplierPaymentForm, AccessRequestForm,
-    NewOrganisationForm, InviteUserForm, ExpenseForm
+    NewOrganisationForm, InviteUserForm, ExpenseForm,
+    CreditNoteForm, CreditNoteLineFormSet
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
-from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment, post_inventory_receipt, post_cogs, post_expense
+from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment, post_inventory_receipt, post_cogs, post_expense, post_credit_note
 from core.services import reports as reports_service
 from core.services import vat as vat_service
 from core.services import importer as importer_service
@@ -2793,6 +2795,63 @@ def expense_post(request, expense_id):
         post_expense(expense, user=request.user)
         messages.success(request, "Expense posted to the ledger.")
     return redirect("expense_detail", expense_id=expense.id)
+
+
+# ============================
+# Credit notes
+# ============================
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def credit_note_list(request):
+    tenant = _get_default_tenant(request)
+    notes = CreditNote.objects.filter(tenant=tenant).select_related("customer", "supplier").prefetch_related("lines", "lines__tax_code").order_by("-credit_note_date", "-id")
+    return render(request, "credit_notes/credit_note_list.html", {"tenant": tenant, "notes": notes})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def credit_note_create(request):
+    tenant = _get_default_tenant(request)
+    cn = CreditNote(tenant=tenant, currency_code=tenant.currency_code)
+    if request.method == "POST":
+        form = CreditNoteForm(request.POST, instance=cn)
+        formset = CreditNoteLineFormSet(request.POST, instance=cn)
+        if form.is_valid() and formset.is_valid():
+            cn = form.save(commit=False)
+            cn.tenant = tenant
+            cn.currency_code = tenant.currency_code
+            cn.save()
+            formset.save()
+            if (request.POST.get("action") or "save") == "post":
+                post_credit_note(cn, user=request.user)
+                messages.success(request, f"Credit note {cn.credit_note_number} posted ({cn.total}).")
+            else:
+                messages.success(request, "Credit note saved as draft.")
+            return redirect("credit_note_detail", note_id=cn.id)
+    else:
+        line_initial = [{"tax_code": tenant.default_tax_code}] if tenant.default_tax_code_id else None
+        form = CreditNoteForm(instance=cn)
+        formset = CreditNoteLineFormSet(instance=cn, initial=line_initial)
+    return render(request, "credit_notes/credit_note_form.html", {"tenant": tenant, "form": form, "formset": formset})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def credit_note_detail(request, note_id):
+    tenant = _get_default_tenant(request)
+    cn = get_object_or_404(CreditNote, id=note_id, tenant=tenant)
+    je = JournalEntry.objects.filter(tenant=tenant, ref_type="CREDIT_NOTE", ref_id=str(cn.id)).prefetch_related("lines", "lines__account").order_by("-id").first()
+    return render(request, "credit_notes/credit_note_detail.html", {"tenant": tenant, "cn": cn, "je": je})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def credit_note_post(request, note_id):
+    tenant = _get_default_tenant(request)
+    cn = get_object_or_404(CreditNote, id=note_id, tenant=tenant)
+    if request.method == "POST" and cn.status != CreditNote.Status.POSTED:
+        post_credit_note(cn, user=request.user)
+        messages.success(request, "Credit note posted to the ledger.")
+    return redirect("credit_note_detail", note_id=cn.id)
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])

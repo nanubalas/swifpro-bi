@@ -227,6 +227,69 @@ def post_expense(expense, user=None) -> JournalEntry:
 
 
 @transaction.atomic
+def post_credit_note(cn, user=None) -> JournalEntry:
+    """Post a credit note (the reverse of an invoice).
+
+    Sales credit:    DR Sales (per line) + DR VAT Output / CR Accounts Receivable.
+    Purchase credit: DR Accounts Payable / CR account (per line) + CR VAT Input.
+    When linked to an invoice, that invoice's outstanding falls automatically
+    (see CustomerInvoice/SupplierInvoice.credit_applied); a fully-credited
+    customer invoice is marked paid.
+    """
+    from core.models import CreditNote, CustomerInvoice
+
+    if cn.status == CreditNote.Status.POSTED:
+        je = JournalEntry.objects.filter(tenant=cn.tenant, ref_type="CREDIT_NOTE", ref_id=str(cn.id)).order_by("-id").first()
+        if je:
+            return je
+
+    tenant = cn.tenant
+    lines = list(cn.lines.all())
+    tax = sum((l.tax_amount for l in lines), Decimal("0.00"))
+    total = cn.total
+
+    je = JournalEntry.objects.create(
+        tenant=tenant, entry_date=cn.credit_note_date,
+        ref_type="CREDIT_NOTE", ref_id=str(cn.id),
+        memo=f"Credit note {cn.credit_note_number}",
+        posted_by=user, posted_at=timezone.now(),
+    )
+
+    # Net amounts grouped by GL account.
+    by_account = {}
+    default_acc = _acc(tenant, "sales") if cn.kind == CreditNote.Kind.SALES else _acc(tenant, "inventory")
+    for l in lines:
+        acc = l.account or default_acc
+        by_account[acc] = by_account.get(acc, Decimal("0.00")) + l.line_total
+
+    if cn.kind == CreditNote.Kind.SALES:
+        for acc, amount in by_account.items():
+            JournalLine.objects.create(entry=je, account=acc, description="Sales credit", debit=amount, credit=Decimal("0.00"))
+        if tax:
+            JournalLine.objects.create(entry=je, account=_acc(tenant, "vat_output"), description="VAT Output reversal", debit=tax, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "ar"), description="Accounts Receivable", debit=Decimal("0.00"), credit=total)
+    else:
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "ap"), description="Accounts Payable", debit=total, credit=Decimal("0.00"))
+        for acc, amount in by_account.items():
+            JournalLine.objects.create(entry=je, account=acc, description="Purchase credit", debit=Decimal("0.00"), credit=amount)
+        if tax:
+            JournalLine.objects.create(entry=je, account=_acc(tenant, "vat_input"), description="VAT Input reversal", debit=Decimal("0.00"), credit=tax)
+
+    cn.status = CreditNote.Status.POSTED
+    cn.posted_by = user
+    cn.posted_at = timezone.now()
+    cn.save(update_fields=["status", "posted_by", "posted_at"])
+
+    # Mark a fully-credited customer invoice as paid (settled).
+    if cn.customer_invoice_id:
+        inv = cn.customer_invoice
+        if inv.outstanding <= Decimal("0.00"):
+            inv.status = CustomerInvoice.Status.PAID
+            inv.save(update_fields=["status"])
+    return je
+
+
+@transaction.atomic
 def post_cogs(tenant, value, ref_id, user=None, entry_date=None):
     """Expense cost of goods sold: DR COGS / CR Inventory."""
     value = Decimal(value)

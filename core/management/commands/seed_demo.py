@@ -12,9 +12,9 @@ from core.models import (
     Shipment, ShipmentLine, InventoryMovement, Customer, CustomerInvoice,
     CustomerInvoiceLine, TaxCode, SalesOrder, SalesOrderLine, ChannelConnection,
     SalesChannel, SyncRun, Payment, PaymentAllocation, OrgMembership,
-    AuditLog, UserPermissionOverride, GLAccount, Expense,
+    AuditLog, UserPermissionOverride, GLAccount, Expense, CreditNote, CreditNoteLine,
 )
-from core.services.gl import post_expense
+from core.services.gl import post_expense, post_credit_note
 from core import permissions as permissions_mod
 from core import roles as roles_mod
 from core.services.inventory import apply_movement
@@ -263,6 +263,19 @@ class Command(BaseCommand):
                 )
                 post_expense(e2)
             self.stdout.write("Seeded sample expenses (posted to GL).")
+
+        # A sample sales credit note against the demo AR invoice.
+        if not CreditNote.objects.filter(tenant=tenant).exists():
+            std_tax = TaxCode.objects.filter(tenant=tenant, code="STD").first()
+            ar_inv = CustomerInvoice.objects.filter(tenant=tenant, invoice_number="INV-DEMO-0001").first()
+            cn = CreditNote.objects.create(
+                tenant=tenant, kind=CreditNote.Kind.SALES, credit_note_number="CN-DEMO-0001",
+                customer=customer, customer_invoice=ar_inv, reason="Goodwill discount",
+            )
+            CreditNoteLine.objects.create(credit_note=cn, description="Goodwill discount",
+                                          qty=Decimal("1"), unit_amount=Decimal("20.00"), tax_code=std_tax)
+            post_credit_note(cn)
+            self.stdout.write("Seeded a sample sales credit note (posted to GL).")
 
         # A sample per-user permission override so the Permissions editor is
         # populated: give the warehouse user finance-report access, and revoke

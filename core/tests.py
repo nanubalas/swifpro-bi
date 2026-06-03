@@ -1211,3 +1211,75 @@ class ExpenseTests(TestCase):
         self.assertIn("6100", codes)
         self.assertNotIn("1050", codes)  # bank is not an expense category
         self.assertNotIn("4000", codes)  # sales income is not an expense category
+
+
+class CreditNoteTests(TestCase):
+    def setUp(self):
+        from core.models import GLAccount
+        self.tenant = Tenant.objects.create(name="CN Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Supp")
+        self.inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-CN1")
+        CustomerInvoiceLine.objects.create(invoice=self.inv, description="Item", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(self.inv)  # total 240
+        self.user = User.objects.create_user("cn", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Finance")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="cn", password="pw")
+
+    def test_sales_credit_note_reduces_invoice_and_ar(self):
+        from core.models import CreditNote, CreditNoteLine, GLAccount
+        from core.services.gl import post_credit_note
+        from core.services import reports
+        cn = CreditNote.objects.create(tenant=self.tenant, kind=CreditNote.Kind.SALES,
+                                       credit_note_number="CN-1", customer=self.customer, customer_invoice=self.inv)
+        CreditNoteLine.objects.create(credit_note=cn, description="Refund", qty=Decimal("2"), unit_amount=Decimal("100.00"), tax_code=self.std)
+        post_credit_note(cn, user=self.user)
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.outstanding, Decimal("0.00"))
+        self.assertEqual(self.inv.status, "PAID")
+        balances = reports.account_balances(self.tenant)
+        ar = GLAccount.objects.get(tenant=self.tenant, code="1100")
+        self.assertEqual(balances[ar]["balance"], Decimal("0.00"))  # 240 invoice - 240 credit
+
+    def test_sales_credit_drops_invoice_from_aged_receivables(self):
+        from core.models import CreditNote, CreditNoteLine
+        from core.services.gl import post_credit_note
+        from core.services import reports
+        self.assertEqual(reports.aged_receivables(self.tenant)["total"], Decimal("240.00"))
+        cn = CreditNote.objects.create(tenant=self.tenant, kind=CreditNote.Kind.SALES,
+                                       credit_note_number="CN-2", customer=self.customer, customer_invoice=self.inv)
+        CreditNoteLine.objects.create(credit_note=cn, description="Refund", qty=Decimal("2"), unit_amount=Decimal("100.00"), tax_code=self.std)
+        post_credit_note(cn, user=self.user)
+        self.assertEqual(reports.aged_receivables(self.tenant)["total"], Decimal("0.00"))
+
+    def test_purchase_credit_note_posts_balanced_je(self):
+        from core.models import CreditNote, CreditNoteLine, GLAccount, JournalEntry
+        from core.services.gl import post_credit_note
+        from core.services import reports
+        acc = GLAccount.objects.get(tenant=self.tenant, code="6900")
+        cn = CreditNote.objects.create(tenant=self.tenant, kind=CreditNote.Kind.PURCHASE,
+                                       credit_note_number="CN-P1", supplier=self.supplier)
+        CreditNoteLine.objects.create(credit_note=cn, description="Overcharge", qty=Decimal("1"), unit_amount=Decimal("100.00"), tax_code=self.std, account=acc)
+        je = post_credit_note(cn, user=self.user)
+        self.assertEqual(je.total_debit, je.total_credit)  # balanced
+        self.assertEqual(je.total_debit, Decimal("120.00"))
+        balances = reports.account_balances(self.tenant)
+        ap = GLAccount.objects.get(tenant=self.tenant, code="2000")
+        self.assertEqual(balances[ap]["balance"], Decimal("-120.00"))  # payable reduced
+
+    def test_create_view_posts_sales_credit(self):
+        from core.models import CreditNote
+        resp = self.client.post("/credit-notes/new/", {
+            "kind": "SALES", "credit_note_number": "CN-V1", "credit_note_date": "2026-06-01",
+            "customer": self.customer.id, "customer_invoice": self.inv.id, "action": "post",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-description": "Refund", "lines-0-qty": "1", "lines-0-unit_amount": "50",
+            "lines-0-tax_code": self.std.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        cn = CreditNote.objects.get(tenant=self.tenant, credit_note_number="CN-V1")
+        self.assertEqual(cn.status, "POSTED")
+        self.assertEqual(cn.total, Decimal("60.00"))
