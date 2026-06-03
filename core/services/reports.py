@@ -17,7 +17,7 @@ from core.models import (
     InventoryCostLayer, Product,
 )
 
-DEBIT_NORMAL = {GLAccount.Type.ASSET, GLAccount.Type.EXPENSE}
+DEBIT_NORMAL = {GLAccount.Type.ASSET, GLAccount.Type.EXPENSE, GLAccount.Type.COGS}
 ZERO = Decimal("0.00")
 
 
@@ -91,21 +91,31 @@ def trial_balance(tenant, date_to=None):
 
 def profit_and_loss(tenant, date_from=None, date_to=None):
     balances = account_balances(tenant, date_from=date_from, date_to=date_to)
-    income, expense = [], []
-    income_total = expense_total = ZERO
+    income, cogs, expense = [], [], []
+    income_total = cogs_total = expense_total = ZERO
     for acc, vals in balances.items():
-        if acc.type == GLAccount.Type.INCOME and vals["balance"] != ZERO:
+        if vals["balance"] == ZERO:
+            continue
+        if acc.type == GLAccount.Type.INCOME:
             income.append({"account": acc, "amount": vals["balance"]})
             income_total += vals["balance"]
-        elif acc.type == GLAccount.Type.EXPENSE and vals["balance"] != ZERO:
+        elif acc.type == GLAccount.Type.COGS:
+            cogs.append({"account": acc, "amount": vals["balance"]})
+            cogs_total += vals["balance"]
+        elif acc.type == GLAccount.Type.EXPENSE:
             expense.append({"account": acc, "amount": vals["balance"]})
             expense_total += vals["balance"]
+    gross_profit = income_total - cogs_total
     return {
         "income": income,
+        "cogs": cogs,
         "expense": expense,
         "income_total": income_total,
+        "cogs_total": cogs_total,
+        "gross_profit": gross_profit,
         "expense_total": expense_total,
-        "net_profit": income_total - expense_total,
+        # net_profit = gross profit - operating expenses (COGS already removed)
+        "net_profit": gross_profit - expense_total,
     }
 
 
@@ -220,6 +230,60 @@ def stock_valuation(tenant):
         rows.append({"product": product, "qty": qty, "avg_cost": avg, "value": value})
     rows.sort(key=lambda r: r["product"].sku)
     return {"rows": rows, "total": total}
+
+
+def cash_flow_summary(tenant, date_from=None, date_to=None):
+    """A simple cash flow summary built from movements on the Bank account.
+
+    Opening + (cash in - cash out) = closing. Movements are grouped by the
+    other side of each entry (the source/use of cash) so a business owner can
+    see where money came from and went, without reading the ledger.
+    """
+    bank = GLAccount.objects.filter(tenant=tenant, code="1050").first()
+    if bank is None:
+        return {"rows": [], "cash_in": ZERO, "cash_out": ZERO, "net": ZERO,
+                "opening": ZERO, "closing": ZERO, "date_from": date_from, "date_to": date_to}
+
+    # Opening balance = bank balance strictly before the period.
+    opening = ZERO
+    if date_from:
+        import datetime
+        day_before = date_from - datetime.timedelta(days=1)
+        opening = account_balances(tenant, date_to=day_before).get(bank, {}).get("balance", ZERO)
+
+    bank_lines = (JournalLine.objects.filter(entry__tenant=tenant, account=bank)
+                  .select_related("entry").prefetch_related("entry__lines", "entry__lines__account"))
+    if date_from:
+        bank_lines = bank_lines.filter(entry__entry_date__gte=date_from)
+    if date_to:
+        bank_lines = bank_lines.filter(entry__entry_date__lte=date_to)
+
+    by_account = {}
+    cash_in = cash_out = ZERO
+    for bl in bank_lines:
+        delta = (bl.debit or ZERO) - (bl.credit or ZERO)  # + in / - out
+        if delta > ZERO:
+            cash_in += delta
+        else:
+            cash_out += -delta
+        counters = [l for l in bl.entry.lines.all() if l.account_id != bank.id]
+        total_counter = sum((abs((l.debit or ZERO) - (l.credit or ZERO)) for l in counters), ZERO)
+        if total_counter == ZERO:
+            by_account[bank] = by_account.get(bank, ZERO) + delta
+            continue
+        for l in counters:
+            weight = abs((l.debit or ZERO) - (l.credit or ZERO)) / total_counter
+            by_account[l.account] = by_account.get(l.account, ZERO) + (delta * weight)
+
+    rows = [{"account": acc, "amount": amt.quantize(Decimal("0.01"))}
+            for acc, amt in by_account.items() if amt.quantize(Decimal("0.01")) != ZERO]
+    rows.sort(key=lambda r: r["amount"], reverse=True)
+    net = cash_in - cash_out
+    return {
+        "rows": rows, "cash_in": cash_in, "cash_out": cash_out, "net": net,
+        "opening": opening, "closing": opening + net,
+        "date_from": date_from, "date_to": date_to,
+    }
 
 
 def aged_payables(tenant, as_of=None):

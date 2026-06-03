@@ -1136,9 +1136,55 @@ class FinancialReportsTests(TestCase):
 
     def test_report_pages_render(self):
         for path in ["/reports/", "/reports/trial-balance/", "/reports/profit-and-loss/",
-                     "/reports/balance-sheet/", "/reports/aged-receivables/", "/reports/aged-payables/"]:
+                     "/reports/balance-sheet/", "/reports/cash-flow/",
+                     "/reports/aged-receivables/", "/reports/aged-payables/"]:
             resp = self.client.get(path)
             self.assertEqual(resp.status_code, 200, f"{path} -> {resp.status_code}")
+
+
+class CashFlowAndGrossProfitTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="CF Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-CF1")
+        CustomerInvoiceLine.objects.create(invoice=self.inv, description="Item", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(self.inv)  # income 200
+        self.user = User.objects.create_user("cf", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Finance")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="cf", password="pw")
+
+    def test_cogs_account_is_cogs_type_and_gross_profit(self):
+        from core.models import GLAccount
+        from core.services import reports
+        from core.services.gl import post_cogs
+        cogs_acc = GLAccount.objects.get(tenant=self.tenant, code="5000")
+        self.assertEqual(cogs_acc.type, "COGS")
+        post_cogs(self.tenant, Decimal("80.00"), "SALE-1")  # DR COGS 80 / CR inventory 80
+        pnl = reports.profit_and_loss(self.tenant)
+        self.assertEqual(pnl["income_total"], Decimal("200.00"))
+        self.assertEqual(pnl["cogs_total"], Decimal("80.00"))
+        self.assertEqual(pnl["gross_profit"], Decimal("120.00"))
+        self.assertEqual(pnl["net_profit"], Decimal("120.00"))
+
+    def test_cash_flow_summary_reflects_receipt(self):
+        from core.models import Payment, PaymentAllocation, GLAccount
+        from core.services.gl import post_payment
+        from core.services import reports
+        p = Payment.objects.create(tenant=self.tenant, direction=Payment.Direction.RECEIPT,
+                                   customer=self.customer, amount=Decimal("240.00"), method="BANK")
+        PaymentAllocation.objects.create(payment=p, customer_invoice=self.inv, amount=Decimal("240.00"))
+        post_payment(p)
+        import datetime
+        cf = reports.cash_flow_summary(self.tenant, date_from=datetime.date(2000, 1, 1), date_to=datetime.date(2100, 1, 1))
+        self.assertEqual(cf["cash_in"], Decimal("240.00"))
+        self.assertEqual(cf["cash_out"], Decimal("0.00"))
+        self.assertEqual(cf["net"], Decimal("240.00"))
+        ar = GLAccount.objects.get(tenant=self.tenant, code="1100")
+        ar_row = next((r for r in cf["rows"] if r["account"] == ar), None)
+        self.assertIsNotNone(ar_row)
+        self.assertEqual(ar_row["amount"], Decimal("240.00"))
 
 
 class ExpenseTests(TestCase):

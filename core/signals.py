@@ -22,7 +22,7 @@ DEFAULT_ACCOUNTS = [
     ("2200", "VAT Output", "LIABILITY"),
     ("1300", "VAT Input", "ASSET"),
     ("4000", "Sales Revenue", "INCOME"),
-    ("5000", "Cost of Goods Sold", "EXPENSE"),
+    ("5000", "Cost of Goods Sold", "COGS"),
     ("5100", "Purchase Price Variance", "EXPENSE"),
     # Operating expense accounts (used by the Expenses module).
     ("6000", "General Expenses", "EXPENSE"),

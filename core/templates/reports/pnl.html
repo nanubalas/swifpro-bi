@@ -21,40 +21,37 @@
   </form>
 </div>
 
-<div class="row g-4">
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-header">Income</div>
-      <div class="card-body">
-        <table class="table align-middle mb-0">
-          <tbody>
-            {% for r in data.income %}
-            <tr><td>{{ r.account.code }} {{ r.account.name }}</td><td class="text-end">{{ r.amount|money:tenant.currency_code }}</td></tr>
-            {% empty %}
-            <tr><td class="text-muted" colspan="2">No income in this period.</td></tr>
-            {% endfor %}
-          </tbody>
-          <tfoot><tr class="fw-bold border-top"><td>Total income</td><td class="text-end">{{ data.income_total|money:tenant.currency_code }}</td></tr></tfoot>
-        </table>
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-header">Expenses</div>
-      <div class="card-body">
-        <table class="table align-middle mb-0">
-          <tbody>
-            {% for r in data.expense %}
-            <tr><td>{{ r.account.code }} {{ r.account.name }}</td><td class="text-end">{{ r.amount|money:tenant.currency_code }}</td></tr>
-            {% empty %}
-            <tr><td class="text-muted" colspan="2">No expenses in this period.</td></tr>
-            {% endfor %}
-          </tbody>
-          <tfoot><tr class="fw-bold border-top"><td>Total expenses</td><td class="text-end">{{ data.expense_total|money:tenant.currency_code }}</td></tr></tfoot>
-        </table>
-      </div>
-    </div>
+<div class="card">
+  <div class="card-body">
+    <table class="table align-middle mb-0">
+      <tbody>
+        <tr class="table-light"><th colspan="2">Income</th></tr>
+        {% for r in data.income %}
+        <tr><td class="ps-4">{{ r.account.code }} {{ r.account.name }}</td><td class="text-end">{{ r.amount|money:tenant.currency_code }}</td></tr>
+        {% empty %}
+        <tr><td class="ps-4 text-muted" colspan="2">No income in this period.</td></tr>
+        {% endfor %}
+        <tr class="fw-semibold border-top"><td>Total income</td><td class="text-end">{{ data.income_total|money:tenant.currency_code }}</td></tr>
+
+        <tr class="table-light"><th colspan="2">Cost of goods sold</th></tr>
+        {% for r in data.cogs %}
+        <tr><td class="ps-4">{{ r.account.code }} {{ r.account.name }}</td><td class="text-end">({{ r.amount|money:tenant.currency_code }})</td></tr>
+        {% empty %}
+        <tr><td class="ps-4 text-muted" colspan="2">No cost of goods sold in this period.</td></tr>
+        {% endfor %}
+        <tr class="fw-semibold border-top"><td>Total cost of goods sold</td><td class="text-end">({{ data.cogs_total|money:tenant.currency_code }})</td></tr>
+
+        <tr class="fw-bold"><td>Gross profit</td><td class="text-end {% if data.gross_profit < 0 %}text-danger{% endif %}">{{ data.gross_profit|money:tenant.currency_code }}</td></tr>
+
+        <tr class="table-light"><th colspan="2">Operating expenses</th></tr>
+        {% for r in data.expense %}
+        <tr><td class="ps-4">{{ r.account.code }} {{ r.account.name }}</td><td class="text-end">({{ r.amount|money:tenant.currency_code }})</td></tr>
+        {% empty %}
+        <tr><td class="ps-4 text-muted" colspan="2">No operating expenses in this period.</td></tr>
+        {% endfor %}
+        <tr class="fw-semibold border-top"><td>Total operating expenses</td><td class="text-end">({{ data.expense_total|money:tenant.currency_code }})</td></tr>
+      </tbody>
+    </table>
   </div>
 </div>
 

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Cash Flow Summary - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small"><a href="{% url 'reports_index' %}" class="text-decoration-none">Reports</a> / Cash Flow Summary</div>
+    <h2 class="fw-bold mb-0">Cash Flow Summary</h2>
+  </div>
+  <form method="get" class="d-flex align-items-end gap-2">
+    <div><label class="form-label mb-1">From</label><input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <div><label class="form-label mb-1">To</label><input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <button class="btn btn-primary btn-sm">Apply</button>
+  </form>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="card stat-card p-3"><div class="text-muted small">Opening balance</div><div class="fs-4 fw-bold">{{ data.opening|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-3"><div class="card stat-card p-3"><div class="text-muted small">Cash in</div><div class="fs-4 fw-bold text-success">{{ data.cash_in|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-3"><div class="card stat-card p-3"><div class="text-muted small">Cash out</div><div class="fs-4 fw-bold text-danger">{{ data.cash_out|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-3"><div class="card stat-card p-3"><div class="text-muted small">Closing balance</div><div class="fs-4 fw-bold">{{ data.closing|money:tenant.currency_code }}</div></div></div>
+</div>
+
+<div class="card">
+  <div class="card-header">Where cash moved</div>
+  <div class="card-body">
+    <table class="table align-middle mb-0">
+      <thead class="table-light"><tr><th>Source / use of cash</th><th class="text-end">Amount</th></tr></thead>
+      <tbody>
+        {% for r in data.rows %}
+        <tr>
+          <td>{{ r.account.name }}</td>
+          <td class="text-end {% if r.amount < 0 %}text-danger{% else %}text-success{% endif %}">{{ r.amount|money:tenant.currency_code }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="2" class="text-muted text-center py-4">No cash movement in this period.</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light">
+        <tr class="fw-bold"><td>Net cash movement</td><td class="text-end {% if data.net < 0 %}text-danger{% else %}text-success{% endif %}">{{ data.net|money:tenant.currency_code }}</td></tr>
+      </tfoot>
+    </table>
+    <div class="text-muted small mt-2">A positive figure is cash coming in; a negative figure is cash going out. Built from movements on your Bank account.</div>
+  </div>
+</div>
+{% endblock %}

@@ -195,6 +195,7 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("reports/trial-balance/", views.report_trial_balance, name="report_trial_balance"),
     path("reports/profit-and-loss/", views.report_pnl, name="report_pnl"),
     path("reports/balance-sheet/", views.report_balance_sheet, name="report_balance_sheet"),
+    path("reports/cash-flow/", views.report_cash_flow, name="report_cash_flow"),
     path("reports/aged-receivables/", views.report_aged_receivables, name="report_aged_receivables"),
     path("reports/aged-payables/", views.report_aged_payables, name="report_aged_payables"),
     path("reports/stock-valuation/", views.report_stock_valuation, name="report_stock_valuation"),

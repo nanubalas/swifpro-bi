@@ -2648,6 +2648,21 @@ def report_balance_sheet(request):
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_cash_flow(request):
+    tenant = _get_default_tenant(request)
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    if not date_from and not date_to:
+        date_from, date_to = reports_service.current_financial_year(tenant)
+    elif not date_to:
+        date_to = timezone.localdate()
+    data = reports_service.cash_flow_summary(tenant, date_from=date_from, date_to=date_to)
+    return render(request, "reports/cash_flow.html", {
+        "tenant": tenant, "date_from": date_from, "date_to": date_to, "data": data,
+    })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def report_aged_receivables(request):
     tenant = _get_default_tenant(request)
     as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()

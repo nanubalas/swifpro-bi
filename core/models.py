@@ -966,6 +966,7 @@ class GLAccount(models.Model):
         LIABILITY = "LIABILITY", "Liability"
         EQUITY = "EQUITY", "Equity"
         INCOME = "INCOME", "Income"
+        COGS = "COGS", "Cost of goods sold"
         EXPENSE = "EXPENSE", "Expense"
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
