@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Import {{ cfg.label }} - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">Import {{ cfg.label }}</h2>
+    <div class="text-muted">Upload a CSV to create or update {{ cfg.label|lower }} in bulk.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ cfg.list_url }}"><i class="bi bi-arrow-left me-1"></i> Back to {{ cfg.label }}</a>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-upload me-2 text-primary"></i>Upload CSV</div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          <input type="file" name="file" accept=".csv" class="form-control mb-3" required>
+          <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up me-1"></i> Import</button>
+          <a class="btn btn-outline-secondary ms-2" href="{% url 'import_template' kind %}"><i class="bi bi-download me-1"></i> Download template</a>
+        </form>
+      </div>
+    </div>
+
+    {% if summary %}
+    <div class="card mt-4">
+      <div class="card-header"><i class="bi bi-list-check me-2 text-primary"></i>Result</div>
+      <div class="card-body">
+        <div class="d-flex gap-3 mb-3 flex-wrap">
+          <span class="badge text-bg-success">Created: {{ summary.created }}</span>
+          <span class="badge text-bg-info">Updated: {{ summary.updated }}</span>
+          <span class="badge text-bg-secondary">Rows: {{ summary.total }}</span>
+          <span class="badge text-bg-danger">Skipped: {{ summary.errors|length }}</span>
+        </div>
+        {% if summary.errors %}
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light"><tr><th>Row</th><th>Problem</th></tr></thead>
+            <tbody>
+              {% for n, msg in summary.errors %}<tr><td>{{ n }}</td><td class="text-danger small">{{ msg }}</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="text-success small"><i class="bi bi-check-circle me-1"></i>All rows imported cleanly.</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-info-circle me-2 text-primary"></i>Expected columns</div>
+      <div class="card-body">
+        <p class="text-muted small">First row must be a header with these columns (extra columns are ignored). Matched on <strong>{{ cfg.key }}</strong> - existing rows are updated.</p>
+        <div class="d-flex flex-wrap gap-2">
+          {% for c in cfg.columns %}<span class="badge text-bg-secondary">{{ c }}</span>{% endfor %}
+        </div>
+        <div class="form-text mt-3">Tip: download the template for a ready-made header and an example row.</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

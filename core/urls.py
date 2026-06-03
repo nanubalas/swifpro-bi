@@ -19,6 +19,12 @@ urlpatterns = [
     path("onboarding/finish/", views.onboarding_finish, name="onboarding_finish"),
     path("onboarding/new-organisation/", views.new_organisation, name="new_organisation"),
     path("request-access/", views.request_access, name="request_access"),
+
+    # CSV import
+    path("products/import/", views.import_products, name="import_products"),
+    path("customers/import/", views.import_customers, name="import_customers"),
+    path("suppliers/import/", views.import_suppliers, name="import_suppliers"),
+    path("import/<str:kind>/template.csv", views.import_template, name="import_template"),
     path("access-requests/", views.access_request_list, name="access_request_list"),
     path("access-requests/<int:req_id>/action/", views.access_request_action, name="access_request_action"),
     path("audit/", views.audit_log_list, name="audit_log_list"),
