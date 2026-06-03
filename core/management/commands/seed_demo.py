@@ -12,8 +12,9 @@ from core.models import (
     Shipment, ShipmentLine, InventoryMovement, Customer, CustomerInvoice,
     CustomerInvoiceLine, TaxCode, SalesOrder, SalesOrderLine, ChannelConnection,
     SalesChannel, SyncRun, Payment, PaymentAllocation, OrgMembership,
-    AuditLog, UserPermissionOverride,
+    AuditLog, UserPermissionOverride, GLAccount, Expense,
 )
+from core.services.gl import post_expense
 from core import permissions as permissions_mod
 from core import roles as roles_mod
 from core.services.inventory import apply_movement
@@ -240,6 +241,28 @@ class Command(BaseCommand):
         period_from = today.replace(day=1) - timezone.timedelta(days=62)
         save_vat_return(tenant, period_from.replace(day=1), today)
         self.stdout.write("Saved a draft VAT return.")
+
+        # A couple of recorded expenses (posted to the GL), so the Expenses
+        # page and the P&L show operating costs.
+        if not Expense.objects.filter(tenant=tenant).exists():
+            std_tax = TaxCode.objects.filter(tenant=tenant, code="STD").first()
+            rent = GLAccount.objects.filter(tenant=tenant, code="6100").first()
+            software = GLAccount.objects.filter(tenant=tenant, code="6700").first()
+            if rent:
+                e1 = Expense.objects.create(
+                    tenant=tenant, payee="Innovation Park Estates", category=rent,
+                    description="Monthly workshop rent", net_amount=Decimal("1200.00"),
+                    tax_code=std_tax, paid=True, method=Expense.Method.BANK, reference="RENT-05",
+                )
+                post_expense(e1)
+            if software:
+                e2 = Expense.objects.create(
+                    tenant=tenant, payee="Cloud Tools Ltd", category=software,
+                    description="SaaS subscriptions", net_amount=Decimal("180.00"),
+                    tax_code=std_tax, paid=True, method=Expense.Method.CARD, reference="SUB-118",
+                )
+                post_expense(e2)
+            self.stdout.write("Seeded sample expenses (posted to GL).")
 
         # A sample per-user permission override so the Permissions editor is
         # populated: give the warehouse user finance-report access, and revoke

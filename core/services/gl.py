@@ -189,6 +189,44 @@ def post_inventory_receipt(tenant, value, ref_id, user=None, entry_date=None,
 
 
 @transaction.atomic
+def post_expense(expense, user=None) -> JournalEntry:
+    """Post a recorded expense to the GL.
+
+    DR the chosen expense account (net) + DR VAT input (reclaimable tax);
+    CR Bank if paid now, else CR Accounts Payable (still owed).
+    """
+    from core.models import Expense
+
+    if expense.status == Expense.Status.POSTED:
+        je = JournalEntry.objects.filter(tenant=expense.tenant, ref_type="EXPENSE", ref_id=str(expense.id)).order_by("-id").first()
+        if je:
+            return je
+
+    tenant = expense.tenant
+    net = Decimal(expense.net_amount or "0.00")
+    tax = Decimal(expense.tax_amount or "0.00")
+    total = net + tax
+
+    je = JournalEntry.objects.create(
+        tenant=tenant, entry_date=expense.expense_date,
+        ref_type="EXPENSE", ref_id=str(expense.id),
+        memo=f"Expense {expense.payee} {expense.reference or ''}".strip(),
+        posted_by=user, posted_at=timezone.now(),
+    )
+    JournalLine.objects.create(entry=je, account=expense.category, description=(expense.description or expense.payee), debit=net, credit=Decimal("0.00"))
+    if tax and tax != Decimal("0.00"):
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "vat_input"), description="VAT Input", debit=tax, credit=Decimal("0.00"))
+    credit_acc = _acc(tenant, "bank") if expense.paid else _acc(tenant, "ap")
+    JournalLine.objects.create(entry=je, account=credit_acc, description=("Bank" if expense.paid else "Accounts Payable"), debit=Decimal("0.00"), credit=total)
+
+    expense.status = Expense.Status.POSTED
+    expense.posted_by = user
+    expense.posted_at = timezone.now()
+    expense.save(update_fields=["status", "posted_by", "posted_at"])
+    return je
+
+
+@transaction.atomic
 def post_cogs(tenant, value, ref_id, user=None, entry_date=None):
     """Expense cost of goods sold: DR COGS / CR Inventory."""
     value = Decimal(value)

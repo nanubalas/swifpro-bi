@@ -1069,6 +1069,51 @@ class PaymentAllocation(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2)
 
 
+class Expense(models.Model):
+    """A business cost the owner records directly (rent, fuel, software, ...),
+    without a formal supplier bill. Posting it creates the double-entry:
+    DR the chosen expense account (+ DR VAT input), CR Bank when paid now, or
+    CR Accounts Payable when it is still owed."""
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        POSTED = "POSTED", "Posted"
+
+    class Method(models.TextChoices):
+        BANK = "BANK", "Bank transfer"
+        CARD = "CARD", "Card"
+        CASH = "CASH", "Cash"
+        OTHER = "OTHER", "Other"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="expenses")
+    expense_date = models.DateField(default=timezone.now)
+    payee = models.CharField(max_length=200)  # merchant / who was paid
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True, related_name="expenses")
+    category = models.ForeignKey(GLAccount, on_delete=models.PROTECT, related_name="expenses")  # an expense/COGS account
+    description = models.CharField(max_length=255, blank=True, null=True)
+    net_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    tax_code = models.ForeignKey(TaxCode, on_delete=models.PROTECT, null=True, blank=True)
+    paid = models.BooleanField(default=True)  # paid from bank now vs owed (AP)
+    method = models.CharField(max_length=10, choices=Method.choices, default=Method.BANK)
+    reference = models.CharField(max_length=100, blank=True, null=True)
+    currency_code = models.CharField(max_length=3, default="GBP")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    created_at = models.DateTimeField(default=timezone.now)
+    posted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Expense {self.payee} {self.total}"
+
+    @property
+    def tax_amount(self):
+        rate = self.tax_code.rate if self.tax_code else Decimal("0.00")
+        return (self.net_amount or Decimal("0.00")) * rate
+
+    @property
+    def total(self):
+        return (self.net_amount or Decimal("0.00")) + self.tax_amount
+
+
 # ============================
 # VAT return (UK MTD 9-box)
 # ============================

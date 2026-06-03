@@ -24,6 +24,16 @@ DEFAULT_ACCOUNTS = [
     ("4000", "Sales Revenue", "INCOME"),
     ("5000", "Cost of Goods Sold", "EXPENSE"),
     ("5100", "Purchase Price Variance", "EXPENSE"),
+    # Operating expense accounts (used by the Expenses module).
+    ("6000", "General Expenses", "EXPENSE"),
+    ("6100", "Rent & Rates", "EXPENSE"),
+    ("6200", "Utilities", "EXPENSE"),
+    ("6300", "Office & Admin", "EXPENSE"),
+    ("6400", "Travel & Subsistence", "EXPENSE"),
+    ("6500", "Marketing", "EXPENSE"),
+    ("6600", "Professional Fees", "EXPENSE"),
+    ("6700", "Software & Subscriptions", "EXPENSE"),
+    ("6900", "Other Expenses", "EXPENSE"),
 ]
 
 @receiver(post_save, sender=Tenant)

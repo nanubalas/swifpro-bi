@@ -116,6 +116,7 @@ NAV = [
     ]),
     ("Finance", [
         ("Payments", "/payments/", "cash-stack", {ADMIN, ACCOUNTANT, FINANCE}),
+        ("Expenses", "/expenses/", "wallet2", {ADMIN, ACCOUNTANT, FINANCE}),
         ("Bank Reconciliation", "/bank/reconcile/", "check2-square", {ADMIN, ACCOUNTANT, FINANCE}),
         ("Tax Codes (VAT)", "/tax-codes/", "percent", {ADMIN, ACCOUNTANT, FINANCE}),
         ("VAT Returns (MTD)", "/vat/", "file-earmark-spreadsheet", {ADMIN, ACCOUNTANT, FINANCE}),

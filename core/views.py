@@ -18,7 +18,7 @@ from core.models import (
     SupplierInvoice, SupplierInvoiceLine,
     ReturnAuthorization, ReturnLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
-    GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn,
+    GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn, Expense,
     OrgMembership, AuditLog, AccessRequest, UserProfile, UserPermissionOverride
 )
 from django.core.exceptions import PermissionDenied
@@ -40,11 +40,11 @@ from core.forms import (
     TaxCodeForm, CustomerForm,
     CustomerInvoiceForm, CustomerInvoiceLineFormSet,
     GLAccountForm, ReceiptForm, SupplierPaymentForm, AccessRequestForm,
-    NewOrganisationForm, InviteUserForm
+    NewOrganisationForm, InviteUserForm, ExpenseForm
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
-from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment, post_inventory_receipt, post_cogs
+from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment, post_inventory_receipt, post_cogs, post_expense
 from core.services import reports as reports_service
 from core.services import vat as vat_service
 from core.services import importer as importer_service
@@ -2739,6 +2739,60 @@ def supplier_payment_create(request):
         messages.success(request, f"Payment of {payment.amount} recorded and allocated.")
         return redirect("payment_detail", payment_id=payment.id)
     return render(request, "payments/payment_form.html", {"tenant": tenant, "form": form, "mode": "payment"})
+
+
+# ============================
+# Expenses
+# ============================
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def expense_list(request):
+    tenant = _get_default_tenant(request)
+    expenses = Expense.objects.filter(tenant=tenant).select_related("category", "supplier", "tax_code").order_by("-expense_date", "-id")
+    total = sum((e.total for e in expenses), Decimal("0.00"))
+    return render(request, "expenses/expense_list.html", {"tenant": tenant, "expenses": expenses, "total": total})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def expense_create(request):
+    tenant = _get_default_tenant(request)
+    initial = {}
+    if tenant.default_tax_code_id:
+        initial["tax_code"] = tenant.default_tax_code
+    form = ExpenseForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        expense = form.save(commit=False)
+        expense.tenant = tenant
+        expense.currency_code = tenant.currency_code
+        expense.save()
+        action = request.POST.get("action") or "save"
+        if action == "post":
+            post_expense(expense, user=request.user)
+            messages.success(request, f"Expense recorded and posted ({expense.total}).")
+        else:
+            messages.success(request, "Expense saved as draft.")
+        return redirect("expense_detail", expense_id=expense.id)
+    return render(request, "expenses/expense_form.html", {"tenant": tenant, "form": form})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def expense_detail(request, expense_id):
+    tenant = _get_default_tenant(request)
+    expense = get_object_or_404(Expense, id=expense_id, tenant=tenant)
+    je = JournalEntry.objects.filter(tenant=tenant, ref_type="EXPENSE", ref_id=str(expense.id)).prefetch_related("lines", "lines__account").order_by("-id").first()
+    return render(request, "expenses/expense_detail.html", {"tenant": tenant, "expense": expense, "je": je})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def expense_post(request, expense_id):
+    tenant = _get_default_tenant(request)
+    expense = get_object_or_404(Expense, id=expense_id, tenant=tenant)
+    if request.method == "POST" and expense.status != Expense.Status.POSTED:
+        post_expense(expense, user=request.user)
+        messages.success(request, "Expense posted to the ledger.")
+    return redirect("expense_detail", expense_id=expense.id)
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Expense - {{ expense.payee }} - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{% url 'expense_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+    <div>
+      <h2 class="fw-bold mb-0">{{ expense.payee }}</h2>
+      <div class="text-muted">{{ expense.expense_date|date:'d M Y' }} -
+        {% if expense.status == 'POSTED' %}<span class="badge text-bg-success">Posted</span>{% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
+        {% if not expense.paid %}<span class="badge text-bg-warning">Owed (Accounts Payable)</span>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% if expense.status != 'POSTED' %}
+  <form method="post" action="{% url 'expense_post' expense.id %}">{% csrf_token %}
+    <button class="btn btn-primary"><i class="bi bi-check-lg me-1"></i> Post to ledger</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card h-100"><div class="card-body">
+      <h5 class="fw-bold mb-3">Details</h5>
+      <dl class="row mb-0">
+        <dt class="col-5 text-muted fw-normal">Category</dt><dd class="col-7">{{ expense.category.code }} - {{ expense.category.name }}</dd>
+        <dt class="col-5 text-muted fw-normal">Supplier</dt><dd class="col-7">{{ expense.supplier.name|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">Description</dt><dd class="col-7">{{ expense.description|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">Method</dt><dd class="col-7">{{ expense.get_method_display }}</dd>
+        <dt class="col-5 text-muted fw-normal">Reference</dt><dd class="col-7">{{ expense.reference|default:'-' }}</dd>
+      </dl>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100"><div class="card-body">
+      <h5 class="fw-bold mb-3">Amount</h5>
+      <dl class="row mb-0">
+        <dt class="col-7 text-muted fw-normal">Net</dt><dd class="col-5 text-end">{{ expense.net_amount|floatformat:2 }}</dd>
+        <dt class="col-7 text-muted fw-normal">VAT {% if expense.tax_code %}({{ expense.tax_code.code }}){% endif %}</dt><dd class="col-5 text-end">{{ expense.tax_amount|floatformat:2 }}</dd>
+        <dt class="col-7 border-top pt-2 fw-bold">Total</dt><dd class="col-5 border-top pt-2 text-end fw-bold">{{ expense.total|floatformat:2 }}</dd>
+      </dl>
+    </div></div>
+  </div>
+</div>
+
+{% if je %}
+<div class="card mt-4"><div class="card-body">
+  <h5 class="fw-bold mb-3">Ledger entry <span class="text-muted small fw-normal">(JE #{{ je.id }})</span></h5>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr><th>Account</th><th>Description</th><th class="text-end">Debit</th><th class="text-end">Credit</th></tr></thead>
+      <tbody>
+        {% for l in je.lines.all %}
+        <tr><td>{{ l.account.code }} - {{ l.account.name }}</td><td class="text-muted small">{{ l.description }}</td>
+          <td class="text-end">{% if l.debit %}{{ l.debit|floatformat:2 }}{% endif %}</td>
+          <td class="text-end">{% if l.credit %}{{ l.credit|floatformat:2 }}{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>
+{% endif %}
+{% endblock %}
