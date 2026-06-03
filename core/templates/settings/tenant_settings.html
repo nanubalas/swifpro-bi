@@ -1,63 +1,115 @@
 {% extends "base.html" %}
-{% block title %}Settings - Tenant{% endblock %}
+{% block title %}Company Profile - SwifPro BI{% endblock %}
 
 {% block body %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
-    <h2 class="fw-bold mb-1">Settings</h2>
-    <div class="text-muted">Company profile and system preferences.</div>
+    <h2 class="fw-bold mb-1">Company Profile</h2>
+    <div class="text-muted">Your organisation details, tax setup, branding and defaults.</div>
   </div>
   <a class="btn btn-outline-secondary" href="/">Back</a>
 </div>
 
-<div class="row g-4">
-  <div class="col-lg-7">
-    <div class="card card-soft">
-      <div class="card-body p-4">
-        <h5 class="fw-semibold mb-3">Company</h5>
+{% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
 
-        <form method="post">
-          {% csrf_token %}
+<form method="post" enctype="multipart/form-data" class="d-grid gap-4" style="max-width:900px;">
+  {% csrf_token %}
 
-          <div class="mb-3">
-            <label class="form-label">Company name</label>
-            {{ form.name }}
-            {% if form.name.errors %}<div class="text-danger small">{{ form.name.errors }}</div>{% endif %}
-          </div>
+  <div class="card">
+    <div class="card-header"><i class="bi bi-building me-2 text-primary"></i>Identity</div>
+    <div class="card-body row g-3">
+      <div class="col-md-6">{{ form.name.label_tag }}{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+      <div class="col-md-6">{{ form.business_type.label_tag }}{{ form.business_type }}</div>
+      <div class="col-md-6">{{ form.legal_name.label_tag }}{{ form.legal_name }}</div>
+      <div class="col-md-6">{{ form.trading_name.label_tag }}{{ form.trading_name }}</div>
+    </div>
+  </div>
 
-          <div class="mb-3">
-            <label class="form-label">Currency</label>
-            {{ form.currency_code }}
-            <div class="form-text">
-              Used for POs, receipts, and reporting.
-            </div>
-            {% if form.currency_code.errors %}<div class="text-danger small">{{ form.currency_code.errors }}</div>{% endif %}
-          </div>
+  <div class="card">
+    <div class="card-header"><i class="bi bi-percent me-2 text-primary"></i>Registration &amp; Tax</div>
+    <div class="card-body row g-3">
+      <div class="col-md-6">{{ form.company_number.label_tag }}{{ form.company_number }}{% for e in form.company_number.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+      <div class="col-md-6">{{ form.utr_number.label_tag }}{{ form.utr_number }}{% for e in form.utr_number.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+      <div class="col-md-6 d-flex align-items-end"><div class="form-check"><input type="checkbox" class="form-check-input" name="vat_registered" id="id_vat_registered" {% if form.vat_registered.value %}checked{% endif %}><label class="form-check-label ms-1" for="id_vat_registered">VAT registered</label></div></div>
+      <div class="col-md-6">{{ form.vat_number.label_tag }}{{ form.vat_number }}{% for e in form.vat_number.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+    </div>
+  </div>
 
-          <div class="d-flex justify-content-end gap-2 mt-4">
-            <a class="btn btn-outline-secondary" href="/">Cancel</a>
-            <button class="btn btn-primary" type="submit">Save Settings</button>
-          </div>
-        </form>
+  <div class="card">
+    <div class="card-header"><i class="bi bi-geo-alt me-2 text-primary"></i>Business Address</div>
+    <div class="card-body row g-3">
+      <div class="col-md-6">{{ form.address_line1.label_tag }}{{ form.address_line1 }}</div>
+      <div class="col-md-6">{{ form.address_line2.label_tag }}{{ form.address_line2 }}</div>
+      <div class="col-md-4">{{ form.address_city.label_tag }}{{ form.address_city }}</div>
+      <div class="col-md-4">{{ form.address_postcode.label_tag }}{{ form.address_postcode }}</div>
+      <div class="col-md-4">{{ form.address_country.label_tag }}{{ form.address_country }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><i class="bi bi-receipt me-2 text-primary"></i>Billing Address</div>
+    <div class="card-body">
+      <div class="form-check mb-3"><input type="checkbox" class="form-check-input" name="billing_same_as_business" id="id_billing_same_as_business" {% if form.billing_same_as_business.value %}checked{% endif %}><label class="form-check-label ms-1" for="id_billing_same_as_business">Same as business address</label></div>
+      <div class="row g-3">
+        <div class="col-md-6">{{ form.billing_line1.label_tag }}{{ form.billing_line1 }}</div>
+        <div class="col-md-6">{{ form.billing_line2.label_tag }}{{ form.billing_line2 }}</div>
+        <div class="col-md-4">{{ form.billing_city.label_tag }}{{ form.billing_city }}</div>
+        <div class="col-md-4">{{ form.billing_postcode.label_tag }}{{ form.billing_postcode }}</div>
+        <div class="col-md-4">{{ form.billing_country.label_tag }}{{ form.billing_country }}</div>
       </div>
     </div>
   </div>
 
-  <div class="col-lg-5">
-    <div class="card card-soft">
-      <div class="card-body p-4">
-        <h5 class="fw-semibold mb-2">Notes</h5>
-        <p class="text-muted mb-0">
-          Changing currency updates how amounts are displayed across SwifPro BI.
-          Existing records keep numeric values; only the symbol/format changes.
-          If you want multi-currency per PO later, we’ll add currency per document.
-        </p>
-      </div>
+  <div class="card">
+    <div class="card-header"><i class="bi bi-telephone me-2 text-primary"></i>Contact</div>
+    <div class="card-body row g-3">
+      <div class="col-md-4">{{ form.email.label_tag }}{{ form.email }}{% for e in form.email.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+      <div class="col-md-4">{{ form.phone.label_tag }}{{ form.phone }}{% for e in form.phone.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+      <div class="col-md-4">{{ form.website.label_tag }}{{ form.website }}{% for e in form.website.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
     </div>
   </div>
-</div>
+
+  <div class="card">
+    <div class="card-header"><i class="bi bi-palette me-2 text-primary"></i>Branding</div>
+    <div class="card-body row g-3">
+      <div class="col-md-6">
+        {{ form.logo.label_tag }}{{ form.logo }}
+        {% if tenant.logo %}<div class="mt-2"><img src="{{ tenant.logo.url }}" alt="logo" style="height:48px;"></div>{% endif %}
+        <div class="form-text">Shown on invoices &amp; receipts.</div>
+      </div>
+      <div class="col-md-6">{{ form.invoice_footer.label_tag }}{{ form.invoice_footer }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><i class="bi bi-gear me-2 text-primary"></i>Defaults &amp; Locale</div>
+    <div class="card-body row g-3">
+      <div class="col-md-4">{{ form.currency_code.label_tag }}{{ form.currency_code }}</div>
+      <div class="col-md-4">{{ form.country.label_tag }}{{ form.country }}</div>
+      <div class="col-md-4">{{ form.timezone.label_tag }}{{ form.timezone }}</div>
+      <div class="col-md-4">{{ form.financial_year_start_month.label_tag }}{{ form.financial_year_start_month }}</div>
+      <div class="col-md-4">{{ form.default_tax_code.label_tag }}{{ form.default_tax_code }}</div>
+      <div class="col-md-4">{{ form.default_payment_terms_days.label_tag }}{{ form.default_payment_terms_days }} <div class="form-text">days</div></div>
+      <div class="col-md-4">{{ form.po_approval_threshold.label_tag }}{{ form.po_approval_threshold }}</div>
+    </div>
+  </div>
+
+  <div class="d-flex justify-content-end gap-2">
+    <a class="btn btn-outline-secondary" href="/">Cancel</a>
+    <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i> Save profile</button>
+  </div>
+</form>
 
 <script>
-  document.querySelectorAll("input, select, textarea").forEach(el => el.classList.add("form-control"));
+  // Bootstrap styling for the auto-rendered widgets.
+  document.querySelectorAll("form input:not([type=checkbox]):not([type=file]), form select, form textarea").forEach(e => e.classList.add("form-control"));
+  document.querySelectorAll("form select").forEach(e => { e.classList.remove("form-control"); e.classList.add("form-select"); });
+  // Toggle billing fields when "same as business" is ticked.
+  (function(){
+    var same = document.getElementById("id_billing_same_as_business");
+    var fields = ["billing_line1","billing_line2","billing_city","billing_postcode","billing_country"].map(n=>document.querySelector('[name="'+n+'"]'));
+    function sync(){ fields.forEach(f=>{ if(f){ f.closest(".col-md-6,.col-md-4").style.display = same.checked ? "none":""; }}); }
+    if(same){ same.addEventListener("change", sync); sync(); }
+  })();
 </script>
 {% endblock %}

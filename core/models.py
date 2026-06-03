@@ -6,18 +6,56 @@ from core.roles import ROLE_CHOICES
 
 
 class Tenant(models.Model):
-    name = models.CharField(max_length=255)
+    class BusinessType(models.TextChoices):
+        LTD = "LTD", "Limited company"
+        SOLE_TRADER = "SOLE_TRADER", "Sole trader"
+        PARTNERSHIP = "PARTNERSHIP", "Partnership"
+        CHARITY = "CHARITY", "Charity"
+        FRANCHISE = "FRANCHISE", "Franchise"
 
+    # --- Identity ---
+    name = models.CharField(max_length=255)                       # display / organisation name
+    legal_name = models.CharField(max_length=255, blank=True)
+    trading_name = models.CharField(max_length=255, blank=True)
+    business_type = models.CharField(max_length=20, choices=BusinessType.choices, blank=True)
+
+    # --- Registration & tax ---
+    company_number = models.CharField(max_length=50, blank=True)
+    utr_number = models.CharField(max_length=20, blank=True)
+    vat_registered = models.BooleanField(default=False)
+    vat_number = models.CharField(max_length=50, blank=True)
+
+    # --- Business address ---
     address_line1 = models.CharField(max_length=255, blank=True)
     address_line2 = models.CharField(max_length=255, blank=True)
+    address_city = models.CharField(max_length=120, blank=True)
+    address_postcode = models.CharField(max_length=20, blank=True)
+    address_country = models.CharField(max_length=80, blank=True, default="United Kingdom")
 
+    # --- Billing address ---
+    billing_same_as_business = models.BooleanField(default=True)
+    billing_line1 = models.CharField(max_length=255, blank=True)
+    billing_line2 = models.CharField(max_length=255, blank=True)
+    billing_city = models.CharField(max_length=120, blank=True)
+    billing_postcode = models.CharField(max_length=20, blank=True)
+    billing_country = models.CharField(max_length=80, blank=True, default="United Kingdom")
+
+    # --- Contact ---
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=50, blank=True)
+    website = models.URLField(blank=True)
 
-    vat_number = models.CharField(max_length=50, blank=True)
-    company_number = models.CharField(max_length=50, blank=True)
+    # --- Branding ---
+    logo = models.ImageField(upload_to="tenant_logos/", blank=True, null=True)
+    invoice_footer = models.TextField(blank=True, help_text="Shown at the bottom of invoices and receipts.")
 
+    # --- Defaults & locale ---
     currency_code = models.CharField(max_length=10, default="GBP")
+    country = models.CharField(max_length=80, default="United Kingdom")
+    timezone = models.CharField(max_length=64, default="Europe/London")
+    financial_year_start_month = models.PositiveSmallIntegerField(default=4)  # April (UK)
+    default_tax_code = models.ForeignKey("TaxCode", on_delete=models.SET_NULL, null=True, blank=True, related_name="default_for_tenants")
+    default_payment_terms_days = models.PositiveSmallIntegerField(default=30)
 
     po_approval_threshold = models.DecimalField(
         max_digits=12, decimal_places=2, default=0

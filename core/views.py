@@ -1362,10 +1362,10 @@ def settings_tenant(request):
         # your app already uses needs_setup state
         return redirect("/admin/")
 
-    form = TenantSettingsForm(request.POST or None, instance=tenant)
+    form = TenantSettingsForm(request.POST or None, request.FILES or None, instance=tenant)
     if request.method == "POST" and form.is_valid():
         form.save()
-        messages.success(request, "Settings updated.")
+        messages.success(request, "Company profile updated.")
         return redirect("settings_tenant")
 
     return render(request, "settings/tenant_settings.html", {
