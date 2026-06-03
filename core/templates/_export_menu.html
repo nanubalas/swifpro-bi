@@ -1,0 +1,17 @@
+{% comment %}
+Reusable CSV/Excel export dropdown for finance pages.
+Pass `export_kind` (the finance_export URL kind) and optionally `export_qs`
+(a query string starting with "?", e.g. "?as_of=2026-06-04"). Shown only to
+roles that hold the export_data permission.
+{% endcomment %}
+{% if 'export_data' in perms %}
+<div class="btn-group">
+  <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+    <i class="bi bi-download me-1"></i> Export
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><a class="dropdown-item" href="{% url 'finance_export' export_kind %}{{ export_qs }}"><i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+    <li><a class="dropdown-item" href="{% url 'finance_export' export_kind %}{% if export_qs %}{{ export_qs }}&{% else %}?{% endif %}format=xlsx"><i class="bi bi-file-earmark-excel me-2"></i>Excel (.xlsx)</a></li>
+  </ul>
+</div>
+{% endif %}

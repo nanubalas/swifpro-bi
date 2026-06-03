@@ -11,7 +11,7 @@
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary" href="{% url 'bank_transaction_import' %}"><i class="bi bi-upload me-1"></i> Import statement</a>
     <a class="btn btn-outline-secondary" href="{% url 'bank_transaction_add' %}"><i class="bi bi-plus-lg me-1"></i> Add line</a>
-    {% if 'export_data' in perms %}<a class="btn btn-outline-secondary" href="{% url 'finance_export' 'bank-transactions' %}"><i class="bi bi-download me-1"></i> Export CSV</a>{% endif %}
+    {% include "_export_menu.html" with export_kind="bank-transactions" %}
     <a class="btn btn-primary" href="{% url 'bank_reconciliation' %}"><i class="bi bi-check2-square me-1"></i> Reconcile</a>
   </div>
 </div>

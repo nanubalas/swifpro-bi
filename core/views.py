@@ -344,6 +344,40 @@ def _csv_response(filename, columns, rows):
     return resp
 
 
+def _xlsx_response(filename, columns, rows, sheet_title="Export"):
+    """Return an .xlsx workbook with a bold, frozen header row and tidy widths."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (sheet_title or "Export")[:31]  # Excel sheet-name limit
+    ws.append(list(columns))
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for r in rows:
+        ws.append(list(r))
+    ws.freeze_panes = "A2"
+    for i, col in enumerate(columns, start=1):
+        width = max([len(str(col))] + [len(str(r[i - 1])) for r in rows]) if rows else len(str(col))
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = min(max(width + 2, 10), 60)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    resp = HttpResponse(buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
+
+def _export_response(request, filename, columns, rows, sheet_title="Export"):
+    """Pick CSV or Excel from ?format=xlsx; CSV is the default."""
+    if (request.GET.get("format") or "").lower() in ("xlsx", "excel"):
+        stem = filename.rsplit(".", 1)[0]
+        return _xlsx_response(f"{stem}.xlsx", columns, rows, sheet_title=sheet_title)
+    return _csv_response(filename, columns, rows)
+
+
 @permission_required(permissions_mod.EXPORT_DATA)
 def data_export(request, kind):
     """Download a tenant's products/customers/suppliers as CSV (gated by export_data)."""
@@ -354,7 +388,7 @@ def data_export(request, kind):
     columns, rows = importer.export_rows(tenant, kind)
     log_audit(action="DATA_EXPORTED", request=request, user=request.user, tenant=tenant,
               detail=f"{kind} ({len(rows)} rows)")
-    return _csv_response(f"{kind}.csv", columns, rows)
+    return _export_response(request, f"{kind}.csv", columns, rows, sheet_title=kind)
 
 
 def _finance_export_data(tenant, kind, date_from, date_to, as_of):
@@ -473,7 +507,7 @@ def _finance_export_data(tenant, kind, date_from, date_to, as_of):
 
 @permission_required(permissions_mod.EXPORT_DATA)
 def finance_export(request, kind):
-    """Accountant CSV export of finance reports and ledgers (gated by export_data)."""
+    """Accountant CSV/Excel export of finance reports and ledgers (export_data)."""
     tenant = _get_default_tenant(request)
     as_of = _parse_date(request.GET.get("as_of")) or _parse_date(request.GET.get("to")) or timezone.localdate()
     date_from = _parse_date(request.GET.get("from"))
@@ -486,12 +520,12 @@ def finance_export(request, kind):
     filename, columns, rows = result
     log_audit(action="DATA_EXPORTED", request=request, user=request.user, tenant=tenant,
               detail=f"{kind} ({len(rows)} rows)")
-    return _csv_response(filename, columns, rows)
+    return _export_response(request, filename, columns, rows, sheet_title=kind)
 
 
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def audit_log_export(request):
-    """Download the audit log for the active organisation as CSV (admin only)."""
+    """Download the audit log for the active organisation as CSV/Excel (admin)."""
     tenant = _get_default_tenant(request)
     logs = AuditLog.objects.filter(tenant=tenant)[:5000]
     columns = ["timestamp", "action", "user", "detail", "path", "ip"]
@@ -499,7 +533,7 @@ def audit_log_export(request):
              l.username or "", l.detail or "", l.path or "", l.ip or ""] for l in logs]
     log_audit(action="DATA_EXPORTED", request=request, user=request.user, tenant=tenant,
               detail=f"audit log ({len(rows)} rows)")
-    return _csv_response("audit-log.csv", columns, rows)
+    return _export_response(request, "audit-log.csv", columns, rows, sheet_title="Audit log")
 
 
 @login_required
@@ -2752,7 +2786,10 @@ def report_trial_balance(request):
     tenant = _get_default_tenant(request)
     as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()
     data = reports_service.trial_balance(tenant, date_to=as_of)
-    return render(request, "reports/trial_balance.html", {"tenant": tenant, "as_of": as_of, "data": data})
+    return render(request, "reports/trial_balance.html", {
+        "tenant": tenant, "as_of": as_of, "data": data,
+        "export_kind": "trial-balance", "export_qs": f"?as_of={as_of}",
+    })
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
@@ -2768,6 +2805,7 @@ def report_pnl(request):
     data = reports_service.profit_and_loss(tenant, date_from=date_from, date_to=date_to)
     return render(request, "reports/pnl.html", {
         "tenant": tenant, "date_from": date_from, "date_to": date_to, "data": data,
+        "export_kind": "profit-and-loss", "export_qs": f"?from={date_from}&to={date_to}",
     })
 
 
@@ -2776,7 +2814,10 @@ def report_balance_sheet(request):
     tenant = _get_default_tenant(request)
     as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()
     data = reports_service.balance_sheet(tenant, as_of=as_of)
-    return render(request, "reports/balance_sheet.html", {"tenant": tenant, "as_of": as_of, "data": data})
+    return render(request, "reports/balance_sheet.html", {
+        "tenant": tenant, "as_of": as_of, "data": data,
+        "export_kind": "balance-sheet", "export_qs": f"?as_of={as_of}",
+    })
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
@@ -2791,6 +2832,7 @@ def report_cash_flow(request):
     data = reports_service.cash_flow_summary(tenant, date_from=date_from, date_to=date_to)
     return render(request, "reports/cash_flow.html", {
         "tenant": tenant, "date_from": date_from, "date_to": date_to, "data": data,
+        "export_kind": "cash-flow", "export_qs": f"?from={date_from}&to={date_to}",
     })
 
 
@@ -2802,7 +2844,7 @@ def report_aged_receivables(request):
     return render(request, "reports/aged.html", {
         "tenant": tenant, "as_of": as_of, "data": data,
         "title": "Aged Debtors (Receivables)", "party_label": "Customer",
-        "export_kind": "aged-receivables",
+        "export_kind": "aged-receivables", "export_qs": f"?as_of={as_of}",
     })
 
 
@@ -2821,7 +2863,7 @@ def report_aged_payables(request):
     return render(request, "reports/aged.html", {
         "tenant": tenant, "as_of": as_of, "data": data,
         "title": "Aged Creditors (Payables)", "party_label": "Supplier",
-        "export_kind": "aged-payables",
+        "export_kind": "aged-payables", "export_qs": f"?as_of={as_of}",
     })
 
 

@@ -8,7 +8,7 @@
     <div class="text-muted">Sales credits to customers and purchase credits from suppliers.</div>
   </div>
   <div class="d-flex gap-2">
-    {% if 'export_data' in perms %}<a class="btn btn-outline-secondary" href="{% url 'finance_export' 'credit-notes' %}"><i class="bi bi-download me-1"></i> Export CSV</a>{% endif %}
+    {% include "_export_menu.html" with export_kind="credit-notes" %}
     <a class="btn btn-primary" href="{% url 'credit_note_create' %}"><i class="bi bi-plus-lg me-1"></i> New credit note</a>
   </div>
 </div>

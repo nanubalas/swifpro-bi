@@ -1172,6 +1172,25 @@ class FinanceExportTests(TestCase):
         self.assertIn("INV-X1", body)
         self.assertIn("Outstanding", body)
 
+    def test_xlsx_export_returns_workbook(self):
+        import io
+        from openpyxl import load_workbook
+        self.client.login(username="xadmin", password="pw")
+        resp = self.client.get("/finance/export/invoices.csv?format=xlsx")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.assertIn(".xlsx", resp["Content-Disposition"])
+        wb = load_workbook(io.BytesIO(resp.content))
+        ws = wb.active
+        self.assertEqual(ws.cell(row=1, column=1).value, "Number")  # header row
+        self.assertTrue(any("INV-X1" in str(c.value) for c in ws["A"]))
+
+    def test_xlsx_export_audited(self):
+        from core.models import AuditLog
+        self.client.login(username="xadmin", password="pw")
+        self.client.get("/finance/export/trial-balance.csv?format=xlsx")
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="DATA_EXPORTED").exists())
+
     def test_export_audited(self):
         from core.models import AuditLog
         self.client.login(username="xadmin", password="pw")

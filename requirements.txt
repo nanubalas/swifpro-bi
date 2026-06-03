@@ -1,5 +1,6 @@
 Django>=5.0,<6.0
 Pillow>=10.0            # image handling (company logo upload)
+openpyxl>=3.1          # accountant Excel (.xlsx) exports
 
 # Production / deployment (optional for local dev with SQLite)
 gunicorn>=21.2          # WSGI server

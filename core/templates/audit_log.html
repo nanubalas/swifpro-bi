@@ -7,7 +7,13 @@
     <h2 class="fw-bold mb-1">Audit Log</h2>
     <div class="text-muted">Logins and permission-sensitive events for {{ tenant.name }}.</div>
   </div>
-  <a class="btn btn-outline-secondary" href="{% url 'audit_log_export' %}"><i class="bi bi-download me-1"></i> Export CSV</a>
+  <div class="btn-group">
+    <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-download me-1"></i> Export</button>
+    <ul class="dropdown-menu dropdown-menu-end">
+      <li><a class="dropdown-item" href="{% url 'audit_log_export' %}"><i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+      <li><a class="dropdown-item" href="{% url 'audit_log_export' %}?format=xlsx"><i class="bi bi-file-earmark-excel me-2"></i>Excel (.xlsx)</a></li>
+    </ul>
+  </div>
 </div>
 
 <div class="card">

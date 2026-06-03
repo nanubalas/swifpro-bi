@@ -8,7 +8,7 @@
     <div class="text-muted">Issue invoices and post to the General Ledger.</div>
   </div>
   <div class="d-flex gap-2">
-    {% if 'export_data' in perms %}<a class="btn btn-outline-secondary" href="{% url 'finance_export' 'invoices' %}"><i class="bi bi-download me-1"></i> Export CSV</a>{% endif %}
+    {% include "_export_menu.html" with export_kind="invoices" %}
     <a class="btn btn-primary" href="/ar/invoices/new/">+ Create Invoice</a>
   </div>
 </div>
