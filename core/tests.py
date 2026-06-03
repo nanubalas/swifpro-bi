@@ -302,6 +302,58 @@ class CompanyProfileTests(TestCase):
         self.assertContains(resp, "VAT number is required")
 
 
+class CsvImportTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Import Co")
+        self.user = User.objects.create_user("iadmin", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="iadmin", password="pw")
+
+    def _csv(self, text):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile("data.csv", text.encode("utf-8"), content_type="text/csv")
+
+    def test_import_products_creates_and_reports_errors(self):
+        from core.models import Product
+        csv_text = "sku,name,standard_cost\nSKU-A,Widget A,2.50\nSKU-B,Gadget B,4\n,Missing SKU,1\n"
+        resp = self.client.post("/products/import/", {"file": self._csv(csv_text)})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Product.objects.filter(tenant=self.tenant).count(), 2)
+        p = Product.objects.get(tenant=self.tenant, sku="SKU-A")
+        from decimal import Decimal
+        self.assertEqual(p.standard_cost, Decimal("2.50"))
+        self.assertContains(resp, "Skipped: 1")
+
+    def test_import_is_upsert(self):
+        from core.models import Product
+        self.client.post("/products/import/", {"file": self._csv("sku,name\nSKU-X,First\n")})
+        self.client.post("/products/import/", {"file": self._csv("sku,name\nSKU-X,Updated Name\n")})
+        self.assertEqual(Product.objects.filter(tenant=self.tenant, sku="SKU-X").count(), 1)
+        self.assertEqual(Product.objects.get(tenant=self.tenant, sku="SKU-X").name, "Updated Name")
+
+    def test_import_customers_and_suppliers(self):
+        from core.models import Customer, Supplier
+        self.client.post("/customers/import/", {"file": self._csv("name,email\nAcme Retail,ar@acme.test\n")})
+        self.client.post("/suppliers/import/", {"file": self._csv("name,currency_code\nGlobex,USD\n")})
+        self.assertTrue(Customer.objects.filter(tenant=self.tenant, name="Acme Retail").exists())
+        self.assertEqual(Supplier.objects.get(tenant=self.tenant, name="Globex").currency_code, "USD")
+
+    def test_template_download(self):
+        resp = self.client.get("/import/products/template.csv")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "text/csv")
+        self.assertIn("sku", resp.content.decode())
+
+    def test_import_requires_permission(self):
+        # A sales user cannot import products (procurement/admin only).
+        from core.models import OrgMembership
+        u = User.objects.create_user("salesimp", password="pw")
+        OrgMembership.objects.create(user=u, tenant=self.tenant, role="SALES", is_default=True)
+        c = Client(); c.login(username="salesimp", password="pw")
+        self.assertEqual(c.get("/products/import/").status_code, 403)
+
+
 class OnboardingTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership

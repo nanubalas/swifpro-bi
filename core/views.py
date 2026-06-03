@@ -4,6 +4,7 @@ from django.db import transaction, IntegrityError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.crypto import get_random_string
+from django.http import Http404, HttpResponse
 from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
 
@@ -46,6 +47,7 @@ from core.services.bom import explode_product
 from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment, post_inventory_receipt, post_cogs
 from core.services import reports as reports_service
 from core.services import vat as vat_service
+from core.services import importer as importer_service
 from django.db.utils import OperationalError
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib import messages
@@ -530,6 +532,65 @@ def new_organisation(request):
         messages.success(request, f"Organisation '{tenant.name}' created. Let's finish setting it up.")
         return redirect("onboarding")
     return render(request, "onboarding/new_organisation.html", {"form": form})
+
+
+# ============================
+# CSV import (products / customers / suppliers)
+# ============================
+
+def _run_import(request, kind):
+    cfg = importer_service.CONFIG[kind]
+    tenant = _get_default_tenant(request)
+    summary = None
+    if request.method == "POST":
+        f = request.FILES.get("file")
+        if not f:
+            messages.error(request, "Please choose a CSV file.")
+        elif not f.name.lower().endswith(".csv"):
+            messages.error(request, "Please upload a .csv file.")
+        else:
+            try:
+                _, rows = importer_service.read_rows(f)
+                summary = cfg["fn"](tenant, rows)
+                messages.success(
+                    request,
+                    f"Imported {cfg['label']}: {summary['created']} created, "
+                    f"{summary['updated']} updated, {len(summary['errors'])} skipped.",
+                )
+            except Exception as e:
+                messages.error(request, f"Could not read the file: {e}")
+    return render(request, "imports/import.html", {
+        "tenant": tenant, "kind": kind, "cfg": cfg, "summary": summary,
+    })
+
+
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
+def import_products(request):
+    return _run_import(request, "products")
+
+
+@role_required([ROLE_ADMIN, ROLE_SALES, ROLE_FINANCE], [ROLE_ADMIN, ROLE_SALES, ROLE_FINANCE])
+def import_customers(request):
+    return _run_import(request, "customers")
+
+
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
+def import_suppliers(request):
+    return _run_import(request, "suppliers")
+
+
+@login_required
+def import_template(request, kind):
+    cfg = importer_service.CONFIG.get(kind)
+    if not cfg:
+        raise Http404
+    import csv as _csv
+    resp = HttpResponse(content_type="text/csv")
+    resp["Content-Disposition"] = f'attachment; filename="{kind}_template.csv"'
+    writer = _csv.writer(resp)
+    writer.writerow(cfg["columns"])
+    writer.writerow(cfg["sample"])
+    return resp
 
 
 @transaction.atomic
