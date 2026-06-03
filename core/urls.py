@@ -19,6 +19,7 @@ urlpatterns = [
     path("onboarding/finish/", views.onboarding_finish, name="onboarding_finish"),
     path("onboarding/new-organisation/", views.new_organisation, name="new_organisation"),
     path("team/invite/", views.invite_user, name="invite_user"),
+    path("team/permissions/", views.roles_permissions, name="roles_permissions"),
     path("request-access/", views.request_access, name="request_access"),
 
     # CSV import

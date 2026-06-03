@@ -36,6 +36,26 @@ def effective_groups(request):
     return set(request.user.groups.values_list("name", flat=True))
 
 
+def permission_required(perm):
+    """Gate a view on a named permission from the role->permission matrix
+    (core.permissions), scoped to the active organisation."""
+    def decorator(view_func):
+        @wraps(view_func)
+        def _wrapped(request, *args, **kwargs):
+            user = request.user
+            if not user.is_authenticated:
+                return redirect_to_login(request.get_full_path())
+            if user.is_superuser:
+                return view_func(request, *args, **kwargs)
+            from core.permissions import role_has_permission
+            from core.access import get_active_role
+            if not role_has_permission(get_active_role(request), perm):
+                raise PermissionDenied("You do not have permission for this action.")
+            return view_func(request, *args, **kwargs)
+        return _wrapped
+    return decorator
+
+
 def role_required(read_groups, write_groups=None):
     """
     Per-active-organisation RBAC:

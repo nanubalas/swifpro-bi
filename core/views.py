@@ -535,6 +535,24 @@ def new_organisation(request):
 
 
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def roles_permissions(request):
+    """Read-only matrix of roles x permissions."""
+    from core import permissions as perms_mod
+    tenant = _get_default_tenant(request)
+    matrix = []
+    for code, label, category in perms_mod.PERMISSIONS:
+        matrix.append({
+            "label": label, "category": category,
+            "cells": [perms_mod.role_has_permission(rc, code) for rc, _ in roles_mod.ROLE_CHOICES],
+        })
+    return render(request, "team/permissions_matrix.html", {
+        "tenant": tenant,
+        "role_labels": [lbl for _, lbl in roles_mod.ROLE_CHOICES],
+        "matrix": matrix,
+    })
+
+
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
 @transaction.atomic
 def invite_user(request):
     """Admin invites a teammate directly: creates the account + role membership

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Roles & Permissions - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Roles &amp; Permissions</h2>
+    <div class="text-muted">What each role can do. Permissions are enforced per organisation.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Permission</th>
+            {% for r in role_labels %}<th class="text-center small">{{ r }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in matrix %}
+          <tr>
+            <td><span class="fw-semibold">{{ row.label }}</span><div class="text-muted small">{{ row.category }}</div></td>
+            {% for granted in row.cells %}
+            <td class="text-center">
+              {% if granted %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-dash text-muted"></i>{% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="form-text mt-2">Owner/Admin has every permission. This matrix is the source of truth for fine-grained checks.</div>
+  </div>
+</div>
+{% endblock %}

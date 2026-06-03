@@ -310,6 +310,33 @@ class CompanyProfileTests(TestCase):
         self.assertFalse(resp.context["form"].is_valid())
 
 
+class PermissionMatrixTests(TestCase):
+    def test_matrix_helpers(self):
+        from core import permissions as P
+        self.assertTrue(P.role_has_permission("ADMIN", P.DELETE_RECORDS))
+        self.assertTrue(P.role_has_permission("ACCOUNTANT", P.VIEW_FINANCE_REPORTS))
+        self.assertFalse(P.role_has_permission("READONLY", P.MANAGE_INVOICES))
+        self.assertFalse(P.role_has_permission("SALES", P.EXPORT_DATA))
+        self.assertTrue(P.role_has_permission("ADMIN", P.MANAGE_USERS))
+
+    def test_matrix_page_admin_only(self):
+        from core.models import OrgMembership
+        t = Tenant.objects.create(name="Perm Co")
+        admin = User.objects.create_user("permadmin", password="pw")
+        OrgMembership.objects.create(user=admin, tenant=t, role="ADMIN", is_default=True)
+        sales = User.objects.create_user("permsales", password="pw")
+        OrgMembership.objects.create(user=sales, tenant=t, role="SALES", is_default=True)
+
+        c = Client(); c.login(username="permadmin", password="pw")
+        resp = c.get("/team/permissions/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Roles &amp; Permissions")
+        self.assertContains(resp, "Approve transactions")
+
+        c2 = Client(); c2.login(username="permsales", password="pw")
+        self.assertEqual(c2.get("/team/permissions/").status_code, 403)
+
+
 class TeamInviteTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership
