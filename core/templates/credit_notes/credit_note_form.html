@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}New credit note - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex align-items-center gap-2 mb-4">
+  <a href="{% url 'credit_note_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+  <div>
+    <h2 class="fw-bold mb-0">New credit note</h2>
+    <div class="text-muted">A sales credit reduces what a customer owes; a purchase credit reduces what you owe a supplier.</div>
+  </div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card"><div class="card-body">
+        <h5 class="fw-semibold mb-3">Header</h5>
+        <div class="mb-3"><label class="form-label">Type</label>{{ form.kind }}{% for e in form.kind.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="mb-3"><label class="form-label">Credit note number</label>{{ form.credit_note_number }}{% for e in form.credit_note_number.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="mb-3"><label class="form-label">Date</label>{{ form.credit_note_date }}</div>
+        <div class="mb-3"><label class="form-label">Customer (sales credit)</label>{{ form.customer }}{% for e in form.customer.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="mb-3"><label class="form-label">Supplier (purchase credit)</label>{{ form.supplier }}{% for e in form.supplier.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="mb-3"><label class="form-label">{{ form.customer_invoice.label }}</label>{{ form.customer_invoice }}</div>
+        <div class="mb-3"><label class="form-label">{{ form.supplier_invoice.label }}</label>{{ form.supplier_invoice }}</div>
+        <div class="mb-3"><label class="form-label">Reason</label>{{ form.reason }}</div>
+      </div></div>
+    </div>
+
+    <div class="col-lg-8">
+      <div class="card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="fw-semibold mb-0">Lines</h5>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="add-line-btn">+ Add line</button>
+        </div>
+        {{ formset.management_form }}
+        <div class="table-responsive">
+          <table class="table table-bordered align-middle mb-0">
+            <thead class="table-light">
+              <tr><th style="width:30%">Description</th><th class="text-end" style="width:10%">Qty</th>
+                  <th class="text-end" style="width:15%">Unit amount</th><th style="width:15%">Tax</th>
+                  <th style="width:20%">Account <span class="text-muted small">(purchase)</span></th>
+                  <th class="text-center" style="width:10%">Remove</th></tr>
+            </thead>
+            <tbody id="lines-body">
+              {% for f in formset %}
+              <tr class="line-row">
+                {{ f.id }}
+                <td>{{ f.description }}</td><td class="text-end">{{ f.qty }}</td>
+                <td class="text-end">{{ f.unit_amount }}</td><td>{{ f.tax_code }}</td>
+                <td>{{ f.account }}</td>
+                <td class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <template id="empty-form-template">
+          <tr class="line-row">
+            {{ formset.empty_form.id }}
+            <td>{{ formset.empty_form.description }}</td><td class="text-end">{{ formset.empty_form.qty }}</td>
+            <td class="text-end">{{ formset.empty_form.unit_amount }}</td><td>{{ formset.empty_form.tax_code }}</td>
+            <td>{{ formset.empty_form.account }}</td>
+            <td class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
+          </tr>
+        </template>
+        <div class="d-flex justify-content-end gap-2 mt-3">
+          <a class="btn btn-link" href="{% url 'credit_note_list' %}">Cancel</a>
+          <button class="btn btn-outline-secondary" type="submit" name="action" value="save">Save draft</button>
+          <button class="btn btn-primary" type="submit" name="action" value="post"><i class="bi bi-check-lg me-1"></i> Record &amp; Post</button>
+        </div>
+      </div></div>
+    </div>
+  </div>
+</form>
+
+<script>
+  document.querySelectorAll("form select, form input, form textarea").forEach(el => {
+    if (el.type === "checkbox") el.classList.add("form-check-input");
+    else if (el.type !== "hidden") el.classList.add("form-control");
+  });
+  const addBtn = document.getElementById("add-line-btn");
+  const tbody = document.getElementById("lines-body");
+  const template = document.getElementById("empty-form-template");
+  addBtn.addEventListener("click", () => {
+    const totalFormsInput = document.querySelector('input[name="{{ formset.prefix }}-TOTAL_FORMS"]');
+    const index = parseInt(totalFormsInput.value, 10);
+    const wrapper = document.createElement("tbody");
+    wrapper.innerHTML = template.innerHTML.replaceAll("__prefix__", index).trim();
+    const newRow = wrapper.querySelector("tr");
+    tbody.appendChild(newRow);
+    totalFormsInput.value = index + 1;
+    newRow.querySelectorAll("select, input, textarea").forEach(el => {
+      if (el.type === "checkbox") el.classList.add("form-check-input");
+      else if (el.type !== "hidden") el.classList.add("form-control");
+    });
+  });
+</script>
+{% endblock %}

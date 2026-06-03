@@ -795,8 +795,12 @@ class SupplierInvoice(models.Model):
         return sum((a.amount for a in self.payment_allocations.all()), Decimal("0.00"))
 
     @property
+    def credit_applied(self):
+        return sum((c.total for c in self.credit_notes.all() if c.status == "POSTED"), Decimal("0.00"))
+
+    @property
     def outstanding(self):
-        return self.total - self.amount_paid
+        return self.total - self.amount_paid - self.credit_applied
 
 
 class SupplierInvoiceLine(models.Model):
@@ -927,8 +931,12 @@ class CustomerInvoice(models.Model):
         return sum((a.amount for a in self.payment_allocations.all()), Decimal("0.00"))
 
     @property
+    def credit_applied(self):
+        return sum((c.total for c in self.credit_notes.all() if c.status == "POSTED"), Decimal("0.00"))
+
+    @property
     def outstanding(self):
-        return self.total - self.amount_paid
+        return self.total - self.amount_paid - self.credit_applied
 
 
 class CustomerInvoiceLine(models.Model):
@@ -1112,6 +1120,79 @@ class Expense(models.Model):
     @property
     def total(self):
         return (self.net_amount or Decimal("0.00")) + self.tax_amount
+
+
+class CreditNote(models.Model):
+    """A credit note: a sales credit reduces what a customer owes (or refunds
+    them); a purchase credit reduces what we owe a supplier. Posting it creates
+    the reversing double-entry and, when linked to an invoice, reduces that
+    invoice's outstanding balance."""
+    class Kind(models.TextChoices):
+        SALES = "SALES", "Sales credit (to customer)"
+        PURCHASE = "PURCHASE", "Purchase credit (from supplier)"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        POSTED = "POSTED", "Posted"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="credit_notes")
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    credit_note_number = models.CharField(max_length=50)
+    credit_note_date = models.DateField(default=timezone.now)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True, related_name="credit_notes")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True, related_name="credit_notes")
+    customer_invoice = models.ForeignKey(CustomerInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name="credit_notes")
+    supplier_invoice = models.ForeignKey(SupplierInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name="credit_notes")
+    reason = models.CharField(max_length=255, blank=True, null=True)
+    currency_code = models.CharField(max_length=3, default="GBP")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    created_at = models.DateTimeField(default=timezone.now)
+    posted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("tenant", "credit_note_number")
+
+    def __str__(self):
+        return self.credit_note_number
+
+    @property
+    def party_name(self):
+        return (self.customer.name if self.customer_id else
+                self.supplier.name if self.supplier_id else "")
+
+    @property
+    def subtotal(self):
+        return sum((l.line_total for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def tax_total(self):
+        return sum((l.tax_amount for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def total(self):
+        return self.subtotal + self.tax_total
+
+
+class CreditNoteLine(models.Model):
+    credit_note = models.ForeignKey(CreditNote, related_name="lines", on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, blank=True, null=True)
+    description = models.CharField(max_length=255, blank=True, null=True)
+    qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1.00"))
+    unit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    tax_code = models.ForeignKey(TaxCode, on_delete=models.PROTECT, blank=True, null=True)
+    # For purchase credits, the account to credit back (expense / inventory).
+    # For sales credits, left blank -> Sales Revenue.
+    account = models.ForeignKey(GLAccount, on_delete=models.PROTECT, blank=True, null=True, related_name="credit_note_lines")
+
+    @property
+    def line_total(self):
+        return (self.qty or Decimal("0.00")) * (self.unit_amount or Decimal("0.00"))
+
+    @property
+    def tax_amount(self):
+        rate = self.tax_code.rate if self.tax_code else Decimal("0.00")
+        return self.line_total * rate
 
 
 # ============================

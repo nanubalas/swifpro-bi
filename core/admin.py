@@ -10,10 +10,11 @@ from core.models import (
     ChannelConnection, SyncRun, ChannelSnapshot, ChannelOrder,
     UnitOfMeasure, UOMConversion, ProductBarcode, BillOfMaterials, BillOfMaterialsLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
-    GLAccount, JournalEntry, JournalLine, Expense
+    GLAccount, JournalEntry, JournalLine, Expense, CreditNote, CreditNoteLine
 )
 
 admin.site.register(Expense)
+admin.site.register(CreditNote)
 
 class UserProfileInline(admin.StackedInline):
     model = UserProfile
