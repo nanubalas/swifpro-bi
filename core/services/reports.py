@@ -21,6 +21,18 @@ DEBIT_NORMAL = {GLAccount.Type.ASSET, GLAccount.Type.EXPENSE}
 ZERO = Decimal("0.00")
 
 
+def current_financial_year(tenant, today=None):
+    """Return (start_date, end_date) of the tenant's current financial year,
+    based on its configured financial_year_start_month (default April)."""
+    import datetime
+    today = today or timezone.localdate()
+    start_month = getattr(tenant, "financial_year_start_month", 4) or 4
+    year = today.year if today.month >= start_month else today.year - 1
+    start = datetime.date(year, start_month, 1)
+    end = datetime.date(year + 1, start_month, 1) - datetime.timedelta(days=1)
+    return start, end
+
+
 def _q(amount):
     return (amount or ZERO)
 

@@ -23,6 +23,18 @@
 
 <div class="card card-soft">
   <div class="card-body">
+    {% include "_doc_header.html" %}
+    <div class="row mb-3">
+      <div class="col-sm-6">
+        <div class="text-muted small">Bill to</div>
+        <div class="fw-semibold">{{ inv.customer.name }}</div>
+      </div>
+      <div class="col-sm-6 text-sm-end small">
+        <div><span class="text-muted">Invoice:</span> {{ inv.invoice_number }}</div>
+        <div><span class="text-muted">Date:</span> {{ inv.invoice_date|date:'d M Y' }}</div>
+        {% if inv.due_date %}<div><span class="text-muted">Due:</span> {{ inv.due_date|date:'d M Y' }}</div>{% endif %}
+      </div>
+    </div>
     <div class="table-responsive">
       <table class="table table-bordered align-middle mb-0">
         <thead class="table-light">
@@ -51,6 +63,8 @@
         <div class="d-flex justify-content-between"><div class="fw-bold">Total</div><div class="fw-bold">{{ inv.total|money:inv.currency_code }}</div></div>
       </div>
     </div>
+
+    {% include "_doc_footer.html" %}
   </div>
 </div>
 {% endblock %}

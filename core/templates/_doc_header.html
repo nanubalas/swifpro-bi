@@ -1,0 +1,19 @@
+{% load static %}
+<div class="d-flex justify-content-between align-items-start mb-4 pb-3 border-bottom">
+  <div>
+    {% if tenant.logo %}
+      <img src="{{ tenant.logo.url }}" alt="{{ tenant.name }}" style="height:56px;">
+    {% else %}
+      <h4 class="fw-bold mb-0">{{ tenant.legal_name|default:tenant.name }}</h4>
+    {% endif %}
+  </div>
+  <div class="text-end small text-muted">
+    {% if tenant.legal_name %}<div class="fw-semibold">{{ tenant.legal_name }}</div>{% endif %}
+    {% if tenant.address_line1 %}<div>{{ tenant.address_line1 }}</div>{% endif %}
+    {% if tenant.address_line2 %}<div>{{ tenant.address_line2 }}</div>{% endif %}
+    {% if tenant.address_city or tenant.address_postcode %}<div>{{ tenant.address_city }} {{ tenant.address_postcode }}</div>{% endif %}
+    {% if tenant.address_country %}<div>{{ tenant.address_country }}</div>{% endif %}
+    {% if tenant.vat_number %}<div>VAT: {{ tenant.vat_number }}</div>{% endif %}
+    {% if tenant.company_number %}<div>Reg no: {{ tenant.company_number }}</div>{% endif %}
+  </div>
+</div>

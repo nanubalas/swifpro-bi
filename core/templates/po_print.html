@@ -45,23 +45,19 @@
   </div>
 
   <div class="box" style="min-width: 320px;">
-    <h2>{{ tenant.name }}</h2>
+    {% if tenant.logo %}<img src="{{ tenant.logo.url }}" alt="{{ tenant.name }}" style="height:46px; margin-bottom:6px;"><br/>{% endif %}
+    <h2>{{ tenant.legal_name|default:tenant.name }}</h2>
     <div class="muted">Buyer</div>
 
     <div style="margin-top:6px;">
       {% if tenant.address_line1 %}{{ tenant.address_line1 }}<br/>{% endif %}
       {% if tenant.address_line2 %}{{ tenant.address_line2 }}<br/>{% endif %}
-
-      {# optional: city/country if you add fields later #}
-      {# {% if tenant.city %}{{ tenant.city }}{% endif %}{% if tenant.country %}, {{ tenant.country }}{% endif %}<br/> #}
-
-      {% if tenant.email %}
-        <span class="muted">Email:</span> {{ tenant.email }}<br/>
-      {% endif %}
-
-      {% if tenant.vat_number %}
-        <span class="muted">VAT:</span> {{ tenant.vat_number }}
-      {% endif %}
+      {% if tenant.address_city or tenant.address_postcode %}{{ tenant.address_city }} {{ tenant.address_postcode }}<br/>{% endif %}
+      {% if tenant.address_country %}{{ tenant.address_country }}<br/>{% endif %}
+      {% if tenant.email %}<span class="muted">Email:</span> {{ tenant.email }}<br/>{% endif %}
+      {% if tenant.phone %}<span class="muted">Tel:</span> {{ tenant.phone }}<br/>{% endif %}
+      {% if tenant.vat_number %}<span class="muted">VAT:</span> {{ tenant.vat_number }}<br/>{% endif %}
+      {% if tenant.company_number %}<span class="muted">Reg:</span> {{ tenant.company_number }}{% endif %}
     </div>
   </div>
 </div>
@@ -131,9 +127,11 @@
     <div style="margin-top:6px;">{% if po.notes %}{{ po.notes }}{% else %}-{% endif %}</div>
 
     <div style="margin-top:16px;">
-      <div><b>Payment Terms:</b> Net 30 days</div>
+      <div><b>Payment Terms:</b> Net {{ tenant.default_payment_terms_days|default:30 }} days</div>
       <div><b>Delivery Terms:</b> DDP (Delivered Duty Paid)</div>
     </div>
+
+    {% if tenant.invoice_footer %}<div class="muted" style="margin-top:16px;">{{ tenant.invoice_footer|linebreaksbr }}</div>{% endif %}
   </div>
 
   <div style="flex:1;">

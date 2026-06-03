@@ -2158,6 +2158,9 @@ def ar_invoice_create(request):
             inv = form.save(commit=False)
             inv.tenant = tenant
             inv.currency_code = tenant.currency_code
+            # Default due date from the company's payment terms when left blank.
+            if not inv.due_date and inv.invoice_date and tenant.default_payment_terms_days:
+                inv.due_date = inv.invoice_date + timezone.timedelta(days=tenant.default_payment_terms_days)
             inv.save()
             formset.save()
 
@@ -2168,7 +2171,9 @@ def ar_invoice_create(request):
             return redirect("ar_invoice_detail", invoice_id=inv.id)
     else:
         form = CustomerInvoiceForm(instance=inv)
-        formset = CustomerInvoiceLineFormSet(instance=inv)
+        # Pre-fill the first line's tax code with the company default.
+        line_initial = [{"tax_code": tenant.default_tax_code}] if tenant.default_tax_code_id else None
+        formset = CustomerInvoiceLineFormSet(instance=inv, initial=line_initial)
 
     return render(request, "ar/ar_invoice_form.html", {"tenant": tenant, "form": form, "formset": formset})
 
@@ -2317,7 +2322,12 @@ def report_trial_balance(request):
 def report_pnl(request):
     tenant = _get_default_tenant(request)
     date_from = _parse_date(request.GET.get("from"))
-    date_to = _parse_date(request.GET.get("to")) or timezone.localdate()
+    date_to = _parse_date(request.GET.get("to"))
+    # Default to the company's current financial year when no dates are given.
+    if not date_from and not date_to:
+        date_from, date_to = reports_service.current_financial_year(tenant)
+    elif not date_to:
+        date_to = timezone.localdate()
     data = reports_service.profit_and_loss(tenant, date_from=date_from, date_to=date_to)
     return render(request, "reports/pnl.html", {
         "tenant": tenant, "date_from": date_from, "date_to": date_to, "data": data,

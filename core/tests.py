@@ -302,6 +302,50 @@ class CompanyProfileTests(TestCase):
         self.assertContains(resp, "VAT number is required")
 
 
+class CompanyDefaultsTests(TestCase):
+    def setUp(self):
+        from datetime import date
+        from core.models import OrgMembership, Customer, TaxCode
+        self.date = date
+        self.tenant = Tenant.objects.create(name="Defaults Co", default_payment_terms_days=14,
+                                            financial_year_start_month=4)
+        self.tenant.default_tax_code = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.tenant.save()
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.user = User.objects.create_user("dadmin", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="dadmin", password="pw")
+
+    def test_due_date_defaults_from_payment_terms(self):
+        from core.models import CustomerInvoice
+        resp = self.client.post("/ar/invoices/new/", {
+            "customer": self.customer.id, "invoice_number": "INV-D1",
+            "invoice_date": "2026-06-01", "action": "save",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-description": "Item", "lines-0-qty": "1", "lines-0-unit_price": "100",
+        })
+        self.assertEqual(resp.status_code, 302)
+        inv = CustomerInvoice.objects.get(tenant=self.tenant, invoice_number="INV-D1")
+        self.assertEqual(inv.due_date, self.date(2026, 6, 15))  # 1 June + 14 days
+
+    def test_financial_year_helper(self):
+        from core.services import reports
+        start, end = reports.current_financial_year(self.tenant, today=self.date(2026, 6, 1))
+        self.assertEqual(start, self.date(2026, 4, 1))
+        self.assertEqual(end, self.date(2027, 3, 31))
+
+    def test_invoice_shows_branding(self):
+        from core.models import CustomerInvoice
+        self.tenant.legal_name = "Defaults Co Ltd"
+        self.tenant.invoice_footer = "Thanks for your business"
+        self.tenant.save()
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-B1")
+        resp = self.client.get(f"/ar/invoices/{inv.id}/")
+        self.assertContains(resp, "Defaults Co Ltd")
+        self.assertContains(resp, "Thanks for your business")
+
+
 class CsvImportTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership
