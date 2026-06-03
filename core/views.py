@@ -357,6 +357,138 @@ def data_export(request, kind):
     return _csv_response(f"{kind}.csv", columns, rows)
 
 
+def _finance_export_data(tenant, kind, date_from, date_to, as_of):
+    """Return (filename, columns, rows) for an accountant CSV export."""
+    from core.models import JournalLine
+    money = lambda v: f"{(v or Decimal('0.00')):.2f}"
+
+    if kind == "trial-balance":
+        data = reports_service.trial_balance(tenant, date_to=as_of)
+        cols = ["Account code", "Account", "Debit", "Credit"]
+        rows = [[r["account"].code, r["account"].name, money(r["debit"]), money(r["credit"])] for r in data["rows"]]
+        rows.append(["", "TOTAL", money(data["total_debit"]), money(data["total_credit"])])
+        return f"trial-balance-{as_of}.csv", cols, rows
+
+    if kind == "profit-and-loss":
+        data = reports_service.profit_and_loss(tenant, date_from=date_from, date_to=date_to)
+        cols = ["Section", "Account", "Amount"]
+        rows = []
+        for r in data["income"]:
+            rows.append(["Income", f"{r['account'].code} {r['account'].name}", money(r["amount"])])
+        rows.append(["Income", "Total income", money(data["income_total"])])
+        for r in data["cogs"]:
+            rows.append(["Cost of goods sold", f"{r['account'].code} {r['account'].name}", money(r["amount"])])
+        rows.append(["Cost of goods sold", "Total COGS", money(data["cogs_total"])])
+        rows.append(["", "Gross profit", money(data["gross_profit"])])
+        for r in data["expense"]:
+            rows.append(["Operating expenses", f"{r['account'].code} {r['account'].name}", money(r["amount"])])
+        rows.append(["Operating expenses", "Total expenses", money(data["expense_total"])])
+        rows.append(["", "Net profit", money(data["net_profit"])])
+        return f"profit-and-loss-{date_from}-to-{date_to}.csv", cols, rows
+
+    if kind == "balance-sheet":
+        data = reports_service.balance_sheet(tenant, as_of=as_of)
+        cols = ["Section", "Account", "Amount"]
+        rows = []
+        for key, label in [("assets", "Assets"), ("liabilities", "Liabilities"), ("equity", "Equity")]:
+            for r in data[key]:
+                rows.append([label, f"{r['account'].code} {r['account'].name}", money(r["amount"])])
+        rows.append(["Equity", "Retained earnings", money(data["retained_earnings"])])
+        rows.append(["", "Total assets", money(data["asset_total"])])
+        rows.append(["", "Total liabilities + equity", money(data["liabilities_equity_total"])])
+        return f"balance-sheet-{as_of}.csv", cols, rows
+
+    if kind == "cash-flow":
+        data = reports_service.cash_flow_summary(tenant, date_from=date_from, date_to=date_to)
+        cols = ["Source / use of cash", "Amount"]
+        rows = [["Opening balance", money(data["opening"])]]
+        rows += [[r["account"].name, money(r["amount"])] for r in data["rows"]]
+        rows.append(["Net movement", money(data["net"])])
+        rows.append(["Closing balance", money(data["closing"])])
+        return f"cash-flow-{date_from}-to-{date_to}.csv", cols, rows
+
+    if kind in ("aged-receivables", "aged-payables"):
+        data = (reports_service.aged_receivables if kind == "aged-receivables" else reports_service.aged_payables)(tenant, as_of=as_of)
+        cols = ["Party", "Reference", "Date", "Due", "Days overdue", "Bucket", "Amount"]
+        rows = [[r["party"], r["ref"], r["date"], r["due"], r["days"], r["bucket"], money(r["amount"])] for r in data["rows"]]
+        rows.append(["TOTAL", "", "", "", "", "", money(data["total"])])
+        return f"{kind}-{as_of}.csv", cols, rows
+
+    if kind == "journal":
+        cols = ["Date", "JE", "Ref type", "Ref", "Account code", "Account", "Description", "Debit", "Credit"]
+        lines = (JournalLine.objects.filter(entry__tenant=tenant)
+                 .select_related("entry", "account").order_by("entry__entry_date", "entry_id", "id"))
+        if date_from:
+            lines = lines.filter(entry__entry_date__gte=date_from)
+        if date_to:
+            lines = lines.filter(entry__entry_date__lte=date_to)
+        rows = [[l.entry.entry_date, l.entry_id, l.entry.ref_type or "", l.entry.ref_id or "",
+                 l.account.code, l.account.name, l.description or "", money(l.debit), money(l.credit)] for l in lines]
+        return "general-ledger.csv", cols, rows
+
+    if kind == "expenses":
+        cols = ["Date", "Payee", "Category", "Description", "Net", "VAT", "Total", "Paid", "Status"]
+        rows = [[e.expense_date, e.payee, e.category.name, e.description or "", money(e.net_amount),
+                 money(e.tax_amount), money(e.total), "Yes" if e.paid else "No", e.status]
+                for e in Expense.objects.filter(tenant=tenant).select_related("category").order_by("-expense_date")]
+        return "expenses.csv", cols, rows
+
+    if kind == "payments":
+        cols = ["Date", "Direction", "Party", "Method", "Reference", "Amount", "Allocated", "Reconciled"]
+        rows = [[p.payment_date, p.get_direction_display(), p.party_name, p.get_method_display(),
+                 p.reference or "", money(p.amount), money(p.allocated), "Yes" if p.is_reconciled else "No"]
+                for p in Payment.objects.filter(tenant=tenant).select_related("customer", "supplier").order_by("-payment_date")]
+        return "payments.csv", cols, rows
+
+    if kind == "invoices":
+        cols = ["Number", "Date", "Customer", "Subtotal", "Tax", "Total", "Paid", "Outstanding", "Status"]
+        rows = [[i.invoice_number, i.invoice_date, i.customer.name, money(i.subtotal), money(i.tax_total),
+                 money(i.total), money(i.amount_paid), money(i.outstanding), i.status]
+                for i in CustomerInvoice.objects.filter(tenant=tenant).select_related("customer").prefetch_related("lines", "lines__tax_code", "payment_allocations", "credit_notes").order_by("-invoice_date")]
+        return "customer-invoices.csv", cols, rows
+
+    if kind == "bills":
+        cols = ["Number", "Date", "Supplier", "Subtotal", "Tax", "Total", "Outstanding", "Status"]
+        rows = [[b.invoice_number, b.invoice_date, b.supplier.name, money(b.subtotal), money(b.tax_total),
+                 money(b.total), money(b.outstanding), b.status]
+                for b in SupplierInvoice.objects.filter(tenant=tenant).select_related("supplier").prefetch_related("lines", "lines__tax_code", "payment_allocations", "credit_notes").order_by("-invoice_date")]
+        return "supplier-bills.csv", cols, rows
+
+    if kind == "credit-notes":
+        cols = ["Number", "Date", "Type", "Party", "Net", "VAT", "Total", "Applied to", "Status"]
+        rows = [[c.credit_note_number, c.credit_note_date, c.get_kind_display(), c.party_name,
+                 money(c.subtotal), money(c.tax_total), money(c.total),
+                 (c.customer_invoice.invoice_number if c.customer_invoice_id else c.supplier_invoice.invoice_number if c.supplier_invoice_id else ""), c.status]
+                for c in CreditNote.objects.filter(tenant=tenant).select_related("customer", "supplier", "customer_invoice", "supplier_invoice").prefetch_related("lines", "lines__tax_code").order_by("-credit_note_date")]
+        return "credit-notes.csv", cols, rows
+
+    if kind == "bank-transactions":
+        cols = ["Date", "Description", "Reference", "Amount", "Matched to", "Reconciled"]
+        rows = [[t.txn_date, t.description, t.reference or "", money(t.amount), t.matched_label, "Yes" if t.is_reconciled else "No"]
+                for t in BankTransaction.objects.filter(tenant=tenant).select_related("matched_payment", "matched_expense")]
+        return "bank-transactions.csv", cols, rows
+
+    return None
+
+
+@permission_required(permissions_mod.EXPORT_DATA)
+def finance_export(request, kind):
+    """Accountant CSV export of finance reports and ledgers (gated by export_data)."""
+    tenant = _get_default_tenant(request)
+    as_of = _parse_date(request.GET.get("as_of")) or _parse_date(request.GET.get("to")) or timezone.localdate()
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    if kind in ("profit-and-loss", "cash-flow") and not date_from and not date_to:
+        date_from, date_to = reports_service.current_financial_year(tenant)
+    result = _finance_export_data(tenant, kind, date_from, date_to, as_of)
+    if result is None:
+        raise Http404("Unknown export type.")
+    filename, columns, rows = result
+    log_audit(action="DATA_EXPORTED", request=request, user=request.user, tenant=tenant,
+              detail=f"{kind} ({len(rows)} rows)")
+    return _csv_response(filename, columns, rows)
+
+
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def audit_log_export(request):
     """Download the audit log for the active organisation as CSV (admin only)."""
@@ -2670,6 +2802,7 @@ def report_aged_receivables(request):
     return render(request, "reports/aged.html", {
         "tenant": tenant, "as_of": as_of, "data": data,
         "title": "Aged Debtors (Receivables)", "party_label": "Customer",
+        "export_kind": "aged-receivables",
     })
 
 
@@ -2688,6 +2821,7 @@ def report_aged_payables(request):
     return render(request, "reports/aged.html", {
         "tenant": tenant, "as_of": as_of, "data": data,
         "title": "Aged Creditors (Payables)", "party_label": "Supplier",
+        "export_kind": "aged-payables",
     })
 
 

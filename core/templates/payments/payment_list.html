@@ -10,6 +10,7 @@
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-outline-primary" href="{% url 'bank_reconciliation' %}"><i class="bi bi-check2-square me-1"></i> Bank Reconcile</a>
+    {% if 'export_data' in perms %}<a class="btn btn-outline-secondary" href="{% url 'finance_export' 'payments' %}"><i class="bi bi-download me-1"></i> Export CSV</a>{% endif %}
     <a class="btn btn-outline-secondary" href="{% url 'supplier_payment_create' %}"><i class="bi bi-arrow-up-right me-1"></i> Pay Supplier</a>
     <a class="btn btn-primary" href="{% url 'receipt_create' %}"><i class="bi bi-arrow-down-left me-1"></i> Record Receipt</a>
   </div>

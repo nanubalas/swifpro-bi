@@ -14,6 +14,7 @@
       <input type="date" name="as_of" value="{{ as_of|date:'Y-m-d' }}" class="form-control form-control-sm">
     </div>
     <button class="btn btn-primary btn-sm">Apply</button>
+    {% if 'export_data' in perms %}<a class="btn btn-outline-secondary btn-sm" href="{% url 'finance_export' 'balance-sheet' %}?as_of={{ as_of|date:'Y-m-d' }}"><i class="bi bi-download me-1"></i> Export</a>{% endif %}
   </form>
 </div>
 

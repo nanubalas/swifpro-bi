@@ -37,6 +37,7 @@ urlpatterns = [
     path("audit/", views.audit_log_list, name="audit_log_list"),
     path("audit/export.csv", views.audit_log_export, name="audit_log_export"),
     path("export/<str:kind>.csv", views.data_export, name="data_export"),
+    path("finance/export/<str:kind>.csv", views.finance_export, name="finance_export"),
     path("account/password/", views.change_password, name="change_password"),
     path("settings/role-landing/", views.settings_role_landing, name="settings_role_landing"),
 

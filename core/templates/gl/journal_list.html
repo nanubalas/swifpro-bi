@@ -7,7 +7,10 @@
     <h2 class="fw-bold mb-1">Journal Entries</h2>
     <div class="text-muted">System-generated postings (AR/AP). Manual journals can be added later.</div>
   </div>
-  <a class="btn btn-outline-secondary" href="/gl/accounts/">Chart of Accounts</a>
+  <div class="d-flex gap-2">
+    {% if 'export_data' in perms %}<a class="btn btn-outline-secondary" href="{% url 'finance_export' 'journal' %}"><i class="bi bi-download me-1"></i> Export ledger CSV</a>{% endif %}
+    <a class="btn btn-outline-secondary" href="/gl/accounts/">Chart of Accounts</a>
+  </div>
 </div>
 
 <div class="card card-soft">

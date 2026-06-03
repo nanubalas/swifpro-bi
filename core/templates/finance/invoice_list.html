@@ -6,7 +6,10 @@
     <h2 class="fw-bold mb-1">Supplier Invoices</h2>
     <div class="text-muted">3-way match: PO ↔ GRN ↔ Invoice</div>
   </div>
-  <a class="btn btn-primary" href="/invoices/new/">+ Create Invoice</a>
+  <div class="d-flex gap-2">
+    {% if 'export_data' in perms %}<a class="btn btn-outline-secondary" href="{% url 'finance_export' 'bills' %}"><i class="bi bi-download me-1"></i> Export CSV</a>{% endif %}
+    <a class="btn btn-primary" href="/invoices/new/">+ Create Invoice</a>
+  </div>
 </div>
 
 <div class="card card-soft">

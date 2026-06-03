@@ -1142,6 +1142,51 @@ class FinancialReportsTests(TestCase):
             self.assertEqual(resp.status_code, 200, f"{path} -> {resp.status_code}")
 
 
+class FinanceExportTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="FX Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-X1")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="Item", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(inv)
+        self.admin = User.objects.create_user("xadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.wh = User.objects.create_user("xwh", password="pw")
+        OrgMembership.objects.create(user=self.wh, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+
+    def test_each_kind_exports_csv(self):
+        self.client.login(username="xadmin", password="pw")
+        kinds = ["trial-balance", "profit-and-loss", "balance-sheet", "cash-flow",
+                 "aged-receivables", "aged-payables", "journal", "expenses",
+                 "payments", "invoices", "bills", "credit-notes", "bank-transactions"]
+        for k in kinds:
+            resp = self.client.get(f"/finance/export/{k}.csv")
+            self.assertEqual(resp.status_code, 200, f"{k} -> {resp.status_code}")
+            self.assertEqual(resp["Content-Type"], "text/csv")
+
+    def test_invoices_export_has_data(self):
+        self.client.login(username="xadmin", password="pw")
+        body = self.client.get("/finance/export/invoices.csv").content.decode()
+        self.assertIn("INV-X1", body)
+        self.assertIn("Outstanding", body)
+
+    def test_export_audited(self):
+        from core.models import AuditLog
+        self.client.login(username="xadmin", password="pw")
+        self.client.get("/finance/export/trial-balance.csv")
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="DATA_EXPORTED").exists())
+
+    def test_export_blocked_without_permission(self):
+        self.client.login(username="xwh", password="pw")  # WAREHOUSE lacks export_data
+        self.assertEqual(self.client.get("/finance/export/trial-balance.csv").status_code, 403)
+
+    def test_unknown_kind_404(self):
+        self.client.login(username="xadmin", password="pw")
+        self.assertEqual(self.client.get("/finance/export/nonsense.csv").status_code, 404)
+
+
 class CashFlowAndGrossProfitTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="CF Co")

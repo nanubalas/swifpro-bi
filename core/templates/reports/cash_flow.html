@@ -12,6 +12,7 @@
     <div><label class="form-label mb-1">From</label><input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
     <div><label class="form-label mb-1">To</label><input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
     <button class="btn btn-primary btn-sm">Apply</button>
+    {% if 'export_data' in perms %}<a class="btn btn-outline-secondary btn-sm" href="{% url 'finance_export' 'cash-flow' %}?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}"><i class="bi bi-download me-1"></i> Export</a>{% endif %}
   </form>
 </div>
 
