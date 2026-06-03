@@ -9,6 +9,28 @@
   </div>
 </div>
 
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="fw-bold mb-1">Access policy</h5>
+    <div class="text-muted small mb-3">How per-user permission overrides behave when you change someone's role.</div>
+    <form method="post">
+      {% csrf_token %}
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" role="switch" id="keepPerms"
+               name="keep_permissions_on_role_change" {% if keep_permissions_on_role_change %}checked{% endif %}>
+        <label class="form-check-label" for="keepPerms">
+          Keep a member's custom permissions when their role changes
+          <div class="text-muted small">
+            Off (recommended): a role change resets the person to the new role's default, so access is predictable.
+            On: their grants and revokes are kept, and any made redundant by the new role are dropped.
+          </div>
+        </label>
+      </div>
+      <button class="btn btn-primary btn-sm mt-3" type="submit"><i class="bi bi-check2-circle me-1"></i> Save policy</button>
+    </form>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-body">
     <div class="table-responsive">

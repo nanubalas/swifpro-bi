@@ -66,6 +66,11 @@ class Tenant(models.Model):
 
     onboarding_complete = models.BooleanField(default=False)
 
+    # Access policy: when a member's role changes, keep their per-user permission
+    # overrides (pruning ones made redundant by the new role) instead of resetting
+    # to the new role's default. Off by default for predictable, safe access.
+    keep_permissions_on_role_change = models.BooleanField(default=False)
+
     def __str__(self):
         return self.name
 

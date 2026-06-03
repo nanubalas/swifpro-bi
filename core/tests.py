@@ -454,7 +454,7 @@ class UserPermissionOverrideTests(TestCase):
             effect=UserPermissionOverride.GRANT).exists())
         self.assertTrue(AuditLog.objects.filter(action="PERMISSION_CHANGED").exists())
 
-    def test_role_change_clears_overrides(self):
+    def test_role_change_clears_overrides_by_default(self):
         from core.models import UserPermissionOverride
         from core import permissions as P
         UserPermissionOverride.objects.create(tenant=self.tenant, user=self.wh,
@@ -462,6 +462,32 @@ class UserPermissionOverrideTests(TestCase):
         self.client.login(username="gradmin", password="pw")
         self.client.post(f"/users/{self.wh_m.id}/role/", {"role": "SALES"})
         self.assertFalse(UserPermissionOverride.objects.filter(tenant=self.tenant, user=self.wh).exists())
+
+    def test_role_change_keeps_overrides_when_policy_on(self):
+        from core.models import UserPermissionOverride
+        from core import permissions as P
+        self.tenant.keep_permissions_on_role_change = True
+        self.tenant.save()
+        # A meaningful grant (SALES lacks export_data) and a redundant one
+        # (SALES already has manage_customers, so granting it is redundant).
+        UserPermissionOverride.objects.create(tenant=self.tenant, user=self.wh,
+                                              permission=P.EXPORT_DATA, effect=UserPermissionOverride.GRANT)
+        UserPermissionOverride.objects.create(tenant=self.tenant, user=self.wh,
+                                              permission=P.MANAGE_CUSTOMERS, effect=UserPermissionOverride.GRANT)
+        self.client.login(username="gradmin", password="pw")
+        self.client.post(f"/users/{self.wh_m.id}/role/", {"role": "SALES"})
+        remaining = set(UserPermissionOverride.objects.filter(tenant=self.tenant, user=self.wh)
+                        .values_list("permission", flat=True))
+        self.assertEqual(remaining, {P.EXPORT_DATA})  # redundant grant pruned, meaningful one kept
+
+    def test_policy_toggle_saves_and_audits(self):
+        from core.models import AuditLog
+        self.client.login(username="gradmin", password="pw")
+        resp = self.client.post("/team/permissions/", {"keep_permissions_on_role_change": "on"})
+        self.assertEqual(resp.status_code, 302)
+        self.tenant.refresh_from_db()
+        self.assertTrue(self.tenant.keep_permissions_on_role_change)
+        self.assertTrue(AuditLog.objects.filter(action="SETTINGS_CHANGED").exists())
 
     def test_reset_to_role_default(self):
         from core.models import UserPermissionOverride

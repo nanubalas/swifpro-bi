@@ -590,9 +590,18 @@ def new_organisation(request):
 
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def roles_permissions(request):
-    """Read-only matrix of roles x permissions."""
+    """Matrix of roles x permissions, plus the org's access policy toggle."""
     from core import permissions as perms_mod
     tenant = _get_default_tenant(request)
+    if request.method == "POST":
+        new_val = request.POST.get("keep_permissions_on_role_change") == "on"
+        if new_val != tenant.keep_permissions_on_role_change:
+            tenant.keep_permissions_on_role_change = new_val
+            tenant.save(update_fields=["keep_permissions_on_role_change"])
+            log_audit(action="SETTINGS_CHANGED", request=request, user=request.user, tenant=tenant,
+                      detail=f"keep_permissions_on_role_change={new_val}")
+        messages.success(request, "Access policy updated.")
+        return redirect("roles_permissions")
     matrix = []
     for code, label, category in perms_mod.PERMISSIONS:
         matrix.append({
@@ -603,6 +612,7 @@ def roles_permissions(request):
         "tenant": tenant,
         "role_labels": [lbl for _, lbl in roles_mod.ROLE_CHOICES],
         "matrix": matrix,
+        "keep_permissions_on_role_change": tenant.keep_permissions_on_role_change,
     })
 
 
@@ -676,12 +686,29 @@ def member_change_role(request, membership_id):
             old = m.role
             m.role = new_role
             m.save()  # signal re-syncs Django groups
-            # Custom per-user permissions are defined relative to the role
-            # baseline; resetting them on a role change keeps access predictable.
-            cleared = UserPermissionOverride.objects.filter(tenant=tenant, user=m.user).delete()[0]
+            # Custom per-user permissions are deltas on the role baseline. By
+            # default we reset them on a role change so access stays predictable;
+            # if the org opts to keep them, we prune the ones the new role makes
+            # redundant so the remaining overrides still mean something.
+            existing = list(UserPermissionOverride.objects.filter(tenant=tenant, user=m.user))
+            note = ""
+            if existing:
+                if getattr(tenant, "keep_permissions_on_role_change", False):
+                    new_base = permissions_mod.role_permissions(new_role)
+                    pruned = 0
+                    for o in existing:
+                        redundant = ((o.effect == UserPermissionOverride.GRANT and o.permission in new_base) or
+                                     (o.effect == UserPermissionOverride.REVOKE and o.permission not in new_base))
+                        if redundant:
+                            o.delete()
+                            pruned += 1
+                    kept = len(existing) - pruned
+                    note = f" {kept} custom permission(s) kept." if kept else " Custom permissions were already covered by the new role."
+                else:
+                    UserPermissionOverride.objects.filter(tenant=tenant, user=m.user).delete()
+                    note = " Custom permissions were reset to the role default."
             log_audit(action="ROLE_CHANGED", request=request, user=request.user, tenant=tenant,
                       detail=f"{m.user.username}: {old} -> {new_role}")
-            note = " Custom permissions were reset to the role default." if cleared else ""
             messages.success(request, f"{m.user.username}'s role changed to {dict(roles_mod.ROLE_CHOICES)[new_role]}.{note}")
     return redirect("members_list")
 
