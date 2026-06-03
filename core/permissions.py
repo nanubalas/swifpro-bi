@@ -72,3 +72,23 @@ def role_permissions(role):
 
 def role_has_permission(role, perm):
     return role == roles.ADMIN or perm in role_permissions(role)
+
+
+# --- Per-user overrides on top of the role baseline ---
+GRANT = "GRANT"
+REVOKE = "REVOKE"
+
+
+def effective_permissions(role, overrides=None):
+    """Resolve a user's permissions: the role baseline with per-user overrides
+    applied. `overrides` is a {permission_code: 'GRANT'|'REVOKE'} mapping.
+    Owners/Admins always have the full set (overrides do not apply)."""
+    if role == roles.ADMIN:
+        return set(ALL_PERMISSIONS)
+    perms = set(role_permissions(role))
+    for perm, effect in (overrides or {}).items():
+        if effect == GRANT:
+            perms.add(perm)
+        elif effect == REVOKE:
+            perms.discard(perm)
+    return perms & ALL_PERMISSIONS

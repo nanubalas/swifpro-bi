@@ -22,6 +22,7 @@ urlpatterns = [
     path("users/<int:membership_id>/role/", views.member_change_role, name="member_change_role"),
     path("users/<int:membership_id>/active/", views.member_toggle_active, name="member_toggle_active"),
     path("users/<int:membership_id>/remove/", views.member_remove, name="member_remove"),
+    path("users/<int:membership_id>/permissions/", views.member_permissions, name="member_permissions"),
     path("team/invite/", views.invite_user, name="invite_user"),
     path("team/permissions/", views.roles_permissions, name="roles_permissions"),
     path("request-access/", views.request_access, name="request_access"),

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Permissions - {{ member.user.username }} - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">Permissions</h2>
+    <div class="text-muted">
+      {{ member.user.get_full_name|default:member.user.username }}
+      (@{{ member.user.username }}) - <span class="badge text-bg-secondary">{{ role_label }}</span> in {{ tenant.name }}
+    </div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{% url 'members_list' %}"><i class="bi bi-arrow-left me-1"></i> Back to users</a>
+</div>
+
+{% if is_admin_role %}
+<div class="alert alert-info d-flex align-items-center">
+  <i class="bi bi-shield-lock-fill me-2"></i>
+  <div>Owners / Admins always have every permission, so there is nothing to customise here. Change the role to apply per-user permissions.</div>
+</div>
+{% endif %}
+
+<form method="post">
+  {% csrf_token %}
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <div class="text-muted small">
+          Tick to grant, untick to revoke. The <span class="fw-semibold">{{ role_label }}</span> default is the baseline;
+          anything you change is recorded as a per-user override.
+          {% if override_count %}<span class="badge text-bg-warning ms-1">{{ override_count }} custom</span>{% endif %}
+        </div>
+        {% if not is_admin_role %}
+        <button class="btn btn-sm btn-outline-secondary" type="submit" name="reset" value="1"
+                onclick="return confirm('Reset {{ member.user.username }} to the {{ role_label }} default?');">
+          <i class="bi bi-arrow-counterclockwise me-1"></i> Reset to role default
+        </button>
+        {% endif %}
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead class="table-light">
+            <tr><th>Permission</th><th>Category</th><th class="text-center">Role default</th><th class="text-center">Effective</th></tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr>
+              <td class="fw-semibold">{{ row.label }}</td>
+              <td class="text-muted small">{{ row.category }}</td>
+              <td class="text-center">
+                {% if row.in_base %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-dash text-muted"></i>{% endif %}
+              </td>
+              <td class="text-center">
+                <div class="form-check d-inline-block">
+                  <input class="form-check-input" type="checkbox" name="perm_{{ row.code }}"
+                         {% if row.effective %}checked{% endif %} {% if is_admin_role %}disabled{% endif %}>
+                </div>
+                {% if row.override == 'granted' %}<span class="badge text-bg-success ms-1">+ granted</span>
+                {% elif row.override == 'revoked' %}<span class="badge text-bg-danger ms-1">- revoked</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% if not is_admin_role %}
+    <div class="card-footer d-flex justify-content-end">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i> Save permissions</button>
+    </div>
+    {% endif %}
+  </div>
+</form>
+{% endblock %}

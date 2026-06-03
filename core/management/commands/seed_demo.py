@@ -12,7 +12,9 @@ from core.models import (
     Shipment, ShipmentLine, InventoryMovement, Customer, CustomerInvoice,
     CustomerInvoiceLine, TaxCode, SalesOrder, SalesOrderLine, ChannelConnection,
     SalesChannel, SyncRun, Payment, PaymentAllocation, OrgMembership,
+    AuditLog, UserPermissionOverride,
 )
+from core import permissions as permissions_mod
 from core import roles as roles_mod
 from core.services.inventory import apply_movement
 from core.services.gl import post_customer_invoice, post_inventory_receipt, post_payment
@@ -238,5 +240,54 @@ class Command(BaseCommand):
         period_from = today.replace(day=1) - timezone.timedelta(days=62)
         save_vat_return(tenant, period_from.replace(day=1), today)
         self.stdout.write("Saved a draft VAT return.")
+
+        # A sample per-user permission override so the Permissions editor is
+        # populated: give the warehouse user finance-report access, and revoke
+        # invoice management from sales.
+        wh_user = User.objects.filter(username="warehouse").first()
+        if wh_user:
+            UserPermissionOverride.objects.get_or_create(
+                tenant=tenant, user=wh_user, permission=permissions_mod.VIEW_FINANCE_REPORTS,
+                defaults={"effect": UserPermissionOverride.GRANT},
+            )
+        sales_user = User.objects.filter(username="sales").first()
+        if sales_user:
+            UserPermissionOverride.objects.get_or_create(
+                tenant=tenant, user=sales_user, permission=permissions_mod.MANAGE_INVOICES,
+                defaults={"effect": UserPermissionOverride.REVOKE},
+            )
+        self.stdout.write("Seeded sample per-user permission overrides (warehouse +reports, sales -invoices).")
+
+        # Audit log: realistic, time-spread events so the Audit Log page and its
+        # CSV export show content out of the box. Seeded once.
+        if not AuditLog.objects.filter(tenant=tenant, ip="203.0.113.10").exists():
+            now = timezone.now()
+            td = timezone.timedelta
+            events = [
+                (td(days=6, hours=2), "LOGIN", "owner", "", "/dashboard/"),
+                (td(days=6, hours=1), "USER_INVITED", "owner", "accountant@swifpro-demo.co.uk -> accountant (ACCOUNTANT)", "/team/invite/"),
+                (td(days=5, hours=5), "LOGIN", "accountant", "", "/dashboard/"),
+                (td(days=5, hours=4), "ROLE_CHANGED", "owner", "manager: SALES -> MANAGER", "/users/2/role/"),
+                (td(days=4, hours=8), "LOGIN_FAILED", "sales", "bad credentials", "/login/"),
+                (td(days=4, hours=7), "LOGIN", "sales", "", "/dashboard/"),
+                (td(days=4, hours=3), "PERMISSION_CHANGED", "owner", "warehouse: +view_finance_reports", "/users/5/permissions/"),
+                (td(days=3, hours=6), "PERMISSION_CHANGED", "owner", "sales: -manage_invoices", "/users/4/permissions/"),
+                (td(days=3, hours=2), "DATA_EXPORTED", "accountant", "products (3 rows)", "/export/products.csv"),
+                (td(days=2, hours=9), "RECORD_DELETED", "manager", "Product SKU-OLD - Discontinued Widget", "/products/99/delete/"),
+                (td(days=2, hours=1), "ACCESS_DENIED", "viewer", "You do not have permission for this action.", "/po/new/"),
+                (td(days=1, hours=4), "PASSWORD_CHANGED", "accountant", "", "/account/password/"),
+                (td(days=1, hours=2), "USER_DEACTIVATED", "owner", "tempcontractor", "/users/9/active/"),
+                (td(hours=6), "DATA_EXPORTED", "owner", "audit log (28 rows)", "/audit/export.csv"),
+                (td(hours=3), "LOGOUT", "sales", "", "/logout/"),
+                (td(hours=1), "LOGIN", "owner", "", "/dashboard/"),
+            ]
+            for delta, action, username, detail, path in events:
+                u = User.objects.filter(username=username).first()
+                AuditLog.objects.create(
+                    tenant=tenant, user=u, username=username, action=action,
+                    detail=detail, path=path, ip="203.0.113.10",
+                    created_at=now - delta,
+                )
+            self.stdout.write(f"Seeded {len(events)} audit log events.")
 
         self.stdout.write(self.style.SUCCESS("Demo data ready. Open http://127.0.0.1:8000/"))

@@ -96,6 +96,31 @@ class OrgMembership(models.Model):
         return f"{self.user} - {self.get_role_display()} @ {self.tenant}"
 
 
+class UserPermissionOverride(models.Model):
+    """A per-user permission delta on top of their role baseline, scoped to one
+    organisation. effect=GRANT adds a permission the role lacks; effect=REVOKE
+    removes one the role normally grants. The effective permission set is the
+    role's matrix permissions with these overrides applied (see core.permissions
+    .effective_permissions). Owners/Admins always have everything, so overrides
+    do not apply to them."""
+    GRANT = "GRANT"
+    REVOKE = "REVOKE"
+    EFFECT_CHOICES = [(GRANT, "Grant"), (REVOKE, "Revoke")]
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="permission_overrides")
+    user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="permission_overrides")
+    permission = models.CharField(max_length=50)
+    effect = models.CharField(max_length=6, choices=EFFECT_CHOICES)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ("tenant", "user", "permission")
+        indexes = [models.Index(fields=["tenant", "user"])]
+
+    def __str__(self):
+        return f"{self.user} {self.effect} {self.permission} @ {self.tenant}"
+
+
 class AccessRequest(models.Model):
     """A request from a prospective user to be granted access. Submitted from
     the public request-access form; an Admin reviews and approves (which

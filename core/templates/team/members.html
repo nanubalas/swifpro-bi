@@ -39,6 +39,7 @@
             </td>
             <td class="text-end">
               <div class="d-inline-flex gap-2">
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'member_permissions' m.id %}" title="Edit permissions"><i class="bi bi-sliders"></i> Permissions</a>
                 <form method="post" action="{% url 'member_toggle_active' m.id %}">{% csrf_token %}
                   <button class="btn btn-sm btn-outline-secondary" type="submit">{% if m.user.is_active %}Deactivate{% else %}Reactivate{% endif %}</button>
                 </form>

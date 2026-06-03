@@ -64,6 +64,29 @@ def get_active_role(request):
     return roles.READONLY
 
 
+def get_user_overrides(user, tenant):
+    """Return {permission_code: effect} for a user's per-org permission overrides."""
+    from core.models import UserPermissionOverride
+    if user is None or not getattr(user, "is_authenticated", False) or tenant is None:
+        return {}
+    return dict(
+        UserPermissionOverride.objects.filter(user=user, tenant=tenant)
+        .values_list("permission", "effect")
+    )
+
+
+def get_effective_permissions(request):
+    """The active user's effective permission set for the active organisation:
+    role baseline + per-user overrides. Superusers get everything."""
+    from core import permissions
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False) and user.is_superuser:
+        return set(permissions.ALL_PERMISSIONS)
+    tenant = get_active_tenant(request)
+    role = get_active_role(request)
+    return permissions.effective_permissions(role, get_user_overrides(user, tenant))
+
+
 def default_landing_url(tenant, role):
     override = (tenant.role_landing or {}).get(role) if tenant is not None else None
     name = override or roles.DASHBOARD_ROUTE.get(role, "dashboard_admin")

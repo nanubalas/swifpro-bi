@@ -47,9 +47,8 @@ def permission_required(perm):
                 return redirect_to_login(request.get_full_path())
             if user.is_superuser:
                 return view_func(request, *args, **kwargs)
-            from core.permissions import role_has_permission
-            from core.access import get_active_role
-            if not role_has_permission(get_active_role(request), perm):
+            from core.access import get_effective_permissions
+            if perm not in get_effective_permissions(request):
                 raise PermissionDenied("You do not have permission for this action.")
             return view_func(request, *args, **kwargs)
         return _wrapped

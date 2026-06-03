@@ -1,7 +1,7 @@
 """Template context processor: active role, tenant, the role-filtered nav, and
 the active role's permission set (for conditional UI)."""
 from core import roles, permissions
-from core.access import get_active_role, get_active_tenant, get_memberships
+from core.access import get_active_role, get_active_tenant, get_memberships, get_effective_permissions
 
 
 def nav(request):
@@ -16,5 +16,5 @@ def nav(request):
         "sidebar": roles.sidebar_for_role(role),
         "membership_count": len(get_memberships(user)),
         "active_tenant_name": getattr(tenant, "name", ""),
-        "perms": permissions.role_permissions(role),
+        "perms": get_effective_permissions(request),
     }

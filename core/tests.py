@@ -406,6 +406,73 @@ class AuditTrailPhase3Tests(TestCase):
         self.assertTrue(self.client.login(username="auadmin", password="Str0ng-Pass-99"))
 
 
+class UserPermissionOverrideTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, UserPermissionOverride
+        self.tenant = Tenant.objects.create(name="Grants Co")
+        self.admin = User.objects.create_user("gradmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.wh = User.objects.create_user("grwh", password="pw")
+        self.wh_m = OrgMembership.objects.create(user=self.wh, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+
+    def test_effective_permissions_grant_and_revoke(self):
+        from core import permissions as P
+        # baseline: WAREHOUSE lacks view_finance_reports, has manage_inventory
+        base = P.role_permissions("WAREHOUSE")
+        self.assertNotIn(P.VIEW_FINANCE_REPORTS, base)
+        eff = P.effective_permissions("WAREHOUSE", {P.VIEW_FINANCE_REPORTS: P.GRANT, P.MANAGE_INVENTORY: P.REVOKE})
+        self.assertIn(P.VIEW_FINANCE_REPORTS, eff)
+        self.assertNotIn(P.MANAGE_INVENTORY, eff)
+
+    def test_admin_always_full_regardless_of_overrides(self):
+        from core import permissions as P
+        eff = P.effective_permissions("ADMIN", {P.MANAGE_USERS: P.REVOKE})
+        self.assertEqual(eff, set(P.ALL_PERMISSIONS))
+
+    def test_grant_enables_gated_view(self):
+        from core.models import UserPermissionOverride
+        from core import permissions as P
+        # WAREHOUSE lacks export_data -> export blocked
+        self.client.login(username="grwh", password="pw")
+        self.assertEqual(self.client.get("/export/products.csv").status_code, 403)
+        # grant export_data -> now allowed
+        UserPermissionOverride.objects.create(tenant=self.tenant, user=self.wh,
+                                              permission=P.EXPORT_DATA, effect=UserPermissionOverride.GRANT)
+        self.assertEqual(self.client.get("/export/products.csv").status_code, 200)
+
+    def test_editor_saves_overrides_and_audits(self):
+        from core.models import UserPermissionOverride, AuditLog
+        from core import permissions as P
+        self.client.login(username="gradmin", password="pw")
+        # WAREHOUSE baseline perms that should stay ticked, plus grant export_data
+        data = {f"perm_{c}": "on" for c in P.role_permissions("WAREHOUSE")}
+        data[f"perm_{P.EXPORT_DATA}"] = "on"
+        resp = self.client.post(f"/users/{self.wh_m.id}/permissions/", data)
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(UserPermissionOverride.objects.filter(
+            tenant=self.tenant, user=self.wh, permission=P.EXPORT_DATA,
+            effect=UserPermissionOverride.GRANT).exists())
+        self.assertTrue(AuditLog.objects.filter(action="PERMISSION_CHANGED").exists())
+
+    def test_role_change_clears_overrides(self):
+        from core.models import UserPermissionOverride
+        from core import permissions as P
+        UserPermissionOverride.objects.create(tenant=self.tenant, user=self.wh,
+                                              permission=P.EXPORT_DATA, effect=UserPermissionOverride.GRANT)
+        self.client.login(username="gradmin", password="pw")
+        self.client.post(f"/users/{self.wh_m.id}/role/", {"role": "SALES"})
+        self.assertFalse(UserPermissionOverride.objects.filter(tenant=self.tenant, user=self.wh).exists())
+
+    def test_reset_to_role_default(self):
+        from core.models import UserPermissionOverride
+        from core import permissions as P
+        UserPermissionOverride.objects.create(tenant=self.tenant, user=self.wh,
+                                              permission=P.EXPORT_DATA, effect=UserPermissionOverride.GRANT)
+        self.client.login(username="gradmin", password="pw")
+        self.client.post(f"/users/{self.wh_m.id}/permissions/", {"reset": "1"})
+        self.assertFalse(UserPermissionOverride.objects.filter(tenant=self.tenant, user=self.wh).exists())
+
+
 class PermissionMatrixTests(TestCase):
     def test_matrix_helpers(self):
         from core import permissions as P

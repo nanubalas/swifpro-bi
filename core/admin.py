@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import User
 from core.models import (
-    UserProfile, OrgMembership, AuditLog, AccessRequest,
+    UserProfile, OrgMembership, AuditLog, AccessRequest, UserPermissionOverride,
     Tenant, Location, Supplier, Product,
     PurchaseOrder, PurchaseOrderLine,
     Shipment, ShipmentEvent,
@@ -44,6 +44,13 @@ class AuditLogAdmin(admin.ModelAdmin):
     list_display = ("created_at", "action", "username", "tenant", "path", "ip")
     list_filter = ("action", "tenant")
     search_fields = ("username", "detail", "path")
+
+
+@admin.register(UserPermissionOverride)
+class UserPermissionOverrideAdmin(admin.ModelAdmin):
+    list_display = ("user", "tenant", "permission", "effect", "created_at")
+    list_filter = ("effect", "tenant", "permission")
+    search_fields = ("user__username", "permission")
 
 
 @admin.register(AccessRequest)

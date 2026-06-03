@@ -19,7 +19,7 @@ from core.models import (
     ReturnAuthorization, ReturnLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
     GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn,
-    OrgMembership, AuditLog, AccessRequest, UserProfile
+    OrgMembership, AuditLog, AccessRequest, UserProfile, UserPermissionOverride
 )
 from django.core.exceptions import PermissionDenied
 from core import roles as roles_mod
@@ -676,9 +676,13 @@ def member_change_role(request, membership_id):
             old = m.role
             m.role = new_role
             m.save()  # signal re-syncs Django groups
+            # Custom per-user permissions are defined relative to the role
+            # baseline; resetting them on a role change keeps access predictable.
+            cleared = UserPermissionOverride.objects.filter(tenant=tenant, user=m.user).delete()[0]
             log_audit(action="ROLE_CHANGED", request=request, user=request.user, tenant=tenant,
                       detail=f"{m.user.username}: {old} -> {new_role}")
-            messages.success(request, f"{m.user.username}'s role changed to {dict(roles_mod.ROLE_CHOICES)[new_role]}.")
+            note = " Custom permissions were reset to the role default." if cleared else ""
+            messages.success(request, f"{m.user.username}'s role changed to {dict(roles_mod.ROLE_CHOICES)[new_role]}.{note}")
     return redirect("members_list")
 
 
@@ -717,6 +721,76 @@ def member_remove(request, membership_id):
             log_audit(action="USER_REMOVED", request=request, user=request.user, tenant=tenant, detail=uname)
             messages.success(request, f"{uname} removed from {tenant.name}.")
     return redirect("members_list")
+
+
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+@transaction.atomic
+def member_permissions(request, membership_id):
+    """Admin editor for a single member's effective permissions: the role
+    baseline plus per-user grants/revokes. Owners/Admins always have everything,
+    so their permissions are shown read-only."""
+    tenant = _get_default_tenant(request)
+    m = get_object_or_404(OrgMembership, id=membership_id, tenant=tenant)
+    base = permissions_mod.role_permissions(m.role)
+    is_admin_role = (m.role == roles_mod.ADMIN)
+    role_label = dict(roles_mod.ROLE_CHOICES)[m.role]
+
+    if request.method == "POST" and not is_admin_role:
+        if request.POST.get("reset"):
+            removed = UserPermissionOverride.objects.filter(tenant=tenant, user=m.user).delete()[0]
+            if removed:
+                log_audit(action="PERMISSION_CHANGED", request=request, user=request.user, tenant=tenant,
+                          detail=f"{m.user.username}: reset to {role_label} default")
+                messages.success(request, f"Reset {m.user.username}'s permissions to the {role_label} default.")
+            else:
+                messages.info(request, "No custom permissions to reset.")
+            return redirect("member_permissions", membership_id=m.id)
+
+        existing = {o.permission: o for o in UserPermissionOverride.objects.filter(tenant=tenant, user=m.user)}
+        changes = []
+        for code, _label, _cat in permissions_mod.PERMISSIONS:
+            desired = request.POST.get(f"perm_{code}") == "on"
+            in_base = code in base
+            o = existing.get(code)
+            if desired == in_base:
+                if o:
+                    o.delete()
+                    changes.append(f"={code}")
+            else:
+                effect = UserPermissionOverride.GRANT if desired else UserPermissionOverride.REVOKE
+                if not o or o.effect != effect:
+                    UserPermissionOverride.objects.update_or_create(
+                        tenant=tenant, user=m.user, permission=code, defaults={"effect": effect})
+                    changes.append(f"{'+' if desired else '-'}{code}")
+        if changes:
+            log_audit(action="PERMISSION_CHANGED", request=request, user=request.user, tenant=tenant,
+                      detail=f"{m.user.username}: {', '.join(changes)}")
+            messages.success(request, f"Permissions updated for {m.user.username}.")
+        else:
+            messages.info(request, "No permission changes.")
+        return redirect("member_permissions", membership_id=m.id)
+
+    overrides = dict(UserPermissionOverride.objects.filter(tenant=tenant, user=m.user).values_list("permission", "effect"))
+    rows = []
+    for code, label, category in permissions_mod.PERMISSIONS:
+        in_base = code in base
+        effect = overrides.get(code)
+        effective = True if is_admin_role else in_base
+        if effect == UserPermissionOverride.GRANT:
+            effective = True
+        elif effect == UserPermissionOverride.REVOKE:
+            effective = False
+        rows.append({
+            "code": code, "label": label, "category": category,
+            "in_base": in_base, "effective": effective,
+            "override": ("granted" if effect == UserPermissionOverride.GRANT
+                         else "revoked" if effect == UserPermissionOverride.REVOKE else ""),
+        })
+    return render(request, "team/member_permissions.html", {
+        "tenant": tenant, "member": m, "rows": rows,
+        "is_admin_role": is_admin_role, "role_label": role_label,
+        "override_count": len(overrides),
+    })
 
 
 # ============================
