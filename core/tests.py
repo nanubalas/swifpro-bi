@@ -1139,3 +1139,75 @@ class FinancialReportsTests(TestCase):
                      "/reports/balance-sheet/", "/reports/aged-receivables/", "/reports/aged-payables/"]:
             resp = self.client.get(path)
             self.assertEqual(resp.status_code, 200, f"{path} -> {resp.status_code}")
+
+
+class ExpenseTests(TestCase):
+    def setUp(self):
+        from core.models import GLAccount
+        self.tenant = Tenant.objects.create(name="Exp Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.rent = GLAccount.objects.get(tenant=self.tenant, code="6100")
+        self.user = User.objects.create_user("exp", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Finance")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="exp", password="pw")
+
+    def _post(self, **overrides):
+        data = {
+            "expense_date": "2026-05-30", "payee": "Landlord", "category": self.rent.id,
+            "description": "Rent", "net_amount": "1000.00", "tax_code": self.std.id,
+            "method": "BANK", "reference": "R-1", "paid": "on", "action": "post",
+        }
+        data.update(overrides)
+        return self.client.post("/expenses/new/", data)
+
+    def test_paid_expense_posts_balanced_je(self):
+        from core.models import Expense, GLAccount
+        from core.services import reports
+        resp = self._post()
+        self.assertEqual(resp.status_code, 302)
+        e = Expense.objects.get(tenant=self.tenant)
+        self.assertEqual(e.status, "POSTED")
+        self.assertEqual(e.total, Decimal("1200.00"))
+        balances = reports.account_balances(self.tenant)
+        self.assertEqual(balances[self.rent]["balance"], Decimal("1000.00"))
+        vat_in = GLAccount.objects.get(tenant=self.tenant, code="1300")
+        bank = GLAccount.objects.get(tenant=self.tenant, code="1050")
+        self.assertEqual(balances[vat_in]["balance"], Decimal("200.00"))
+        self.assertEqual(balances[bank]["balance"], Decimal("-1200.00"))  # cash out
+
+    def test_unpaid_expense_credits_accounts_payable(self):
+        from core.models import GLAccount
+        from core.services import reports
+        self._post(paid="")  # unchecked -> owed
+        balances = reports.account_balances(self.tenant)
+        ap = GLAccount.objects.get(tenant=self.tenant, code="2000")
+        bank = GLAccount.objects.get(tenant=self.tenant, code="1050")
+        self.assertEqual(ap["balance"] if isinstance(ap, dict) else balances[ap]["balance"], Decimal("1200.00"))
+        self.assertEqual(balances[bank]["balance"], Decimal("0.00"))
+
+    def test_expense_shows_in_pnl(self):
+        from core.services import reports
+        self._post()
+        pnl = reports.profit_and_loss(self.tenant)
+        self.assertEqual(pnl["expense_total"], Decimal("1000.00"))
+
+    def test_draft_then_post(self):
+        from core.models import Expense, JournalEntry
+        resp = self._post(action="save")
+        e = Expense.objects.get(tenant=self.tenant)
+        self.assertEqual(e.status, "DRAFT")
+        self.assertFalse(JournalEntry.objects.filter(tenant=self.tenant, ref_type="EXPENSE").exists())
+        self.client.post(f"/expenses/{e.id}/post/")
+        e.refresh_from_db()
+        self.assertEqual(e.status, "POSTED")
+        self.assertTrue(JournalEntry.objects.filter(tenant=self.tenant, ref_type="EXPENSE").exists())
+
+    def test_category_dropdown_excludes_non_expense_accounts(self):
+        resp = self.client.get("/expenses/new/")
+        self.assertEqual(resp.status_code, 200)
+        form = resp.context["form"]
+        codes = {a.code for a in form.fields["category"].queryset}
+        self.assertIn("6100", codes)
+        self.assertNotIn("1050", codes)  # bank is not an expense category
+        self.assertNotIn("4000", codes)  # sales income is not an expense category

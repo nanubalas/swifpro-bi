@@ -169,6 +169,12 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("payments/<int:payment_id>/", views.payment_detail, name="payment_detail"),
     path("bank/reconcile/", views.bank_reconciliation, name="bank_reconciliation"),
 
+    # Expenses
+    path("expenses/", views.expense_list, name="expense_list"),
+    path("expenses/new/", views.expense_create, name="expense_create"),
+    path("expenses/<int:expense_id>/", views.expense_detail, name="expense_detail"),
+    path("expenses/<int:expense_id>/post/", views.expense_post, name="expense_post"),
+
     # VAT return (MTD)
     path("vat/", views.vat_index, name="vat_index"),
     path("vat/save/", views.vat_save, name="vat_save"),

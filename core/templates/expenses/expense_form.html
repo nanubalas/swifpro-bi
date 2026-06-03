@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Record expense - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <a href="{% url 'expense_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+      <h2 class="fw-bold mb-0">Record expense</h2>
+    </div>
+
+    <div class="alert alert-info d-flex align-items-center">
+      <i class="bi bi-info-circle me-2"></i>
+      <div>Enter the net amount (before VAT) and pick a category. Posting it updates your accounts automatically; no bookkeeping needed.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-body p-4">
+        <form method="post">
+          {% csrf_token %}
+          {% for field in form %}
+            <div class="mb-3 {% if field.name == 'paid' %}form-check{% endif %}">
+              <label class="{% if field.name == 'paid' %}form-check-label{% else %}form-label{% endif %}">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% for err in field.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
+            </div>
+          {% endfor %}
+          <div class="d-flex gap-2">
+            <button class="btn btn-primary" type="submit" name="action" value="post"><i class="bi bi-check-lg me-1"></i> Record &amp; Post</button>
+            <button class="btn btn-outline-secondary" type="submit" name="action" value="save">Save draft</button>
+            <a class="btn btn-link" href="{% url 'expense_list' %}">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll("form select").forEach(e => e.classList.add("form-select"));
+  document.querySelectorAll("form input, form textarea").forEach(e => {
+    if (e.type === "checkbox") e.classList.add("form-check-input");
+    else if (e.type !== "hidden") e.classList.add("form-control");
+  });
+</script>
+{% endblock %}

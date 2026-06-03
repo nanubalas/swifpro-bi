@@ -14,7 +14,7 @@ from core.models import (
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount,
-    Payment, AccessRequest
+    Payment, AccessRequest, Expense
 )
 
 
@@ -384,3 +384,27 @@ class SupplierPaymentForm(TenantModelForm):
         model = Payment
         fields = ["supplier", "payment_date", "amount", "method", "reference", "notes"]
         widgets = {"notes": forms.Textarea(attrs={"rows": 2})}
+
+
+class ExpenseForm(TenantModelForm):
+    """Record a business cost. 'Category' is restricted to expense accounts so
+    business users pick a plain category rather than dealing with the ledger."""
+    class Meta:
+        model = Expense
+        fields = ["expense_date", "payee", "supplier", "category", "description",
+                  "net_amount", "tax_code", "paid", "method", "reference"]
+        widgets = {
+            "description": forms.Textarea(attrs={"rows": 2}),
+            "expense_date": forms.DateInput(attrs={"type": "date"}),
+        }
+        labels = {"net_amount": "Net amount (before VAT)", "paid": "Already paid"}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only expense-type accounts are valid expense categories.
+        if "category" in self.fields:
+            self.fields["category"].queryset = self.fields["category"].queryset.filter(
+                type__in=[GLAccount.Type.EXPENSE], is_active=True
+            ).order_by("code")
+        self.fields["supplier"].required = False
+        self.fields["tax_code"].required = False
