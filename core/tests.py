@@ -252,6 +252,56 @@ class RoleDashboardTests(TestCase):
         self.assertEqual(resp.url, "/reports/")
 
 
+class CompanyProfileTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Profile Co")
+        self.user = User.objects.create_user("padmin", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="padmin", password="pw")
+
+    def _base_post(self, **overrides):
+        data = {
+            "name": "Profile Co", "legal_name": "Profile Co Ltd", "trading_name": "Profile",
+            "business_type": "LTD", "company_number": "12345678", "utr_number": "1234567890",
+            "vat_number": "GB123456789", "address_country": "United Kingdom",
+            "billing_same_as_business": "on", "billing_country": "United Kingdom",
+            "email": "ops@profile.test", "phone": "+44 20 7946 0000", "website": "https://profile.test",
+            "currency_code": "GBP", "country": "United Kingdom", "timezone": "Europe/London",
+            "financial_year_start_month": "4", "default_payment_terms_days": "30",
+            "po_approval_threshold": "0",
+        }
+        data.update(overrides)
+        return data
+
+    def test_settings_page_renders(self):
+        resp = self.client.get("/settings/tenant/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Company Profile")
+
+    def test_save_full_profile(self):
+        resp = self.client.post("/settings/tenant/", self._base_post())
+        self.assertEqual(resp.status_code, 302)
+        self.tenant.refresh_from_db()
+        self.assertEqual(self.tenant.business_type, "LTD")
+        self.assertEqual(self.tenant.legal_name, "Profile Co Ltd")
+        self.assertEqual(self.tenant.financial_year_start_month, 4)
+        self.assertEqual(self.tenant.default_payment_terms_days, 30)
+
+    def test_invalid_company_number_rejected(self):
+        resp = self.client.post("/settings/tenant/", self._base_post(company_number="ABC"))
+        self.assertEqual(resp.status_code, 200)  # re-rendered with errors
+        self.assertContains(resp, "valid UK company number")
+
+    def test_invalid_vat_number_rejected(self):
+        resp = self.client.post("/settings/tenant/", self._base_post(vat_number="12"))
+        self.assertContains(resp, "valid UK VAT number")
+
+    def test_vat_required_when_registered(self):
+        resp = self.client.post("/settings/tenant/", self._base_post(vat_registered="on", vat_number=""))
+        self.assertContains(resp, "VAT number is required")
+
+
 class AccessRequestTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership

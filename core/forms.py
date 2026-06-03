@@ -1,6 +1,9 @@
 from django import forms
 from django.forms import inlineformset_factory
 from core.current import get_current_tenant
+from core.validators import (
+    validate_vat_number, validate_company_number, validate_utr, validate_phone,
+)
 from core.models import (
     CycleCount, CycleCountLine, InventoryLotBalance, InventoryReservation,
     PurchaseOrder, PurchaseOrderLine, Shipment,
@@ -103,17 +106,62 @@ SalesOrderLineFormSet = inlineformset_factory(
 )
 
 class TenantSettingsForm(TenantModelForm):
-    CURRENCY_CHOICES = (
-        ("GBP", "GBP (£)"),
-        ("USD", "USD ($)"),
-        ("EUR", "EUR (€)"),
-    )
+    CURRENCY_CHOICES = (("GBP", "GBP (£)"), ("USD", "USD ($)"), ("EUR", "EUR (€)"))
+    MONTHS = [(i, m) for i, m in enumerate(
+        ["", "January", "February", "March", "April", "May", "June",
+         "July", "August", "September", "October", "November", "December"]) if i]
 
     currency_code = forms.ChoiceField(choices=CURRENCY_CHOICES)
+    financial_year_start_month = forms.TypedChoiceField(choices=MONTHS, coerce=int, label="Financial year starts")
 
     class Meta:
         model = Tenant
-        fields = ["name", "currency_code", "po_approval_threshold"]
+        fields = [
+            # Identity
+            "name", "legal_name", "trading_name", "business_type",
+            # Registration & tax
+            "company_number", "utr_number", "vat_registered", "vat_number",
+            # Business address
+            "address_line1", "address_line2", "address_city", "address_postcode", "address_country",
+            # Billing address
+            "billing_same_as_business", "billing_line1", "billing_line2", "billing_city", "billing_postcode", "billing_country",
+            # Contact
+            "email", "phone", "website",
+            # Branding
+            "logo", "invoice_footer",
+            # Defaults & locale
+            "currency_code", "country", "timezone", "financial_year_start_month",
+            "default_tax_code", "default_payment_terms_days", "po_approval_threshold",
+        ]
+        widgets = {
+            "invoice_footer": forms.Textarea(attrs={"rows": 2}),
+        }
+
+    def clean_vat_number(self):
+        v = self.cleaned_data.get("vat_number", "")
+        validate_vat_number(v)
+        return v
+
+    def clean_company_number(self):
+        v = self.cleaned_data.get("company_number", "")
+        validate_company_number(v)
+        return v
+
+    def clean_utr_number(self):
+        v = self.cleaned_data.get("utr_number", "")
+        validate_utr(v)
+        return v
+
+    def clean_phone(self):
+        v = self.cleaned_data.get("phone", "")
+        validate_phone(v)
+        return v
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("vat_registered") and not cleaned.get("vat_number"):
+            self.add_error("vat_number", "VAT number is required when the business is VAT registered.")
+        return cleaned
 
 class UnitOfMeasureForm(TenantModelForm):
     class Meta:
