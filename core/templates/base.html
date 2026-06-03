@@ -333,9 +333,6 @@
             aria-controls="skunowMenu" aria-label="Open menu">
       <i class="bi bi-list fs-5"></i>
     </button>
-    <button class="skn-back me-2" id="sknBack" type="button" title="Go back" style="display:none;">
-      <i class="bi bi-arrow-left"></i><span class="skn-back-label">Back</span>
-    </button>
     {% endif %}
 
     <a class="navbar-brand d-flex align-items-center gap-2 fs-5" href="/">
@@ -343,6 +340,11 @@
     </a>
 
     <div class="ms-auto d-flex align-items-center gap-2">
+      {% if user.is_authenticated %}
+      <button class="skn-back me-1" id="sknBack" type="button" title="Go back" style="display:none;">
+        <i class="bi bi-arrow-left"></i><span class="skn-back-label">Back</span>
+      </button>
+      {% endif %}
       <button class="skn-iconbtn" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle light / dark">
         <i class="bi bi-moon-stars"></i>
       </button>
