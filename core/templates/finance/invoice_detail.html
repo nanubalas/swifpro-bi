@@ -11,8 +11,7 @@
     </div>
   </div>
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="/invoices/">Back</a>
-    {% if match and match.ok and invoice.status != "POSTED" %}
+{% if match and match.ok and invoice.status != "POSTED" %}
       <a class="btn btn-success" href="/invoices/{{ invoice.id }}/post/">Post to GL</a>
     {% endif %}
   </div>

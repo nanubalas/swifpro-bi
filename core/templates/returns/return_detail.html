@@ -20,8 +20,7 @@
   </div>
 
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="/returns/">Back</a>
-    <form method="post" action="/returns/{{ rma.id }}/process/" class="d-inline">
+<form method="post" action="/returns/{{ rma.id }}/process/" class="d-inline">
       {% csrf_token %}
       {% if rma.status == "DRAFT" %}
         <button class="btn btn-primary" name="action" value="approve">Approve</button>

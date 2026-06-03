@@ -12,9 +12,7 @@
     </div>
   </div>
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="/cycle-counts/">Back</a>
-
-    {% if cc.status == "DRAFT" %}
+{% if cc.status == "DRAFT" %}
       <form method="post" action="/cycle-counts/{{ cc.id }}/submit/">{% csrf_token %}
         <button class="btn btn-primary" type="submit">Submit</button>
       </form>

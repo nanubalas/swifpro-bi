@@ -14,8 +14,7 @@
     </div>
   </div>
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="/ar/invoices/">Back</a>
-    {% if inv.status == "DRAFT" %}
+{% if inv.status == "DRAFT" %}
       <a class="btn btn-success" href="/ar/invoices/{{ inv.id }}/issue/">Issue</a>
     {% endif %}
   </div>

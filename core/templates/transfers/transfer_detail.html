@@ -11,8 +11,7 @@
     </div>
   </div>
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="/transfers/">Back</a>
-    {% if transfer.status != "POSTED" %}
+{% if transfer.status != "POSTED" %}
       <a class="btn btn-success" href="/transfers/{{ transfer.id }}/post/">Post</a>
     {% endif %}
   </div>
