@@ -232,6 +232,62 @@ def stock_valuation(tenant):
     return {"rows": rows, "total": total}
 
 
+def inventory_analytics(tenant, date_from, date_to):
+    """Inventory valuation depth + turnover KPIs for the period.
+
+    - current_value: total stock value (per stock_valuation).
+    - by_location: on-hand value per location.
+    - lots: per lot/serial/expiry balance for lot-tracked stock (with value).
+    - cogs: cost of goods sold posted in the period (GL account 5000).
+    - turnover: annualised COGS / current stock value.
+    - days_inventory: days to deplete current stock at the period's COGS run-rate.
+    """
+    from core.models import InventoryLotBalance
+    val = stock_valuation(tenant)
+    current_value = val["total"]
+
+    # Value on hand per location (at moving-average / standard cost).
+    loc_map = {}
+    for b in (InventoryBalance.objects.filter(tenant=tenant).select_related("product", "location")):
+        if not b.on_hand:
+            continue
+        cost = b.product.average_cost or b.product.standard_cost or ZERO
+        e = loc_map.setdefault(b.location_id, {"location": b.location, "qty": ZERO, "value": ZERO})
+        e["qty"] += b.on_hand
+        e["value"] += (b.on_hand * cost)
+    for e in loc_map.values():
+        e["value"] = e["value"].quantize(Decimal("0.01"))
+    by_location = sorted(loc_map.values(), key=lambda r: r["value"], reverse=True)
+
+    # Lot / serial / expiry detail.
+    lots = []
+    for lb in (InventoryLotBalance.objects.filter(tenant=tenant, on_hand__gt=0)
+               .select_related("product", "location").order_by("expiry_date", "product__sku")):
+        cost = lb.product.average_cost or lb.product.standard_cost or ZERO
+        lots.append({
+            "product": lb.product, "location": lb.location, "lot": lb.lot_code,
+            "serial": lb.serial_number, "expiry": lb.expiry_date, "qty": lb.on_hand,
+            "value": (lb.on_hand * cost).quantize(Decimal("0.01")),
+        })
+
+    # Turnover KPIs from period COGS (GL account 5000, debit-normal).
+    agg = (JournalLine.objects
+           .filter(entry__tenant=tenant, account__code="5000",
+                   entry__entry_date__gte=date_from, entry__entry_date__lte=date_to)
+           .aggregate(d=Sum("debit"), c=Sum("credit")))
+    cogs = (agg["d"] or ZERO) - (agg["c"] or ZERO)
+    period_days = max((date_to - date_from).days + 1, 1)
+    annual_cogs = cogs * Decimal(365) / Decimal(period_days)
+    turnover = (annual_cogs / current_value).quantize(Decimal("0.01")) if current_value else None
+    days_inventory = ((current_value * Decimal(period_days) / cogs).quantize(Decimal("0.1"))
+                      if cogs > ZERO else None)
+    return {
+        "current_value": current_value, "by_location": by_location, "lots": lots,
+        "cogs": cogs, "turnover": turnover, "days_inventory": days_inventory,
+        "period_days": period_days,
+    }
+
+
 def cash_flow_summary(tenant, date_from=None, date_to=None):
     """A simple cash flow summary built from movements on the Bank account.
 

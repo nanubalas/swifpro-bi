@@ -274,4 +274,5 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("reports/aged-receivables/", views.report_aged_receivables, name="report_aged_receivables"),
     path("reports/aged-payables/", views.report_aged_payables, name="report_aged_payables"),
     path("reports/stock-valuation/", views.report_stock_valuation, name="report_stock_valuation"),
+    path("reports/inventory-analytics/", views.report_inventory_analytics, name="report_inventory_analytics"),
 ]

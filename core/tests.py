@@ -3064,6 +3064,48 @@ class PurchaseRequisitionTests(TestCase):
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
 
 
+class InventoryAnalyticsTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        from core.services.inventory import apply_movement
+        from django.utils import timezone
+        self.tenant = Tenant.objects.create(name="IA Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.loc1 = Location.objects.create(tenant=self.tenant, name="WH1", type=Location.Type.WAREHOUSE)
+        self.loc2 = Location.objects.create(tenant=self.tenant, name="WH2", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="IA1", name="P")
+        self.today = timezone.localdate()
+        apply_movement(tenant=self.tenant, product=self.prod, location=self.loc1,
+                       movement_type="RECEIVE", qty_delta=Decimal("100"), ref_type="S", ref_id="1", unit_cost=Decimal("5.00"))
+        apply_movement(tenant=self.tenant, product=self.prod, location=self.loc2,
+                       movement_type="RECEIVE", qty_delta=Decimal("20"), ref_type="S", ref_id="2", unit_cost=Decimal("5.00"))
+        self.user = User.objects.create_user("iau", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="iau", password="pw")
+
+    def test_valuation_by_location_and_turnover(self):
+        from core.services import reports
+        from core.services.gl import post_customer_invoice
+        from datetime import timedelta
+        cust = Customer.objects.create(tenant=self.tenant, name="C")
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=cust, invoice_number="INV-IA")
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal("10"),
+                                           unit_price=Decimal("9"), tax_code=self.std)
+        post_customer_invoice(inv)  # COGS 50, stock now 110 @ 5
+        data = reports.inventory_analytics(self.tenant, self.today - timedelta(days=1),
+                                           self.today + timedelta(days=1))
+        self.assertEqual(data["current_value"], Decimal("550.00"))
+        self.assertEqual(len(data["by_location"]), 2)
+        self.assertEqual(data["cogs"], Decimal("50.00"))
+        self.assertIsNotNone(data["turnover"])
+        self.assertIsNotNone(data["days_inventory"])
+
+    def test_page_renders(self):
+        resp = self.client.get("/reports/inventory-analytics/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Inventory Analytics")
+
+
 class SupplierScorecardTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership

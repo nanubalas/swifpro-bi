@@ -4533,6 +4533,16 @@ def report_stock_valuation(request):
     return render(request, "reports/stock_valuation.html", {"tenant": tenant, "data": data})
 
 
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_PROCUREMENT, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_inventory_analytics(request):
+    """Inventory valuation depth (per location / lot) + turnover KPIs."""
+    tenant = _get_default_tenant(request)
+    date_from, date_to = _sales_period(request, tenant)
+    data = reports_service.inventory_analytics(tenant, date_from, date_to)
+    return render(request, "reports/inventory_analytics.html", {
+        "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to})
+
+
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def report_aged_payables(request):
     tenant = _get_default_tenant(request)

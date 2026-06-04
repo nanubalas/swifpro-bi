@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Inventory Analytics - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-0">Inventory Analytics</h2>
+    <div class="text-muted small">Valuation by location and lot, with turnover KPIs for the period.</div>
+  </div>
+  <form method="get" class="d-flex align-items-end gap-2">
+    <div><label class="form-label mb-1">From</label><input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <div><label class="form-label mb-1">To</label><input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <button class="btn btn-primary btn-sm">Apply</button>
+  </form>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="card-soft p-3"><div class="text-muted small">Stock value (current)</div><div class="fs-4 fw-bold">{{ data.current_value|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-3"><div class="card-soft p-3"><div class="text-muted small">COGS (period)</div><div class="fs-4 fw-bold">{{ data.cogs|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-3"><div class="card-soft p-3"><div class="text-muted small">Turnover (annualised)</div><div class="fs-4 fw-bold">{% if data.turnover is not None %}{{ data.turnover }}x{% else %}—{% endif %}</div></div></div>
+  <div class="col-md-3"><div class="card-soft p-3"><div class="text-muted small">Days of inventory</div><div class="fs-4 fw-bold">{% if data.days_inventory is not None %}{{ data.days_inventory }}{% else %}—{% endif %}</div></div></div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card"><div class="card-body">
+      <h6 class="fw-bold mb-3">Value by location</h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light"><tr><th>Location</th><th class="text-end">Qty</th><th class="text-end">Value</th></tr></thead>
+          <tbody>
+            {% for r in data.by_location %}
+            <tr><td>{{ r.location.name }}</td><td class="text-end">{{ r.qty|floatformat:0 }}</td><td class="text-end">{{ r.value|money:tenant.currency_code }}</td></tr>
+            {% empty %}<tr><td colspan="3" class="text-center text-muted py-4">No stock on hand.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div></div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card"><div class="card-body">
+      <h6 class="fw-bold mb-3">Lot / serial / expiry detail</h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light"><tr><th>Product</th><th>Location</th><th>Lot / Serial</th><th>Expiry</th><th class="text-end">Qty</th><th class="text-end">Value</th></tr></thead>
+          <tbody>
+            {% for r in data.lots %}
+            <tr>
+              <td>{{ r.product.sku }}</td>
+              <td>{{ r.location.name }}</td>
+              <td class="small">{{ r.lot|default:'' }}{% if r.serial %} <span class="text-muted">#{{ r.serial }}</span>{% endif %}</td>
+              <td class="small">{% if r.expiry %}{{ r.expiry|date:'d M Y' }}{% else %}—{% endif %}</td>
+              <td class="text-end">{{ r.qty|floatformat:0 }}</td>
+              <td class="text-end">{{ r.value|money:tenant.currency_code }}</td>
+            </tr>
+            {% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No lot/serial-tracked stock.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div></div>
+  </div>
+</div>
+<div class="text-muted small mt-2">Turnover = annualised COGS ÷ current stock value. Days of inventory = days to deplete current stock at the period's COGS run-rate.</div>
+{% endblock %}
