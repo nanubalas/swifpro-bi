@@ -1487,3 +1487,79 @@ class VatTaxCodeTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(TaxCode.objects.filter(tenant=self.tenant, code="CUSTOM").exists())
         self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="VAT_RATE_CHANGED").exists())
+
+
+class VatEngineTests(TestCase):
+    def setUp(self):
+        from core.models import GLAccount
+        self.tenant = Tenant.objects.create(name="VAT Engine Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.os = TaxCode.objects.get(tenant=self.tenant, code="OS")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Supp")
+        self.expense_acc = GLAccount.objects.get(tenant=self.tenant, code="6900")
+
+        # Sales invoice: 1000 @ standard + 500 outside-scope.
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-V1")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="Std", qty=Decimal("1"), unit_price=Decimal("1000.00"), tax_code=self.std)
+        CustomerInvoiceLine.objects.create(invoice=inv, description="OutOfScope", qty=Decimal("1"), unit_price=Decimal("500.00"), tax_code=self.os)
+        post_customer_invoice(inv)
+
+        # Expense: 200 @ standard (input VAT 40).
+        from core.models import Expense
+        from core.services.gl import post_expense
+        e = Expense.objects.create(tenant=self.tenant, payee="Office", category=self.expense_acc,
+                                   net_amount=Decimal("200.00"), tax_code=self.std, paid=True)
+        post_expense(e)
+
+        # Sales credit note: 100 @ standard (reduces output).
+        from core.models import CreditNote, CreditNoteLine
+        from core.services.gl import post_credit_note
+        cn = CreditNote.objects.create(tenant=self.tenant, kind=CreditNote.Kind.SALES,
+                                       credit_note_number="CN-V1", customer=self.customer)
+        CreditNoteLine.objects.create(credit_note=cn, description="Refund", qty=Decimal("1"), unit_amount=Decimal("100.00"), tax_code=self.std)
+        post_credit_note(cn)
+
+        # Purchase credit note: 50 @ standard (reduces input).
+        cnp = CreditNote.objects.create(tenant=self.tenant, kind=CreditNote.Kind.PURCHASE,
+                                        credit_note_number="CN-VP1", supplier=self.supplier)
+        CreditNoteLine.objects.create(credit_note=cnp, description="Return", qty=Decimal("1"), unit_amount=Decimal("50.00"), tax_code=self.std, account=self.expense_acc)
+        post_credit_note(cnp)
+
+    def _summary(self):
+        import datetime
+        from core.services import vat
+        return vat.vat_summary(self.tenant, datetime.date(2000, 1, 1), datetime.date(2100, 1, 1))
+
+    def test_summary_five_totals(self):
+        s = self._summary()
+        self.assertEqual(s["vat_on_sales"], Decimal("180.00"))        # 200 invoice - 20 credit
+        self.assertEqual(s["total_sales_ex_vat"], Decimal("900.00"))  # 1000 - 100 (OS 500 excluded)
+        self.assertEqual(s["vat_reclaimable"], Decimal("30.00"))      # 40 expense - 10 purchase credit
+        self.assertEqual(s["total_purchases_ex_vat"], Decimal("150.00"))  # 200 - 50
+        self.assertEqual(s["net_vat"], Decimal("150.00"))            # 180 - 30
+
+    def test_outside_scope_excluded_from_box6(self):
+        import datetime
+        from core.services import vat
+        boxes = vat.compute_vat_return(self.tenant, datetime.date(2000, 1, 1), datetime.date(2100, 1, 1))
+        self.assertEqual(boxes["box6_total_sales_ex_vat"], Decimal("900.00"))
+        self.assertEqual(boxes["box1_vat_due_sales"], Decimal("180.00"))
+        self.assertEqual(boxes["box4_vat_reclaimed"], Decimal("30.00"))
+        self.assertEqual(boxes["box5_net_vat"], Decimal("150.00"))
+
+    def test_expense_included_in_input_vat(self):
+        # Records should include the expense as a PURCHASE with 40 VAT.
+        import datetime
+        from core.services import vat
+        recs = vat.vat_transactions(self.tenant, datetime.date(2000, 1, 1), datetime.date(2100, 1, 1))
+        exp = [r for r in recs if r["doc_type"] == "Expense"]
+        self.assertEqual(len(exp), 1)
+        self.assertEqual(exp[0]["vat"], Decimal("40.00"))
+
+    def test_breakdown_has_rate_groups(self):
+        s = self._summary()
+        keys = {(b["direction"], b["treatment"]) for b in s["breakdown"]}
+        self.assertIn(("SALES", "Standard rate"), keys)
+        self.assertIn(("SALES", "Outside the scope of VAT"), keys)
+        self.assertIn(("PURCHASE", "Standard rate"), keys)
