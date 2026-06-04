@@ -2656,3 +2656,51 @@ class ProductRecordTests(TestCase):
         body = self.client.get("/export/products.csv").content.decode()
         self.assertIn("product_type", body)
         self.assertIn("SKU-IMP1", body)
+
+
+class ProductDetailTests(TestCase):
+    def setUp(self):
+        from core.models import (OrgMembership, Location, InventoryMovement, PurchaseOrder,
+                                 PurchaseOrderLine, Supplier)
+        from core.services.inventory import apply_movement
+        from core.services.gl import post_customer_invoice
+        self.tenant = Tenant.objects.create(name="PD Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.loc = Location.objects.create(tenant=self.tenant, name="Main WH", type=Location.Type.WAREHOUSE)
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Globex")
+        self.product = Product.objects.create(tenant=self.tenant, sku="SKU-PD1", name="Widget",
+                                              sales_price=Decimal("20.00"), standard_cost=Decimal("8.00"),
+                                              preferred_supplier=self.supplier, reorder_level=Decimal("10"))
+        # opening stock + cost
+        apply_movement(tenant=self.tenant, product=self.product, location=self.loc,
+                       movement_type=InventoryMovement.MovementType.RECEIVE, qty_delta=Decimal("100"),
+                       ref_type="SEED", ref_id="X", unit_cost=Decimal("8.00"))
+        # a PO line (purchase + price history)
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-PD1", supplier=self.supplier)
+        PurchaseOrderLine.objects.create(po=po, product=self.product, ordered_qty=Decimal("50"), unit_cost=Decimal("7.50"))
+        # a sale
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=Customer.objects.create(tenant=self.tenant, name="C"), invoice_number="INV-PD1")
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.product, qty=Decimal("5"), unit_price=Decimal("20.00"), tax_code=self.std)
+        post_customer_invoice(inv)  # deducts 5 from stock + records sale
+        self.user = User.objects.create_user("pdu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="pdu", password="pw")
+
+    def test_detail_page_renders_all_sections(self):
+        resp = self.client.get(f"/products/{self.product.id}/")
+        self.assertEqual(resp.status_code, 200)
+        for needle in ["Stock by location", "Sales history", "Purchase history",
+                       "Price history", "Stock movements", "Suppliers",
+                       "INV-PD1", "PO-PD1", "Globex", "Main WH"]:
+            self.assertContains(resp, needle)
+
+    def test_detail_aggregates(self):
+        resp = self.client.get(f"/products/{self.product.id}/")
+        self.assertEqual(resp.context["qty_sold"], Decimal("5.00"))
+        self.assertEqual(resp.context["revenue"], Decimal("100.00"))
+        self.assertEqual(resp.context["qty_purchased"], Decimal("50.00"))
+        self.assertEqual(len(resp.context["price_history"]), 1)
+        # margin: 20 sales - 8 avg cost = 12
+        self.assertEqual(resp.context["p"].margin, Decimal("12.00"))
+        # on hand: 100 received - 5 sold = 95
+        self.assertEqual(resp.context["p"].on_hand_total, Decimal("95.00"))

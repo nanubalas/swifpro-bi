@@ -40,8 +40,8 @@
         <tbody>
           {% for p in products %}
           <tr>
-            <td class="fw-semibold">{{ p.sku }}</td>
-            <td>{{ p.name }}{% if p.brand %}<div class="text-muted small fw-normal">{{ p.brand }}</div>{% endif %}</td>
+            <td class="fw-semibold"><a class="text-decoration-none" href="{% url 'product_detail' p.id %}">{{ p.sku }}</a></td>
+            <td><a class="text-decoration-none text-reset" href="{% url 'product_detail' p.id %}">{{ p.name }}</a>{% if p.brand %}<div class="text-muted small fw-normal">{{ p.brand }}</div>{% endif %}</td>
             <td><span class="badge text-bg-light text-dark border">{{ p.get_product_type_display }}</span></td>
             <td class="small">{{ p.category|default:'-' }}</td>
             <td class="text-end">{{ p.sales_price|money:tenant.currency_code }}</td>

@@ -1640,7 +1640,7 @@ def product_create(request):
                                qty_delta=opening, ref_type="OPENING", ref_id=obj.sku,
                                notes="Opening stock", unit_cost=(obj.standard_cost or None))
             messages.success(request, "Product created.")
-            return redirect("product_list")
+            return redirect("product_detail", product_id=obj.id)
     else:
         form = ProductForm()
 
@@ -1665,7 +1665,7 @@ def product_edit(request, product_id):
                     tenant=tenant, code=barcode, defaults={"product": obj}
                 )
             messages.success(request, "Product updated.")
-            return redirect("product_list")
+            return redirect("product_detail", product_id=obj.id)
     else:
         initial = {}
         bc = obj.barcodes.order_by('id').first() if hasattr(obj, 'barcodes') else None
@@ -1676,6 +1676,48 @@ def product_edit(request, product_id):
     return render(request, "products/product_form.html", {
         "tenant": tenant, "form": form, "mode": "edit", "product": obj
     })
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES, ROLE_READONLY])
+def product_detail(request, product_id):
+    """Product profile: info, stock by location, sales & purchase history,
+    supplier info, margin, stock movements and price history."""
+    from core.models import (InventoryBalance, InventoryMovement, CustomerInvoiceLine,
+                             PurchaseOrderLine, ProductBarcode)
+    tenant = _get_default_tenant(request)
+    p = get_object_or_404(Product, id=product_id, tenant=tenant)
+
+    balances = list(InventoryBalance.objects.filter(tenant=tenant, product=p).select_related("location").order_by("location__name"))
+    movements = list(InventoryMovement.objects.filter(tenant=tenant, product=p).select_related("location").order_by("-created_at", "-id")[:30])
+    barcodes = list(ProductBarcode.objects.filter(tenant=tenant, product=p).values_list("code", flat=True))
+
+    sales_lines = list(CustomerInvoiceLine.objects.filter(invoice__tenant=tenant, product=p)
+                       .select_related("invoice", "invoice__customer")
+                       .order_by("-invoice__invoice_date")[:20])
+    qty_sold = sum((l.qty or Decimal("0.00") for l in sales_lines), Decimal("0.00"))
+    revenue = sum((l.line_total for l in sales_lines), Decimal("0.00"))
+
+    po_lines = list(PurchaseOrderLine.objects.filter(po__tenant=tenant, product=p)
+                    .select_related("po", "po__supplier").order_by("-po__created_at")[:20])
+    qty_purchased = sum((l.ordered_qty or Decimal("0.00") for l in po_lines), Decimal("0.00"))
+    price_history = [{"date": l.po.created_at.date(), "supplier": l.po.supplier.name,
+                      "ref": l.po.po_number, "unit_cost": l.unit_cost} for l in po_lines]
+
+    supplier_names, seen = [], set()
+    if p.preferred_supplier_id:
+        supplier_names.append((p.preferred_supplier.name, True)); seen.add(p.preferred_supplier_id)
+    for l in po_lines:
+        if l.po.supplier_id not in seen:
+            seen.add(l.po.supplier_id); supplier_names.append((l.po.supplier.name, False))
+
+    return render(request, "products/product_detail.html", {
+        "tenant": tenant, "p": p, "balances": balances, "movements": movements, "barcodes": barcodes,
+        "sales_lines": sales_lines, "qty_sold": qty_sold, "revenue": revenue,
+        "po_lines": po_lines, "qty_purchased": qty_purchased, "price_history": price_history,
+        "supplier_names": supplier_names,
+    })
+
 
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
