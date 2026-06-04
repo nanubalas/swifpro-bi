@@ -2200,3 +2200,82 @@ class SalesEditTests(TestCase):
         t.refresh_from_db()
         self.assertEqual(t.name, "New name")
         self.assertEqual(t.total, Decimal("180.00"))
+
+
+class SalesHousekeepingTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, SalesQuote, SalesQuoteLine, RecurringInvoice, RecurringInvoiceLine
+        import datetime
+        self.tenant = Tenant.objects.create(name="HK Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.user = User.objects.create_user("hku", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="hku", password="pw")
+
+    def test_expire_quotes(self):
+        from core.models import SalesQuote
+        from core.services import housekeeping
+        import datetime
+        past = SalesQuote.objects.create(tenant=self.tenant, customer=self.customer, quote_number="QUO-X1",
+                                         status=SalesQuote.Status.SENT, valid_until=datetime.date(2020, 1, 1))
+        future = SalesQuote.objects.create(tenant=self.tenant, customer=self.customer, quote_number="QUO-X2",
+                                           status=SalesQuote.Status.SENT, valid_until=datetime.date(2999, 1, 1))
+        n = housekeeping.expire_quotes(self.tenant)
+        self.assertEqual(n, 1)
+        past.refresh_from_db(); future.refresh_from_db()
+        self.assertEqual(past.status, "EXPIRED")
+        self.assertEqual(future.status, "SENT")
+
+    def test_run_for_tenant_throttled_once_per_day(self):
+        from core.services import housekeeping
+        r1 = housekeeping.run_for_tenant(self.tenant)
+        self.assertIsNotNone(r1)
+        r2 = housekeeping.run_for_tenant(self.tenant)  # same day -> skipped
+        self.assertIsNone(r2)
+
+    def test_run_for_tenant_generates_due_recurring(self):
+        from core.models import RecurringInvoice, RecurringInvoiceLine, CustomerInvoice
+        from core.services import housekeeping
+        import datetime
+        from django.utils import timezone
+        from core.services.recurring import add_months
+        start = add_months(timezone.localdate(), -2)
+        t = RecurringInvoice.objects.create(tenant=self.tenant, customer=self.customer, name="Retainer",
+                                            frequency="MONTHLY", interval=1, start_date=start, next_run_date=start, auto_issue=True)
+        RecurringInvoiceLine.objects.create(template=t, description="Svc", qty=Decimal("1"), unit_price=Decimal("100"), tax_code=self.std)
+        res = housekeeping.run_for_tenant(self.tenant, force=True)
+        self.assertGreaterEqual(res["generated"], 2)
+        self.assertTrue(CustomerInvoice.objects.filter(tenant=self.tenant).exists())
+
+    def test_quote_delete(self):
+        from core.models import SalesQuote, AuditLog
+        q = SalesQuote.objects.create(tenant=self.tenant, customer=self.customer, quote_number="QUO-D1", status=SalesQuote.Status.DRAFT)
+        resp = self.client.post(f"/quotes/{q.id}/delete/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(SalesQuote.objects.filter(id=q.id).exists())
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="QUOTE_DELETED").exists())
+
+    def test_converted_quote_cannot_be_deleted(self):
+        from core.models import SalesQuote
+        q = SalesQuote.objects.create(tenant=self.tenant, customer=self.customer, quote_number="QUO-D2", status=SalesQuote.Status.CONVERTED)
+        self.client.post(f"/quotes/{q.id}/delete/")
+        self.assertTrue(SalesQuote.objects.filter(id=q.id).exists())  # blocked
+
+    def test_order_delete_and_invoiced_block(self):
+        from core.models import CustomerOrder
+        draft = CustomerOrder.objects.create(tenant=self.tenant, customer=self.customer, order_number="SO-D1", status=CustomerOrder.Status.DRAFT)
+        self.client.post(f"/customer-orders/{draft.id}/delete/")
+        self.assertFalse(CustomerOrder.objects.filter(id=draft.id).exists())
+        invoiced = CustomerOrder.objects.create(tenant=self.tenant, customer=self.customer, order_number="SO-D2", status=CustomerOrder.Status.INVOICED)
+        self.client.post(f"/customer-orders/{invoiced.id}/delete/")
+        self.assertTrue(CustomerOrder.objects.filter(id=invoiced.id).exists())  # blocked
+
+    def test_management_command(self):
+        from django.core.management import call_command
+        from core.models import SalesQuote
+        import datetime
+        SalesQuote.objects.create(tenant=self.tenant, customer=self.customer, quote_number="QUO-C1",
+                                  status=SalesQuote.Status.SENT, valid_until=datetime.date(2020, 1, 1))
+        call_command("run_sales_housekeeping")
+        self.assertEqual(SalesQuote.objects.get(quote_number="QUO-C1").status, "EXPIRED")

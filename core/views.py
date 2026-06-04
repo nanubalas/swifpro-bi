@@ -272,6 +272,11 @@ def landing(request):
     if len(memberships) > 1 and not request.session.get(SESSION_TENANT_KEY):
         return redirect("select_org")
 
+    # Best-effort daily housekeeping: expire stale quotes, generate due
+    # recurring invoices (throttled to once per day per tenant).
+    from core.services import housekeeping
+    housekeeping.opportunistic(request)
+
     role = get_active_role(request)
     return redirect(default_landing_url(tenant, role))
 
@@ -2977,6 +2982,23 @@ def quote_to_invoice(request, quote_id):
     return redirect("quote_detail", quote_id=q.id)
 
 
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def quote_delete(request, quote_id):
+    tenant = _get_default_tenant(request)
+    q = get_object_or_404(SalesQuote, id=quote_id, tenant=tenant)
+    if request.method == "POST":
+        if q.status == SalesQuote.Status.CONVERTED:
+            messages.error(request, "Converted quotes can't be deleted - they're linked to an order or invoice.")
+            return redirect("quote_detail", quote_id=q.id)
+        number = q.quote_number
+        q.delete()
+        log_audit(action="QUOTE_DELETED", request=request, user=request.user, tenant=tenant, detail=number)
+        messages.success(request, f"Quote {number} deleted.")
+        return redirect("quote_list")
+    return redirect("quote_detail", quote_id=q.id)
+
+
 # ---- Customer sales orders ----
 
 @role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
@@ -3061,6 +3083,23 @@ def corder_to_invoice(request, order_id):
                   detail=f"{o.order_number} -> invoice {inv.invoice_number}")
         messages.success(request, f"Sales order {o.order_number} converted to invoice {inv.invoice_number} (draft).")
         return redirect("ar_invoice_detail", invoice_id=inv.id)
+    return redirect("corder_detail", order_id=o.id)
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def corder_delete(request, order_id):
+    tenant = _get_default_tenant(request)
+    o = get_object_or_404(CustomerOrder, id=order_id, tenant=tenant)
+    if request.method == "POST":
+        if o.status == CustomerOrder.Status.INVOICED:
+            messages.error(request, "Invoiced sales orders can't be deleted - they're linked to an invoice.")
+            return redirect("corder_detail", order_id=o.id)
+        number = o.order_number
+        o.delete()
+        log_audit(action="ORDER_DELETED", request=request, user=request.user, tenant=tenant, detail=number)
+        messages.success(request, f"Sales order {number} deleted.")
+        return redirect("corder_list")
     return redirect("corder_detail", order_id=o.id)
 
 
