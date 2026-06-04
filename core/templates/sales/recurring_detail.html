@@ -4,7 +4,6 @@
 {% block body %}
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
   <div class="d-flex align-items-center gap-2">
-    <a href="{% url 'recurring_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
     <div>
       <h2 class="fw-bold mb-0">{{ t.name }}</h2>
       <div class="text-muted">{{ t.customer.name }} &bull;
@@ -37,7 +36,7 @@
       <thead class="table-light"><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Price</th><th class="text-end">Line</th></tr></thead>
       <tbody>
         {% for l in t.lines.all %}
-        <tr><td>{{ l.description|default:l.product.name }}</td><td class="text-end">{{ l.qty|floatformat:2 }}</td>
+        <tr><td>{% if l.description %}{{ l.description }}{% elif l.product %}{{ l.product.name }}{% else %}-{% endif %}</td><td class="text-end">{{ l.qty|floatformat:2 }}</td>
           <td class="text-end">{{ l.unit_price|money:t.currency_code }}</td><td class="text-end">{{ l.line_total|money:t.currency_code }}</td></tr>
         {% endfor %}
       </tbody>

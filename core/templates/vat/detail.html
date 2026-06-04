@@ -4,7 +4,6 @@
 
 {% block body %}
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
-  <a href="{% url 'vat_index' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
   <h2 class="fw-bold mb-0">VAT Return</h2>
   {% if vr.status == 'SUBMITTED' %}<span class="badge text-bg-success">Submitted</span>{% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
   <span class="text-muted">{{ vr.period_from|date:'d M Y' }} - {{ vr.period_to|date:'d M Y' }}</span>

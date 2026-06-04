@@ -11,7 +11,7 @@
   <td style="width:55%">
     <div class="muted small">{% if cn.kind == 'SALES' %}Credit to{% else %}Credit from{% endif %}</div>
     <div><strong>{{ cn.party_name }}</strong></div>
-    {% if cn.customer_invoice or cn.supplier_invoice %}<div class="small muted">Against invoice {{ cn.customer_invoice.invoice_number|default:cn.supplier_invoice.invoice_number }}</div>{% endif %}
+    {% if cn.customer_invoice or cn.supplier_invoice %}<div class="small muted">Against invoice {% if cn.customer_invoice %}{{ cn.customer_invoice.invoice_number }}{% else %}{{ cn.supplier_invoice.invoice_number }}{% endif %}</div>{% endif %}
   </td>
   <td style="width:45%"></td>
 </tr></table>

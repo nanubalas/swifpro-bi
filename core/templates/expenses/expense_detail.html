@@ -4,7 +4,6 @@
 {% block body %}
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
   <div class="d-flex align-items-center gap-2">
-    <a href="{% url 'expense_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
     <div>
       <h2 class="fw-bold mb-0">{{ expense.payee }}</h2>
       <div class="text-muted">{{ expense.expense_date|date:'d M Y' }} -

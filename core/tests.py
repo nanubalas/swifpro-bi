@@ -2556,3 +2556,38 @@ class SupplierDedupPreferredTests(TestCase):
         resp = self.client.get(f"/suppliers/{s.id}/")
         skus = [p["product"].sku for p in resp.context["products_supplied"]]
         self.assertIn("SKU-PS1", skus)
+
+
+class DetailPageRenderRegressionTests(TestCase):
+    """Guards against |default: chains resolving attributes on None FKs."""
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Render Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.user = User.objects.create_user("rru", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="rru", password="pw")
+
+    def test_credit_note_detail_renders_when_linked_to_invoice(self):
+        from core.models import CreditNote, CreditNoteLine
+        from core.services.gl import post_customer_invoice, post_credit_note
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-R1")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="X", qty=Decimal("1"), unit_price=Decimal("100"), tax_code=self.std)
+        post_customer_invoice(inv)
+        cn = CreditNote.objects.create(tenant=self.tenant, kind=CreditNote.Kind.SALES, credit_note_number="CN-R1",
+                                       customer=self.customer, customer_invoice=inv)
+        CreditNoteLine.objects.create(credit_note=cn, description="Adj", qty=Decimal("1"), unit_amount=Decimal("10"), tax_code=self.std)
+        post_credit_note(cn)
+        self.assertEqual(self.client.get(f"/credit-notes/{cn.id}/").status_code, 200)
+        self.assertTrue(self.client.get(f"/credit-notes/{cn.id}/pdf/").content[:5] == b"%PDF-")
+
+    def test_recurring_detail_renders_with_productless_line(self):
+        from core.models import RecurringInvoice, RecurringInvoiceLine
+        import datetime
+        t = RecurringInvoice.objects.create(tenant=self.tenant, customer=self.customer, name="Retainer",
+                                            frequency="MONTHLY", interval=1, start_date=datetime.date(2026, 1, 1),
+                                            next_run_date=datetime.date(2026, 1, 1))
+        RecurringInvoiceLine.objects.create(template=t, product=None, description="Support retainer",
+                                            qty=Decimal("1"), unit_price=Decimal("300"), tax_code=self.std)
+        self.assertEqual(self.client.get(f"/recurring-invoices/{t.id}/").status_code, 200)

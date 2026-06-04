@@ -28,7 +28,7 @@
             <td>{% if n.kind == 'SALES' %}<span class="badge text-bg-info">Sales</span>{% else %}<span class="badge text-bg-secondary">Purchase</span>{% endif %}</td>
             <td>{{ n.party_name }}</td>
             <td class="text-end fw-semibold">{{ n.total|floatformat:2 }}</td>
-            <td class="small text-muted">{{ n.customer_invoice.invoice_number|default:n.supplier_invoice.invoice_number|default:'-' }}</td>
+            <td class="small text-muted">{% if n.customer_invoice %}{{ n.customer_invoice.invoice_number }}{% elif n.supplier_invoice %}{{ n.supplier_invoice.invoice_number }}{% else %}-{% endif %}</td>
             <td>{% if n.status == 'POSTED' %}<span class="badge text-bg-success">Posted</span>{% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}</td>
           </tr>
           {% empty %}

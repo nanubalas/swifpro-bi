@@ -2,7 +2,6 @@
 {% block title %}{% if is_edit %}Edit{% else %}New{% endif %} {{ doc_label }} - SwifPro BI{% endblock %}
 {% block body %}
 <div class="d-flex align-items-center gap-2 mb-4">
-  <a href="{{ list_url }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
   <h2 class="fw-bold mb-0">{% if is_edit %}Edit{% else %}New{% endif %} {{ doc_label|lower }}</h2>
 </div>
 
