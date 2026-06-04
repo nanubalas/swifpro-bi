@@ -319,8 +319,19 @@ class TaxCodeForm(TenantModelForm):
 class CustomerForm(TenantModelForm):
     class Meta:
         model = Customer
-        fields = ["name", "email", "phone", "vat_number", "billing_address"]
-        widgets = {"billing_address": forms.Textarea(attrs={"rows": 3})}
+        fields = ["name", "customer_type", "status", "contact_person", "email", "phone",
+                  "vat_number", "company_number", "billing_address", "shipping_address",
+                  "payment_terms_days", "credit_limit", "tags", "notes"]
+        widgets = {
+            "billing_address": forms.Textarea(attrs={"rows": 3}),
+            "shipping_address": forms.Textarea(attrs={"rows": 3}),
+            "notes": forms.Textarea(attrs={"rows": 3}),
+        }
+        help_texts = {
+            "payment_terms_days": "Days to pay. Leave blank to use the company default.",
+            "credit_limit": "0 = no credit limit.",
+            "tags": "Comma-separated, e.g. VIP, Reseller.",
+        }
 
 class CustomerInvoiceForm(TenantModelForm):
     action = forms.ChoiceField(

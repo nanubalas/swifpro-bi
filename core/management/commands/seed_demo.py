@@ -174,7 +174,12 @@ class Command(BaseCommand):
         Customer.objects.get_or_create(
             tenant=tenant, name="Bright Retail Ltd",
             defaults={"email": "ap@brightretail.example", "vat_number": "GB987654321",
-                      "billing_address": "10 High Street\nManchester\nM1 1AA"},
+                      "billing_address": "10 High Street\nManchester\nM1 1AA",
+                      "customer_type": Customer.Type.COMPANY, "contact_person": "Jane Bright",
+                      "company_number": "09876543", "phone": "+44 161 555 0123",
+                      "shipping_address": "Bright Retail Warehouse\nTrafford Park\nManchester\nM17 1AB",
+                      "payment_terms_days": 30, "credit_limit": Decimal("5000.00"),
+                      "tags": "VIP, Retail", "notes": "Key account - priority dispatch."},
         )
 
         # Purchase order (submitted) + shipment + lines
@@ -357,13 +362,31 @@ class Command(BaseCommand):
             td = timezone.timedelta
             am = recurring_service.add_months
 
-            # A few more customers so "Sales by customer" has variety.
-            def make_customer(name, email):
-                return Customer.objects.get_or_create(tenant=tenant, name=name, defaults={"email": email})[0]
+            # A few more customers (varied type/status/tags/credit) so the list,
+            # filters and "Sales by customer" all have variety.
+            def make_customer(name, email, **extra):
+                return Customer.objects.get_or_create(tenant=tenant, name=name, defaults={"email": email, **extra})[0]
 
-            northwind = make_customer("Northwind Traders", "ap@northwind.example")
-            meridian = make_customer("Meridian Components Ltd", "accounts@meridian.example")
-            caldera = make_customer("Caldera Studios", "hello@caldera.example")
+            northwind = make_customer("Northwind Traders", "ap@northwind.example",
+                                      customer_type=Customer.Type.TRADE, contact_person="Tom North",
+                                      phone="+44 113 555 0144", payment_terms_days=30,
+                                      credit_limit=Decimal("3000.00"), tags="Trade",
+                                      billing_address="22 Canal Road\nLeeds\nLS1 4AB")
+            meridian = make_customer("Meridian Components Ltd", "accounts@meridian.example",
+                                     customer_type=Customer.Type.WHOLESALE, contact_person="Priya Shah",
+                                     phone="+44 121 555 0188", vat_number="GB555111222",
+                                     payment_terms_days=45, credit_limit=Decimal("10000.00"),
+                                     tags="Wholesale, VIP", billing_address="Meridian House\nBirmingham\nB2 5TT")
+            caldera = make_customer("Caldera Studios", "hello@caldera.example",
+                                    customer_type=Customer.Type.INDIVIDUAL, contact_person="Sam Vale",
+                                    phone="+44 117 555 0166", tags="Creative",
+                                    billing_address="Studio 3\nBristol\nBS1 6QA")
+            # An inactive / on-hold example.
+            make_customer("Dormant Decor Co", "old@dormant.example",
+                          customer_type=Customer.Type.COMPANY, status=Customer.Status.INACTIVE, tags="Lapsed")
+            make_customer("Overdue Outfitters", "ar@overdue.example",
+                          customer_type=Customer.Type.TRADE, status=Customer.Status.ON_HOLD,
+                          credit_limit=Decimal("500.00"), tags="Trade", notes="On credit hold - chase payment.")
 
             # Two more products for richer "Sales by product".
             p4 = make_product("SKU-004", "Stratus Webcam HD", "22.00")

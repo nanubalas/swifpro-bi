@@ -2279,3 +2279,54 @@ class SalesHousekeepingTests(TestCase):
                                   status=SalesQuote.Status.SENT, valid_until=datetime.date(2020, 1, 1))
         call_command("run_sales_housekeeping")
         self.assertEqual(SalesQuote.objects.get(quote_number="QUO-C1").status, "EXPIRED")
+
+
+class CustomerRecordTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Cust Co")
+        self.user = User.objects.create_user("custu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="custu", password="pw")
+
+    def test_create_with_all_fields(self):
+        resp = self.client.post("/customers/new/", {
+            "name": "Acme Wholesale", "customer_type": "WHOLESALE", "status": "ACTIVE",
+            "contact_person": "Jo Bloggs", "email": "jo@acme.example", "phone": "+44 20 7946 0000",
+            "vat_number": "GB123456789", "company_number": "12345678",
+            "billing_address": "1 High St", "shipping_address": "Dock 4",
+            "payment_terms_days": "45", "credit_limit": "2500.00", "tags": "VIP, Reseller",
+            "notes": "Top account",
+        })
+        self.assertEqual(resp.status_code, 302)
+        c = Customer.objects.get(tenant=self.tenant, name="Acme Wholesale")
+        self.assertEqual(c.customer_type, "WHOLESALE")
+        self.assertEqual(c.payment_terms_days, 45)
+        self.assertEqual(c.credit_limit, Decimal("2500.00"))
+        self.assertEqual(c.tag_list, ["VIP", "Reseller"])
+
+    def test_outstanding_balance_and_credit_limit(self):
+        from core.services.gl import post_customer_invoice
+        std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        c = Customer.objects.create(tenant=self.tenant, name="Limited Co", credit_limit=Decimal("100.00"))
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=c, invoice_number="INV-CL1")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="X", qty=Decimal("1"), unit_price=Decimal("200.00"), tax_code=std)
+        post_customer_invoice(inv)  # 240 outstanding
+        self.assertEqual(c.outstanding_balance, Decimal("240.00"))
+        self.assertEqual(c.available_credit, Decimal("-140.00"))
+        self.assertTrue(c.is_over_limit)
+
+    def test_import_export_round_trip(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        csv = (b"name,customer_type,contact_person,email,phone,vat_number,company_number,"
+               b"billing_address,shipping_address,payment_terms_days,tags\n"
+               b"Imported Ltd,TRADE,Sam,sam@imp.example,123,GB1,1122,Addr,Ship,14,Trade\n")
+        resp = self.client.post("/customers/import/", {"file": SimpleUploadedFile("c.csv", csv, content_type="text/csv")})
+        self.assertEqual(resp.status_code, 200)
+        c = Customer.objects.get(tenant=self.tenant, name="Imported Ltd")
+        self.assertEqual(c.customer_type, "TRADE")
+        self.assertEqual(c.payment_terms_days, 14)
+        # export contains the new columns
+        body = self.client.get("/export/customers.csv").content.decode()
+        self.assertIn("customer_type", body)
+        self.assertIn("Imported Ltd", body)

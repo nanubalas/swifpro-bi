@@ -62,13 +62,24 @@ def import_customers(tenant, rows):
         if not name:
             errors.append((n, "name is required"))
             continue
-        _, was_created = Customer.objects.update_or_create(
-            tenant=tenant, name=name,
-            defaults={"email": (row.get("email") or "").strip() or None,
-                      "phone": (row.get("phone") or "").strip() or None,
-                      "vat_number": (row.get("vat_number") or "").strip() or None,
-                      "billing_address": (row.get("billing_address") or "").strip() or None},
-        )
+        ctype = (row.get("customer_type") or "COMPANY").strip().upper()
+        if ctype not in dict(Customer.Type.choices):
+            ctype = "COMPANY"
+        terms = (row.get("payment_terms_days") or "").strip()
+        defaults = {
+            "customer_type": ctype,
+            "contact_person": (row.get("contact_person") or "").strip() or None,
+            "email": (row.get("email") or "").strip() or None,
+            "phone": (row.get("phone") or "").strip() or None,
+            "vat_number": (row.get("vat_number") or "").strip() or None,
+            "company_number": (row.get("company_number") or "").strip() or None,
+            "billing_address": (row.get("billing_address") or "").strip() or None,
+            "shipping_address": (row.get("shipping_address") or "").strip() or None,
+            "tags": (row.get("tags") or "").strip() or None,
+        }
+        if terms.isdigit():
+            defaults["payment_terms_days"] = int(terms)
+        _, was_created = Customer.objects.update_or_create(tenant=tenant, name=name, defaults=defaults)
         created += was_created
         updated += (0 if was_created else 1)
     return _summary(created, updated, errors, len(rows))
@@ -109,7 +120,10 @@ def export_rows(tenant, kind):
             out.append([p.sku, p.name, p.uom, p.cost_method, p.standard_cost, barcode or ""])
     elif kind == "customers":
         for c in Customer.objects.filter(tenant=tenant).order_by("name"):
-            out.append([c.name, c.email or "", c.phone or "", c.vat_number or "", c.billing_address or ""])
+            out.append([c.name, c.customer_type, c.contact_person or "", c.email or "", c.phone or "",
+                        c.vat_number or "", c.company_number or "", c.billing_address or "",
+                        c.shipping_address or "", (c.payment_terms_days if c.payment_terms_days is not None else ""),
+                        c.tags or ""])
     elif kind == "suppliers":
         for s in Supplier.objects.filter(tenant=tenant).order_by("name"):
             out.append([s.name, s.email or "", s.phone or "", s.currency_code or "GBP"])
@@ -122,8 +136,12 @@ CONFIG = {
                   "sample": ["SKU-100", "Sample Widget", "each", "AVERAGE", "9.99", "5012345678900"],
                   "fn": import_products, "list_url": "/products/"},
     "customers": {"label": "Customers", "key": "name",
-                  "columns": ["name", "email", "phone", "vat_number", "billing_address"],
-                  "sample": ["Bright Retail Ltd", "ap@bright.example", "+44 20 7946 0000", "GB987654321", "10 High St, Manchester"],
+                  "columns": ["name", "customer_type", "contact_person", "email", "phone",
+                              "vat_number", "company_number", "billing_address", "shipping_address",
+                              "payment_terms_days", "tags"],
+                  "sample": ["Bright Retail Ltd", "COMPANY", "Jane Doe", "ap@bright.example",
+                             "+44 20 7946 0000", "GB987654321", "12345678", "10 High St, Manchester",
+                             "Unit 5, Trade Park, Manchester", "30", "VIP, Reseller"],
                   "fn": import_customers, "list_url": "/customers/"},
     "suppliers": {"label": "Suppliers", "key": "name",
                   "columns": ["name", "email", "phone", "currency_code"],

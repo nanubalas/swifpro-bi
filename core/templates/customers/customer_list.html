@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load money %}
 {% block title %}Customers - SwifPro BI{% endblock %}
 {% block body %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -18,14 +19,17 @@
     <div class="table-responsive">
       <table class="table table-hover align-middle mb-0">
         <thead class="table-light">
-          <tr><th>Name</th><th>Email</th><th>VAT No</th><th class="text-end">Actions</th></tr>
+          <tr><th>Name</th><th>Type</th><th>Contact</th><th>Status</th><th class="text-end">Outstanding</th><th class="text-end">Actions</th></tr>
         </thead>
         <tbody>
           {% for c in customers %}
           <tr>
-            <td class="fw-semibold">{{ c.name }}</td>
-            <td>{% if c.email %}{{ c.email }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if c.vat_number %}{{ c.vat_number }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td class="fw-semibold">{{ c.name }}{% if c.tag_list %} {% for t in c.tag_list %}<span class="badge text-bg-light text-dark border ms-1">{{ t }}</span>{% endfor %}{% endif %}
+              <div class="text-muted small fw-normal">{{ c.email|default:'' }}</div></td>
+            <td><span class="badge text-bg-secondary">{{ c.get_customer_type_display }}</span></td>
+            <td class="small">{{ c.contact_person|default:'-' }}</td>
+            <td>{% if c.status == 'ACTIVE' %}<span class="badge text-bg-success">Active</span>{% elif c.status == 'ON_HOLD' %}<span class="badge text-bg-warning">On hold</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+            <td class="text-end">{{ c.outstanding_balance|money:tenant.currency_code }}{% if c.is_over_limit %} <span class="badge text-bg-danger" title="Over credit limit">!</span>{% endif %}</td>
             <td class="text-end">
               <div class="btn-group">
                 <a class="btn btn-sm btn-outline-secondary" href="{% url 'customer_statement' c.id %}">Statement</a>
@@ -34,7 +38,7 @@
             </td>
           </tr>
           {% empty %}
-          <tr><td colspan="4" class="text-center text-muted py-5">No customers yet.</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-5">No customers yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>

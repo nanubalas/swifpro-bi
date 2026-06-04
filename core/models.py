@@ -1045,18 +1045,68 @@ class TaxCode(models.Model):
 
 
 class Customer(models.Model):
+    class Type(models.TextChoices):
+        INDIVIDUAL = "INDIVIDUAL", "Individual"
+        COMPANY = "COMPANY", "Company"
+        TRADE = "TRADE", "Trade customer"
+        WHOLESALE = "WHOLESALE", "Wholesale customer"
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        INACTIVE = "INACTIVE", "Inactive"
+        ON_HOLD = "ON_HOLD", "On hold"
+
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     name = models.CharField(max_length=200)
+    customer_type = models.CharField(max_length=12, choices=Type.choices, default=Type.COMPANY)
+    contact_person = models.CharField(max_length=200, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=50, blank=True, null=True)
     vat_number = models.CharField(max_length=50, blank=True, null=True)
+    company_number = models.CharField(max_length=50, blank=True, null=True)
     billing_address = models.TextField(blank=True, null=True)
+    shipping_address = models.TextField(blank=True, null=True)
+    # null payment terms -> fall back to the company default.
+    payment_terms_days = models.PositiveSmallIntegerField(blank=True, null=True)
+    credit_limit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))  # 0 = no limit
+    notes = models.TextField(blank=True, null=True)
+    tags = models.CharField(max_length=255, blank=True, null=True)  # comma-separated
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         unique_together = ("tenant", "name")
 
     def __str__(self):
         return self.name
+
+    @property
+    def tag_list(self):
+        return [t.strip() for t in (self.tags or "").split(",") if t.strip()]
+
+    @property
+    def outstanding_balance(self):
+        """Total still owed across the customer's live (issued/sent) invoices."""
+        from decimal import Decimal as _D
+        total = _D("0.00")
+        for inv in CustomerInvoice.objects.filter(tenant=self.tenant, customer=self,
+                                                   status__in=CustomerInvoice.ISSUED_STATES).prefetch_related(
+                "lines", "lines__tax_code", "payment_allocations", "credit_notes"):
+            out = inv.outstanding
+            if out > _D("0.00"):
+                total += out
+        return total
+
+    @property
+    def available_credit(self):
+        if not self.credit_limit or self.credit_limit <= Decimal("0.00"):
+            return None  # no limit set
+        return self.credit_limit - self.outstanding_balance
+
+    @property
+    def is_over_limit(self):
+        ac = self.available_credit
+        return ac is not None and ac < Decimal("0.00")
 
 
 class CustomerInvoice(models.Model):
