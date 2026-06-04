@@ -1563,3 +1563,59 @@ class VatEngineTests(TestCase):
         self.assertIn(("SALES", "Standard rate"), keys)
         self.assertIn(("SALES", "Outside the scope of VAT"), keys)
         self.assertIn(("PURCHASE", "Standard rate"), keys)
+
+
+class VatUiAuditExportTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="VAT UI Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-U1")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="Item", qty=Decimal("1"), unit_price=Decimal("1000.00"), tax_code=self.std)
+        post_customer_invoice(inv)
+        self.admin = User.objects.create_user("vuadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="vuadmin", password="pw")
+
+    def test_vat_records_page_renders(self):
+        resp = self.client.get("/vat/records/?from=2000-01-01&to=2100-01-01")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "INV-U1")
+
+    def test_save_return_audited(self):
+        from core.models import AuditLog
+        resp = self.client.post("/vat/save/", {"from": "2000-01-01", "to": "2100-01-01"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="VAT_RETURN_SAVED").exists())
+
+    def test_submit_return_audited(self):
+        from core.models import AuditLog, VatReturn
+        self.client.post("/vat/save/", {"from": "2000-01-01", "to": "2100-01-01"})
+        vr = VatReturn.objects.get(tenant=self.tenant)
+        self.client.post(f"/vat/{vr.id}/submit/")
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="VAT_RETURN_SUBMITTED").exists())
+
+    def test_vat_exports(self):
+        for k in ("vat-return", "vat-transactions"):
+            resp = self.client.get(f"/finance/export/{k}.csv?from=2000-01-01&to=2100-01-01")
+            self.assertEqual(resp.status_code, 200, k)
+            self.assertEqual(resp["Content-Type"], "text/csv")
+        # the return export contains the box labels
+        body = self.client.get("/finance/export/vat-return.csv?from=2000-01-01&to=2100-01-01").content.decode()
+        self.assertIn("Net VAT to pay / reclaim", body)
+
+    def test_vat_settings_change_audited(self):
+        from core.models import AuditLog
+        data = {
+            "name": self.tenant.name, "legal_name": "VAT UI Co Ltd", "business_type": "LTD",
+            "vat_number": "GB123456789", "vat_registered": "on",
+            "address_line1": "1 High St", "address_city": "Manchester", "address_postcode": "M1 2AB",
+            "address_country": "United Kingdom", "billing_same_as_business": "on", "billing_country": "United Kingdom",
+            "email": "ops@vatui.test", "phone": "+44 20 7946 0000",
+            "currency_code": "GBP", "country": "United Kingdom", "timezone": "Europe/London",
+            "financial_year_start_month": "4", "default_payment_terms_days": "30", "po_approval_threshold": "0",
+        }
+        resp = self.client.post("/settings/tenant/", data)
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="VAT_SETTINGS_CHANGED").exists())

@@ -122,6 +122,7 @@ NAV = [
         ("Bank Reconciliation", "/bank/reconcile/", "check2-square", {ADMIN, ACCOUNTANT, FINANCE}),
         ("Tax Codes (VAT)", "/tax-codes/", "percent", {ADMIN, ACCOUNTANT, FINANCE}),
         ("VAT Returns (MTD)", "/vat/", "file-earmark-spreadsheet", {ADMIN, ACCOUNTANT, FINANCE}),
+        ("VAT Records", "/vat/records/", "card-checklist", {ADMIN, ACCOUNTANT, FINANCE}),
         ("Journal", "/gl/journal/", "journal-text", {ADMIN, ACCOUNTANT, FINANCE}),
         ("Chart of Accounts", "/gl/accounts/", "bank", {ADMIN, ACCOUNTANT, FINANCE}),
     ]),

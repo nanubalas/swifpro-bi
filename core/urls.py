@@ -187,6 +187,7 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
 
     # VAT return (MTD)
     path("vat/", views.vat_index, name="vat_index"),
+    path("vat/records/", views.vat_records, name="vat_records"),
     path("vat/save/", views.vat_save, name="vat_save"),
     path("vat/<int:vr_id>/", views.vat_detail, name="vat_detail"),
     path("vat/<int:vr_id>/submit/", views.vat_submit, name="vat_submit"),

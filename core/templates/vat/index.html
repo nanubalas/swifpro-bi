@@ -6,8 +6,9 @@
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
   <div>
     <h2 class="fw-bold mb-1">VAT Returns (MTD)</h2>
-    <div class="text-muted">Compute the 9-box return from your issued and posted invoices.</div>
+    <div class="text-muted">Computed from every sales invoice, bill, expense and credit note in the period.</div>
   </div>
+  <a class="btn btn-outline-secondary" href="{% url 'vat_records' %}"><i class="bi bi-card-checklist me-1"></i> VAT records</a>
 </div>
 
 <div class="alert alert-info d-flex align-items-center">
@@ -34,6 +35,14 @@
 
     {% if preview %}
     <hr>
+    <h6 class="fw-bold mb-2">VAT summary</h6>
+    <div class="row g-3 mb-3">
+      <div class="col-md-4 col-xl"><div class="card stat-card p-3"><div class="text-muted small">Sales excl. VAT</div><div class="fs-5 fw-bold">{{ preview.summary.total_sales_ex_vat|money:tenant.currency_code }}</div></div></div>
+      <div class="col-md-4 col-xl"><div class="card stat-card p-3"><div class="text-muted small">VAT on sales</div><div class="fs-5 fw-bold">{{ preview.summary.vat_on_sales|money:tenant.currency_code }}</div></div></div>
+      <div class="col-md-4 col-xl"><div class="card stat-card p-3"><div class="text-muted small">Purchases excl. VAT</div><div class="fs-5 fw-bold">{{ preview.summary.total_purchases_ex_vat|money:tenant.currency_code }}</div></div></div>
+      <div class="col-md-4 col-xl"><div class="card stat-card p-3"><div class="text-muted small">VAT reclaimable</div><div class="fs-5 fw-bold">{{ preview.summary.vat_reclaimable|money:tenant.currency_code }}</div></div></div>
+      <div class="col-md-4 col-xl"><div class="card stat-card p-3"><div class="text-muted small">Net VAT {% if preview.summary.net_vat < 0 %}reclaimable{% else %}payable{% endif %}</div><div class="fs-5 fw-bold">{{ preview.summary.net_vat|money:tenant.currency_code }}</div></div></div>
+    </div>
     <div class="row">
       <div class="col-lg-8">
         <table class="table align-middle mb-0">
@@ -49,7 +58,24 @@
             <tr><td>Box 9 - EU acquisitions</td><td class="text-end">{{ preview.box9_eu_acquisitions|money:tenant.currency_code }}</td></tr>
           </tbody>
         </table>
-        <div class="text-muted small mt-2">{{ preview.sales_count }} sales invoice(s), {{ preview.purchases_count }} purchase invoice(s) in period.</div>
+        <div class="text-muted small mt-2">{{ preview.summary.record_count }} VAT line(s) in period.</div>
+
+        {% if preview.summary.breakdown %}
+        <h6 class="fw-bold mt-4 mb-2">Breakdown by rate</h6>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light"><tr><th></th><th>Treatment</th><th class="text-end">Net</th><th class="text-end">VAT</th></tr></thead>
+            <tbody>
+              {% for b in preview.summary.breakdown %}
+              <tr><td>{% if b.direction == 'SALES' %}<span class="badge text-bg-info">Sales</span>{% else %}<span class="badge text-bg-secondary">Purchases</span>{% endif %}</td>
+                <td>{{ b.treatment }}</td>
+                <td class="text-end">{{ b.net|money:tenant.currency_code }}</td>
+                <td class="text-end">{{ b.vat|money:tenant.currency_code }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
       </div>
       <div class="col-lg-4">
         <form method="post" action="{% url 'vat_save' %}">
@@ -58,6 +84,18 @@
           <input type="hidden" name="to" value="{{ date_to|date:'Y-m-d' }}">
           <button class="btn btn-primary w-100"><i class="bi bi-save me-1"></i> Save as draft return</button>
         </form>
+        {% if 'export_data' in perms %}
+        <div class="btn-group w-100 mt-2">
+          <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-download me-1"></i> Export report</button>
+          <ul class="dropdown-menu w-100">
+            <li><a class="dropdown-item" href="{% url 'finance_export' 'vat-return' %}?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}">Return (CSV)</a></li>
+            <li><a class="dropdown-item" href="{% url 'finance_export' 'vat-return' %}?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&format=xlsx">Return (Excel)</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="{% url 'finance_export' 'vat-transactions' %}?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}">Records (CSV)</a></li>
+            <li><a class="dropdown-item" href="{% url 'finance_export' 'vat-transactions' %}?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&format=xlsx">Records (Excel)</a></li>
+          </ul>
+        </div>
+        {% endif %}
       </div>
     </div>
     {% endif %}

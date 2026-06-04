@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}VAT Records - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small"><a href="{% url 'vat_index' %}" class="text-decoration-none">VAT</a> / Digital records</div>
+    <h2 class="fw-bold mb-0">VAT Records</h2>
+    <div class="text-muted">Every VAT-bearing transaction line behind the return - the digital audit trail.</div>
+  </div>
+  <div class="d-flex align-items-end gap-2">
+    <form method="get" class="d-flex align-items-end gap-2">
+      <div><label class="form-label mb-1">From</label><input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+      <div><label class="form-label mb-1">To</label><input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+      <button class="btn btn-primary btn-sm">Apply</button>
+    </form>
+    {% include "_export_menu.html" with export_kind="vat-transactions" %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>Date</th><th>Document</th><th>Reference</th><th>Party</th><th>Treatment</th>
+              <th class="text-end">Rate</th><th class="text-end">Net</th><th class="text-end">VAT</th><th>In boxes</th></tr>
+        </thead>
+        <tbody>
+          {% for r in records %}
+          <tr>
+            <td class="text-muted small">{{ r.date|date:'d M Y' }}</td>
+            <td>{{ r.doc_type }}{% if r.direction == 'SALES' %} <span class="badge text-bg-info">Sales</span>{% else %} <span class="badge text-bg-secondary">Purchase</span>{% endif %}</td>
+            <td class="small">{{ r.ref }}</td>
+            <td>{{ r.party }}</td>
+            <td class="small">{{ r.treatment }}</td>
+            <td class="text-end">{{ r.rate|floatformat:2 }}</td>
+            <td class="text-end {% if r.net < 0 %}text-danger{% endif %}">{{ r.net|money:tenant.currency_code }}</td>
+            <td class="text-end {% if r.vat < 0 %}text-danger{% endif %}">{{ r.vat|money:tenant.currency_code }}</td>
+            <td>{% if r.in_boxes %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-dash text-muted" title="Outside the scope - excluded"></i>{% endif %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="9" class="text-center text-muted py-5">No VAT transactions in this period.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="text-muted small mt-2">{{ records|length }} line(s). Outside-the-scope lines are excluded from boxes 6 and 7.</div>
+  </div>
+</div>
+{% endblock %}

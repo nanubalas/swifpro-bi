@@ -502,6 +502,34 @@ def _finance_export_data(tenant, kind, date_from, date_to, as_of):
                 for t in BankTransaction.objects.filter(tenant=tenant).select_related("matched_payment", "matched_expense")]
         return "bank-transactions.csv", cols, rows
 
+    if kind == "vat-return":
+        from core.services import vat as vat_svc
+        b = vat_svc.compute_vat_return(tenant, date_from, date_to)
+        cols = ["Box", "Description", "Amount"]
+        labels = [
+            ("1", "VAT due on sales", b["box1_vat_due_sales"]),
+            ("2", "VAT due on acquisitions", b["box2_vat_due_acquisitions"]),
+            ("3", "Total VAT due", b["box3_total_vat_due"]),
+            ("4", "VAT reclaimed on purchases", b["box4_vat_reclaimed"]),
+            ("5", "Net VAT to pay / reclaim", b["box5_net_vat"]),
+            ("6", "Total sales ex VAT", b["box6_total_sales_ex_vat"]),
+            ("7", "Total purchases ex VAT", b["box7_total_purchases_ex_vat"]),
+            ("8", "EU supplies", b["box8_eu_supplies"]),
+            ("9", "EU acquisitions", b["box9_eu_acquisitions"]),
+        ]
+        rows = [[bx, desc, money(amt)] for bx, desc, amt in labels]
+        return f"vat-return-{date_from}-to-{date_to}.csv", cols, rows
+
+    if kind == "vat-transactions":
+        from core.services import vat as vat_svc
+        cols = ["Date", "Document", "Direction", "Reference", "Party", "Description",
+                "Treatment", "Rate", "Net", "VAT", "In VAT boxes"]
+        rows = [[r["date"], r["doc_type"], r["direction"], r["ref"], r["party"], r["description"],
+                 r["treatment"], f"{r['rate']:.4f}", money(r["net"]), money(r["vat"]),
+                 "Yes" if r["in_boxes"] else "No"]
+                for r in vat_svc.vat_transactions(tenant, date_from, date_to)]
+        return f"vat-records-{date_from}-to-{date_to}.csv", cols, rows
+
     return None
 
 
@@ -512,7 +540,7 @@ def finance_export(request, kind):
     as_of = _parse_date(request.GET.get("as_of")) or _parse_date(request.GET.get("to")) or timezone.localdate()
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
-    if kind in ("profit-and-loss", "cash-flow") and not date_from and not date_to:
+    if kind in ("profit-and-loss", "cash-flow", "vat-return", "vat-transactions") and not date_from and not date_to:
         date_from, date_to = reports_service.current_financial_year(tenant)
     result = _finance_export_data(tenant, kind, date_from, date_to, as_of)
     if result is None:
@@ -1959,9 +1987,15 @@ def settings_tenant(request):
         # your app already uses needs_setup state
         return redirect("/admin/")
 
+    # Snapshot VAT settings before binding: a ModelForm mutates its instance
+    # during is_valid(), so capture the originals from the DB first.
+    vat_before = (tenant.vat_registered, tenant.vat_number)
     form = TenantSettingsForm(request.POST or None, request.FILES or None, instance=tenant)
     if request.method == "POST" and form.is_valid():
-        form.save()
+        obj = form.save()
+        if (obj.vat_registered, obj.vat_number) != vat_before:
+            log_audit(action="VAT_SETTINGS_CHANGED", request=request, user=request.user, tenant=tenant,
+                      detail=f"VAT registered={obj.vat_registered}, number={obj.vat_number or '-'}")
         messages.success(request, "Company profile updated.")
         return redirect("settings_tenant")
 
@@ -3236,6 +3270,8 @@ def vat_save(request):
         messages.error(request, "Please provide a valid period (from / to).")
         return redirect("vat_index")
     vr = vat_service.save_vat_return(tenant, date_from, date_to)
+    log_audit(action="VAT_RETURN_SAVED", request=request, user=request.user, tenant=tenant,
+              detail=f"{date_from} to {date_to}: net VAT {vr.box5_net_vat}")
     messages.success(request, "VAT return saved as draft.")
     return redirect("vat_detail", vr_id=vr.id)
 
@@ -3254,10 +3290,30 @@ def vat_submit(request, vr_id):
     vr = get_object_or_404(VatReturn, id=vr_id, tenant=tenant)
     if request.method == "POST":
         vat_service.submit_vat_return(vr, user=request.user)
+        log_audit(action="VAT_RETURN_SUBMITTED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{vr.period_from} to {vr.period_to} ({vr.hmrc_reference})")
         messages.warning(
             request,
             "Return marked submitted locally. Live HMRC MTD filing is not yet "
             "connected (needs HMRC credentials) - reference is a local stub.",
         )
     return redirect("vat_detail", vr_id=vr.id)
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def vat_records(request):
+    """Digital VAT records: every VAT-bearing transaction line in the period
+    (the audit trail behind the return)."""
+    tenant = _get_default_tenant(request)
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    if not date_from and not date_to:
+        date_from, date_to = reports_service.current_financial_year(tenant)
+    elif not date_to:
+        date_to = timezone.localdate()
+    records = vat_service.vat_transactions(tenant, date_from, date_to)
+    return render(request, "vat/records.html", {
+        "tenant": tenant, "records": records, "date_from": date_from, "date_to": date_to,
+        "export_qs": f"?from={date_from}&to={date_to}",
+    })
 

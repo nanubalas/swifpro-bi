@@ -39,6 +39,10 @@
               {% elif log.action == 'USER_REACTIVATED' %}<span class="badge text-bg-success">User reactivated</span>
               {% elif log.action == 'PASSWORD_CHANGED' %}<span class="badge text-bg-info">Password changed</span>
               {% elif log.action == 'DATA_EXPORTED' %}<span class="badge text-bg-secondary">Data exported</span>
+              {% elif log.action == 'VAT_RATE_CHANGED' %}<span class="badge text-bg-info">VAT rate changed</span>
+              {% elif log.action == 'VAT_SETTINGS_CHANGED' %}<span class="badge text-bg-info">VAT settings changed</span>
+              {% elif log.action == 'VAT_RETURN_SAVED' %}<span class="badge text-bg-info">VAT return saved</span>
+              {% elif log.action == 'VAT_RETURN_SUBMITTED' %}<span class="badge text-bg-success">VAT return submitted</span>
               {% else %}<span class="badge text-bg-secondary">{{ log.action }}</span>{% endif %}
             </td>
             <td>{{ log.username|default:'-' }}</td>
