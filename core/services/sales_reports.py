@@ -55,6 +55,66 @@ def sales_by_customer(tenant, date_from, date_to):
             "grand_total": sum((r["total"] for r in rows), ZERO)}
 
 
+def _pct(margin, revenue):
+    if revenue and revenue != ZERO:
+        return (margin / revenue * Decimal("100")).quantize(Decimal("0.1"))
+    return ZERO
+
+
+def profitability(tenant, date_from, date_to):
+    """Gross margin (revenue - COGS) by product and by customer for the period.
+
+    Revenue is the net (ex-VAT) of issued invoice lines. COGS is the costed value
+    of the SALE inventory movements posted for those invoices, so margin reflects
+    moving-average / FIFO / standard cost consistently with the GL. Service or
+    description-only lines carry no COGS (100% margin)."""
+    from core.models import InventoryMovement
+    invoices = list(_invoices(tenant, date_from, date_to))
+    inv_by_number = {i.invoice_number: i for i in invoices}
+
+    # COGS from SALE movements tied to these invoices.
+    cogs_by_product, cogs_by_customer = {}, {}
+    movements = (InventoryMovement.objects
+                 .filter(tenant=tenant, movement_type="SALE", ref_type="AR_INVOICE",
+                         ref_id__in=list(inv_by_number.keys()))
+                 .select_related("product"))
+    for m in movements:
+        cost = -(m.value or ZERO)
+        cogs_by_product[m.product_id] = cogs_by_product.get(m.product_id, ZERO) + cost
+        inv = inv_by_number.get(m.ref_id)
+        if inv is not None:
+            cogs_by_customer[inv.customer_id] = cogs_by_customer.get(inv.customer_id, ZERO) + cost
+
+    # Revenue by product + customer.
+    prod, cust = {}, {}
+    for inv in invoices:
+        cb = cust.setdefault(inv.customer_id, {"name": inv.customer.name, "revenue": ZERO})
+        for l in inv.lines.all():
+            cb["revenue"] += l.line_total
+            if l.product_id:
+                pb = prod.setdefault(l.product_id, {"key": l.product.sku, "name": l.product.name, "revenue": ZERO})
+                pb["revenue"] += l.line_total
+
+    def finish(buckets, cogs_map):
+        rows = []
+        for pid, b in buckets.items():
+            cogs = cogs_map.get(pid, ZERO)
+            margin = b["revenue"] - cogs
+            rows.append({**b, "cogs": cogs, "margin": margin, "margin_pct": _pct(margin, b["revenue"])})
+        rows.sort(key=lambda r: r["margin"], reverse=True)
+        return rows
+
+    by_product = finish(prod, cogs_by_product)
+    by_customer = finish(cust, cogs_by_customer)
+    totals = {
+        "revenue": sum((r["revenue"] for r in by_customer), ZERO),
+        "cogs": sum((r["cogs"] for r in by_customer), ZERO),
+    }
+    totals["margin"] = totals["revenue"] - totals["cogs"]
+    totals["margin_pct"] = _pct(totals["margin"], totals["revenue"])
+    return {"by_product": by_product, "by_customer": by_customer, "totals": totals}
+
+
 def sales_by_channel(tenant, date_from, date_to):
     """Direct customer invoices plus posted channel (ecommerce) orders, grouped
     by channel."""

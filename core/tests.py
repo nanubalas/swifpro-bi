@@ -3064,6 +3064,56 @@ class PurchaseRequisitionTests(TestCase):
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
 
 
+class ProfitabilityReportTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="Profit Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="PF1", name="Widget")
+        apply_movement(tenant=self.tenant, product=self.prod, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("100"), ref_type="SEED", ref_id="1",
+                       unit_cost=Decimal("6.00"))
+        self.cust = Customer.objects.create(tenant=self.tenant, name="Acme")
+        self.user = User.objects.create_user("pfu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="pfu", password="pw")
+
+    def _sell(self, qty, price):
+        from core.services.gl import post_customer_invoice
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust,
+                                             invoice_number=f"INV-PF-{qty}-{price}")
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal(qty),
+                                           unit_price=Decimal(price), tax_code=self.std)
+        post_customer_invoice(inv)  # deducts stock + posts COGS
+        return inv
+
+    def test_margin_by_product_and_customer(self):
+        from core.services import sales_reports
+        from django.utils import timezone
+        from datetime import timedelta
+        self._sell("10", "10.00")  # revenue 100, COGS 60, margin 40
+        d_from = timezone.localdate() - timedelta(days=1)
+        d_to = timezone.localdate() + timedelta(days=1)
+        data = sales_reports.profitability(self.tenant, d_from, d_to)
+        prow = data["by_product"][0]
+        self.assertEqual(prow["revenue"], Decimal("100.00"))
+        self.assertEqual(prow["cogs"], Decimal("60.00"))
+        self.assertEqual(prow["margin"], Decimal("40.00"))
+        self.assertEqual(prow["margin_pct"], Decimal("40.0"))
+        crow = data["by_customer"][0]
+        self.assertEqual(crow["margin"], Decimal("40.00"))
+        self.assertEqual(data["totals"]["margin"], Decimal("40.00"))
+
+    def test_report_page_renders(self):
+        self._sell("5", "12.00")
+        resp = self.client.get("/sales/reports/profitability/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Profitability")
+        self.assertContains(resp, "Widget")
+
+
 class DunningReminderTests(TestCase):
     def setUp(self):
         from datetime import timedelta

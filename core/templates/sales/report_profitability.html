@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Profitability - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small"><a href="{% url 'sales_reports_index' %}" class="text-decoration-none">Sales reports</a> / Profitability</div>
+    <h2 class="fw-bold mb-0">Profitability</h2>
+    <div class="text-muted small">Gross margin = revenue (ex-VAT) − cost of goods sold.</div>
+  </div>
+  <form method="get" class="d-flex align-items-end gap-2">
+    <div><label class="form-label mb-1">From</label><input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <div><label class="form-label mb-1">To</label><input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <button class="btn btn-primary btn-sm">Apply</button>
+  </form>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4"><div class="card-soft p-3"><div class="text-muted small">Revenue</div><div class="fs-4 fw-bold">{{ data.totals.revenue|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-4"><div class="card-soft p-3"><div class="text-muted small">COGS</div><div class="fs-4 fw-bold">{{ data.totals.cogs|money:tenant.currency_code }}</div></div></div>
+  <div class="col-md-4"><div class="card-soft p-3"><div class="text-muted small">Gross margin</div><div class="fs-4 fw-bold">{{ data.totals.margin|money:tenant.currency_code }} <span class="fs-6 text-muted">({{ data.totals.margin_pct }}%)</span></div></div></div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h6 class="fw-bold mb-3">By product</h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light"><tr><th>Product</th><th class="text-end">Revenue</th><th class="text-end">COGS</th><th class="text-end">Margin</th><th class="text-end">%</th></tr></thead>
+          <tbody>
+            {% for r in data.by_product %}
+            <tr>
+              <td>{{ r.name }} <span class="text-muted small">{{ r.key }}</span></td>
+              <td class="text-end">{{ r.revenue|money:tenant.currency_code }}</td>
+              <td class="text-end">{{ r.cogs|money:tenant.currency_code }}</td>
+              <td class="text-end fw-semibold {% if r.margin < 0 %}text-danger{% endif %}">{{ r.margin|money:tenant.currency_code }}</td>
+              <td class="text-end {% if r.margin < 0 %}text-danger{% endif %}">{{ r.margin_pct }}%</td>
+            </tr>
+            {% empty %}<tr><td colspan="5" class="text-center text-muted py-4">No product sales in this period.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h6 class="fw-bold mb-3">By customer</h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light"><tr><th>Customer</th><th class="text-end">Revenue</th><th class="text-end">COGS</th><th class="text-end">Margin</th><th class="text-end">%</th></tr></thead>
+          <tbody>
+            {% for r in data.by_customer %}
+            <tr>
+              <td>{{ r.name }}</td>
+              <td class="text-end">{{ r.revenue|money:tenant.currency_code }}</td>
+              <td class="text-end">{{ r.cogs|money:tenant.currency_code }}</td>
+              <td class="text-end fw-semibold {% if r.margin < 0 %}text-danger{% endif %}">{{ r.margin|money:tenant.currency_code }}</td>
+              <td class="text-end {% if r.margin < 0 %}text-danger{% endif %}">{{ r.margin_pct }}%</td>
+            </tr>
+            {% empty %}<tr><td colspan="5" class="text-center text-muted py-4">No sales in this period.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

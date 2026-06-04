@@ -4320,6 +4320,17 @@ def report_sales_by_channel(request):
         "export_kind": "sales-by-channel", "export_qs": f"?from={date_from}&to={date_to}"})
 
 
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def report_profitability(request):
+    """Gross-margin report: revenue - COGS by product and by customer."""
+    tenant = _get_default_tenant(request)
+    date_from, date_to = _sales_period(request, tenant)
+    from core.services import sales_reports
+    data = sales_reports.profitability(tenant, date_from, date_to)
+    return render(request, "sales/report_profitability.html", {
+        "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to})
+
+
 # ============================
 # General Ledger
 # ============================

@@ -143,6 +143,7 @@ NAV = [
         ("Stock Valuation", "/reports/stock-valuation/", "box-seam", {ADMIN, ACCOUNTANT, MANAGER, WAREHOUSE, PURCHASING, READONLY}),
         ("Aged Debtors", "/reports/aged-receivables/", "cash-coin", {ADMIN, ACCOUNTANT, FINANCE, READONLY}),
         ("Aged Creditors", "/reports/aged-payables/", "credit-card", {ADMIN, ACCOUNTANT, FINANCE, READONLY}),
+        ("Profitability", "/sales/reports/profitability/", "percent", {ADMIN, ACCOUNTANT, MANAGER, FINANCE, READONLY}),
     ]),
     ("Administration", [
         ("Setup & Onboarding", "/onboarding/", "rocket-takeoff", {ADMIN}),

@@ -152,6 +152,7 @@ urlpatterns = [
     path("sales/reports/by-product/", views.report_sales_by_product, name="report_sales_by_product"),
     path("sales/reports/by-customer/", views.report_sales_by_customer, name="report_sales_by_customer"),
     path("sales/reports/by-channel/", views.report_sales_by_channel, name="report_sales_by_channel"),
+    path("sales/reports/profitability/", views.report_profitability, name="report_profitability"),
 
     # Sales Orders (channel/ecommerce)
     path("sales-orders/", views.sales_order_list, name="sales_order_list"),
