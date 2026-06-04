@@ -71,6 +71,10 @@ class Tenant(models.Model):
     # to the new role's default. Off by default for predictable, safe access.
     keep_permissions_on_role_change = models.BooleanField(default=False)
 
+    # Last date the once-a-day sales housekeeping ran (quote expiry + recurring
+    # invoice generation) for this tenant; throttles the in-app scheduler.
+    last_housekeeping_date = models.DateField(null=True, blank=True)
+
     def __str__(self):
         return self.name
 

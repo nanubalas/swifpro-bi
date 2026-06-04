@@ -20,6 +20,9 @@
       <form method="post" action="{% url 'corder_to_invoice' o.id %}">{% csrf_token %}<button class="btn btn-success"><i class="bi bi-receipt me-1"></i> Convert to invoice</button></form>
       <form method="post" action="{% url 'corder_status' o.id 'cancel' %}" onsubmit="return confirm('Cancel order {{ o.order_number }}?');">{% csrf_token %}<button class="btn btn-outline-danger">Cancel</button></form>
     {% endif %}
+    {% if o.status != 'INVOICED' %}
+      <form method="post" action="{% url 'corder_delete' o.id %}" onsubmit="return confirm('Delete sales order {{ o.order_number }}? This cannot be undone.');">{% csrf_token %}<button class="btn btn-outline-danger"><i class="bi bi-trash me-1"></i> Delete</button></form>
+    {% endif %}
   </div>
 </div>
 

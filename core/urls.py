@@ -103,6 +103,7 @@ urlpatterns = [
     path("quotes/<int:quote_id>/status/<str:to>/", views.quote_status, name="quote_status"),
     path("quotes/<int:quote_id>/to-order/", views.quote_to_order, name="quote_to_order"),
     path("quotes/<int:quote_id>/to-invoice/", views.quote_to_invoice, name="quote_to_invoice"),
+    path("quotes/<int:quote_id>/delete/", views.quote_delete, name="quote_delete"),
 
     path("customer-orders/", views.corder_list, name="corder_list"),
     path("customer-orders/new/", views.corder_create, name="corder_create"),
@@ -111,6 +112,7 @@ urlpatterns = [
     path("customer-orders/<int:order_id>/pdf/", views.corder_pdf, name="corder_pdf"),
     path("customer-orders/<int:order_id>/status/<str:to>/", views.corder_status, name="corder_status"),
     path("customer-orders/<int:order_id>/to-invoice/", views.corder_to_invoice, name="corder_to_invoice"),
+    path("customer-orders/<int:order_id>/delete/", views.corder_delete, name="corder_delete"),
 
     path("recurring-invoices/", views.recurring_list, name="recurring_list"),
     path("recurring-invoices/new/", views.recurring_create, name="recurring_create"),

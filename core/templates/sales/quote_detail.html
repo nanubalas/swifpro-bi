@@ -23,6 +23,9 @@
       <form method="post" action="{% url 'quote_to_order' q.id %}">{% csrf_token %}<button class="btn btn-success"><i class="bi bi-cart-check me-1"></i> To sales order</button></form>
       <form method="post" action="{% url 'quote_to_invoice' q.id %}">{% csrf_token %}<button class="btn btn-outline-primary"><i class="bi bi-receipt me-1"></i> To invoice</button></form>
     {% endif %}
+    {% if q.status != 'CONVERTED' %}
+      <form method="post" action="{% url 'quote_delete' q.id %}" onsubmit="return confirm('Delete quote {{ q.quote_number }}? This cannot be undone.');">{% csrf_token %}<button class="btn btn-outline-danger"><i class="bi bi-trash me-1"></i> Delete</button></form>
+    {% endif %}
   </div>
 </div>
 
