@@ -14,6 +14,7 @@
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <a class="btn btn-outline-secondary" href="{% url 'corder_pdf' o.id %}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i> PDF</a>
+    {% if o.status == 'DRAFT' or o.status == 'CONFIRMED' %}<a class="btn btn-outline-secondary" href="{% url 'corder_edit' o.id %}"><i class="bi bi-pencil me-1"></i> Edit</a>{% endif %}
     {% if o.status == 'DRAFT' %}<form method="post" action="{% url 'corder_status' o.id 'confirm' %}">{% csrf_token %}<button class="btn btn-outline-success">Confirm</button></form>{% endif %}
     {% if o.status != 'INVOICED' and o.status != 'CANCELLED' %}
       <form method="post" action="{% url 'corder_to_invoice' o.id %}">{% csrf_token %}<button class="btn btn-success"><i class="bi bi-receipt me-1"></i> Convert to invoice</button></form>

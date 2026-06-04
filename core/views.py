@@ -3152,6 +3152,114 @@ def recurring_run_due(request):
     return redirect("recurring_list")
 
 
+# ---- Draft document editing ----
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def ar_invoice_edit(request, invoice_id):
+    tenant = _get_default_tenant(request)
+    inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
+    if inv.status != CustomerInvoice.Status.DRAFT:
+        messages.error(request, "Only draft invoices can be edited.")
+        return redirect("ar_invoice_detail", invoice_id=inv.id)
+    if request.method == "POST":
+        form = CustomerInvoiceForm(request.POST, instance=inv)
+        formset = CustomerInvoiceLineFormSet(request.POST, instance=inv)
+        if form.is_valid() and formset.is_valid():
+            inv = form.save(commit=False)
+            inv.tenant = tenant
+            if not (inv.invoice_number or "").strip():
+                from core.numbering import next_invoice_number
+                inv.invoice_number = next_invoice_number(tenant)
+            inv.save()
+            formset.save()
+            if (form.cleaned_data.get("action") or "save") == "issue":
+                post_customer_invoice(inv, user=request.user)
+            messages.success(request, f"Invoice {inv.invoice_number} updated.")
+            return redirect("ar_invoice_detail", invoice_id=inv.id)
+    else:
+        form = CustomerInvoiceForm(instance=inv)
+        formset = CustomerInvoiceLineFormSet(instance=inv)
+    return render(request, "ar/ar_invoice_form.html", {"tenant": tenant, "form": form, "formset": formset, "is_edit": True})
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def quote_edit(request, quote_id):
+    tenant = _get_default_tenant(request)
+    q = get_object_or_404(SalesQuote, id=quote_id, tenant=tenant)
+    if q.status not in (SalesQuote.Status.DRAFT, SalesQuote.Status.SENT):
+        messages.error(request, "Only draft or sent quotes can be edited.")
+        return redirect("quote_detail", quote_id=q.id)
+    if request.method == "POST":
+        form = SalesQuoteForm(request.POST, instance=q)
+        formset = SalesQuoteLineFormSet(request.POST, instance=q)
+        if form.is_valid() and formset.is_valid():
+            q = form.save(commit=False)
+            q.tenant = tenant
+            q.save()
+            formset.save()
+            messages.success(request, f"Quote {q.quote_number} updated.")
+            return redirect("quote_detail", quote_id=q.id)
+    else:
+        form = SalesQuoteForm(instance=q)
+        formset = SalesQuoteLineFormSet(instance=q)
+    return render(request, "sales/doc_form.html", {
+        "tenant": tenant, "form": form, "formset": formset,
+        "doc_label": "Quote", "list_url": "/quotes/", "is_edit": True})
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def corder_edit(request, order_id):
+    tenant = _get_default_tenant(request)
+    o = get_object_or_404(CustomerOrder, id=order_id, tenant=tenant)
+    if o.status not in (CustomerOrder.Status.DRAFT, CustomerOrder.Status.CONFIRMED):
+        messages.error(request, "Invoiced or cancelled orders cannot be edited.")
+        return redirect("corder_detail", order_id=o.id)
+    if request.method == "POST":
+        form = CustomerOrderForm(request.POST, instance=o)
+        formset = CustomerOrderLineFormSet(request.POST, instance=o)
+        if form.is_valid() and formset.is_valid():
+            o = form.save(commit=False)
+            o.tenant = tenant
+            o.save()
+            formset.save()
+            messages.success(request, f"Sales order {o.order_number} updated.")
+            return redirect("corder_detail", order_id=o.id)
+    else:
+        form = CustomerOrderForm(instance=o)
+        formset = CustomerOrderLineFormSet(instance=o)
+    return render(request, "sales/doc_form.html", {
+        "tenant": tenant, "form": form, "formset": formset,
+        "doc_label": "Sales order", "list_url": "/customer-orders/", "is_edit": True})
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def recurring_edit(request, template_id):
+    tenant = _get_default_tenant(request)
+    t = get_object_or_404(RecurringInvoice, id=template_id, tenant=tenant)
+    if request.method == "POST":
+        form = RecurringInvoiceForm(request.POST, instance=t)
+        formset = RecurringInvoiceLineFormSet(request.POST, instance=t)
+        if form.is_valid() and formset.is_valid():
+            t = form.save(commit=False)
+            t.tenant = tenant
+            if not t.next_run_date:
+                t.next_run_date = t.start_date
+            t.save()
+            formset.save()
+            messages.success(request, f"Recurring invoice '{t.name}' updated.")
+            return redirect("recurring_detail", template_id=t.id)
+    else:
+        form = RecurringInvoiceForm(instance=t)
+        formset = RecurringInvoiceLineFormSet(instance=t)
+    return render(request, "sales/doc_form.html", {
+        "tenant": tenant, "form": form, "formset": formset,
+        "doc_label": "Recurring invoice", "list_url": "/recurring-invoices/", "is_edit": True})
+
+
 # ---- Sales reports ----
 
 def _sales_period(request, tenant):
