@@ -3495,7 +3495,11 @@ def ar_invoice_create(request):
 
             action = form.cleaned_data.get("action") or "save"
             if action == "issue":
-                post_customer_invoice(inv, user=request.user)
+                ok, reason = inv.customer.credit_status(inv.total)
+                if not ok:
+                    messages.error(request, f"Saved as draft — not issued. {reason}")
+                else:
+                    post_customer_invoice(inv, user=request.user)
 
             return redirect("ar_invoice_detail", invoice_id=inv.id)
     else:
@@ -3532,6 +3536,10 @@ def ar_invoice_issue(request, invoice_id):
     tenant = _get_default_tenant(request)
     inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
     if request.method == "POST":
+        ok, reason = inv.customer.credit_status(inv.total)
+        if not ok:
+            messages.error(request, f"Cannot issue this invoice. {reason}")
+            return redirect("ar_invoice_detail", invoice_id=inv.id)
         post_customer_invoice(inv, user=request.user)
         return redirect("ar_invoice_detail", invoice_id=inv.id)
     return render(request, "ar/ar_invoice_issue.html", {"tenant": tenant, "inv": inv})
@@ -3546,6 +3554,10 @@ def ar_invoice_send(request, invoice_id):
     inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
     if request.method == "POST":
         if inv.status == CustomerInvoice.Status.DRAFT:
+            ok, reason = inv.customer.credit_status(inv.total)
+            if not ok:
+                messages.error(request, f"Cannot issue/send this invoice. {reason}")
+                return redirect("ar_invoice_detail", invoice_id=inv.id)
             post_customer_invoice(inv, user=request.user)
         from core import notify
         from core.services.pdf import render_to_pdf
@@ -3842,6 +3854,15 @@ def corder_status(request, order_id, to):
     o = get_object_or_404(CustomerOrder, id=order_id, tenant=tenant)
     mapping = {"confirm": CustomerOrder.Status.CONFIRMED, "cancel": CustomerOrder.Status.CANCELLED}
     if request.method == "POST" and to in mapping:
+        if to == "confirm":
+            ok, reason = o.customer.credit_status(o.total)
+            if o.customer.status == Customer.Status.ON_HOLD:
+                # Hard block: an on-hold customer cannot have orders confirmed.
+                messages.error(request, f"Cannot confirm order. {reason}")
+                return redirect("corder_detail", order_id=o.id)
+            if not ok:
+                # Over the limit: warn but allow (no receivable until invoiced).
+                messages.warning(request, reason)
         o.status = mapping[to]
         o.save(update_fields=["status"])
         messages.success(request, f"Sales order {o.order_number} marked {o.get_status_display()}.")

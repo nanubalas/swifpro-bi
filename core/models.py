@@ -1340,6 +1340,27 @@ class Customer(models.Model):
         ac = self.available_credit
         return ac is not None and ac < Decimal("0.00")
 
+    def credit_status(self, additional=Decimal("0.00")):
+        """Assess whether taking on `additional` new receivable is allowed.
+
+        Returns (ok, reason). ok=False means the sale should be blocked:
+        either the customer is on hold, or a credit limit is set and this
+        amount would push the outstanding balance over it.
+        """
+        if self.status == self.Status.ON_HOLD:
+            return False, f"{self.name} is on hold — new sales are blocked until released."
+        if not self.credit_limit or self.credit_limit <= Decimal("0.00"):
+            return True, ""  # no limit configured
+        projected = self.outstanding_balance + (additional or Decimal("0.00"))
+        if projected > self.credit_limit:
+            over = projected - self.credit_limit
+            return False, (
+                f"Credit limit exceeded for {self.name}: limit {self.credit_limit:.2f}, "
+                f"outstanding {self.outstanding_balance:.2f}, this amount {additional:.2f} "
+                f"(over by {over:.2f})."
+            )
+        return True, ""
+
 
 class CustomerInvoice(models.Model):
     class Status(models.TextChoices):
