@@ -20,6 +20,7 @@ from core.models import (
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
     GLAccount, JournalEntry, Payment, PaymentAllocation, VatReturn, Expense,
     CreditNote, CreditNoteLine, BankTransaction,
+    SalesQuote, SalesQuoteLine, CustomerOrder, CustomerOrderLine,
     OrgMembership, AuditLog, AccessRequest, UserProfile, UserPermissionOverride
 )
 from django.core.exceptions import PermissionDenied
@@ -42,7 +43,8 @@ from core.forms import (
     CustomerInvoiceForm, CustomerInvoiceLineFormSet,
     GLAccountForm, ReceiptForm, SupplierPaymentForm, AccessRequestForm,
     NewOrganisationForm, InviteUserForm, ExpenseForm,
-    CreditNoteForm, CreditNoteLineFormSet, BankTransactionForm
+    CreditNoteForm, CreditNoteLineFormSet, BankTransactionForm,
+    SalesQuoteForm, SalesQuoteLineFormSet, CustomerOrderForm, CustomerOrderLineFormSet
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations
 from core.services.bom import explode_product
@@ -2776,6 +2778,259 @@ def ar_invoice_cancel(request, invoice_id):
             log_audit(action="INVOICE_CANCELLED", request=request, user=request.user, tenant=tenant, detail=inv.invoice_number)
             messages.success(request, f"Invoice {inv.invoice_number} cancelled.")
     return redirect("ar_invoice_detail", invoice_id=inv.id)
+
+
+# ============================
+# Customer sales documents: Quotes -> Sales Orders -> Invoices
+# ============================
+
+SALES_DOC_ROLES = [ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN]
+SALES_DOC_READ = [ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY]
+
+
+def _copy_sales_lines(src, dest, line_model, fk_name):
+    """Copy product/qty/price/discount/tax lines from one sales doc to another."""
+    for l in src.lines.all():
+        line_model.objects.create(**{
+            fk_name: dest, "product": l.product, "description": l.description,
+            "qty": l.qty, "unit_price": l.unit_price, "discount_pct": l.discount_pct,
+            "tax_code": l.tax_code,
+        })
+
+
+# ---- Quotes ----
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def quote_list(request):
+    tenant = _get_default_tenant(request)
+    quotes = SalesQuote.objects.filter(tenant=tenant).select_related("customer").prefetch_related("lines", "lines__tax_code").order_by("-quote_date", "-id")
+    return render(request, "sales/quote_list.html", {"tenant": tenant, "quotes": quotes})
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def quote_create(request):
+    tenant = _get_default_tenant(request)
+    q = SalesQuote(tenant=tenant, currency_code=tenant.currency_code)
+    if request.method == "POST":
+        form = SalesQuoteForm(request.POST, instance=q)
+        formset = SalesQuoteLineFormSet(request.POST, instance=q)
+        if form.is_valid() and formset.is_valid():
+            q = form.save(commit=False)
+            q.tenant = tenant
+            q.currency_code = tenant.currency_code
+            if not (q.quote_number or "").strip():
+                from core.numbering import next_quote_number
+                q.quote_number = next_quote_number(tenant)
+            q.save()
+            formset.save()
+            messages.success(request, f"Quote {q.quote_number} saved.")
+            return redirect("quote_detail", quote_id=q.id)
+    else:
+        from core.numbering import next_quote_number
+        initial = {"quote_number": next_quote_number(tenant)}
+        if tenant.invoice_footer:
+            initial["terms"] = tenant.invoice_footer
+        form = SalesQuoteForm(instance=q, initial=initial)
+        line_initial = [{"tax_code": tenant.default_tax_code}] if tenant.default_tax_code_id else None
+        formset = SalesQuoteLineFormSet(instance=q, initial=line_initial)
+    return render(request, "sales/doc_form.html", {
+        "tenant": tenant, "form": form, "formset": formset,
+        "doc_label": "Quote", "list_url": "/quotes/", "extra_fields": ["valid_until"]})
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def quote_detail(request, quote_id):
+    tenant = _get_default_tenant(request)
+    q = get_object_or_404(SalesQuote, id=quote_id, tenant=tenant)
+    return render(request, "sales/quote_detail.html", {"tenant": tenant, "q": q})
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def quote_pdf(request, quote_id):
+    tenant = _get_default_tenant(request)
+    q = get_object_or_404(SalesQuote, id=quote_id, tenant=tenant)
+    from core.services.pdf import pdf_response
+    return pdf_response(f"quote-{q.quote_number}.pdf", "documents/quote_pdf.html",
+                        {"tenant": tenant, "q": q, "doc_title": "QUOTE", "number": q.quote_number,
+                         "notes": q.notes, "terms": q.terms}, download=False)
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def quote_send(request, quote_id):
+    tenant = _get_default_tenant(request)
+    q = get_object_or_404(SalesQuote, id=quote_id, tenant=tenant)
+    if request.method == "POST":
+        from core import notify
+        from core.services.pdf import render_to_pdf
+        pdf = render_to_pdf("documents/quote_pdf.html", {
+            "tenant": tenant, "q": q, "doc_title": "QUOTE", "number": q.quote_number,
+            "notes": q.notes, "terms": q.terms})
+        attachment = (f"quote-{q.quote_number}.pdf", pdf, "application/pdf") if pdf else None
+        sent = notify.notify_sales_document(q, "Quote", q.quote_number, request=request, attachment=attachment)
+        if q.status == SalesQuote.Status.DRAFT:
+            q.status = SalesQuote.Status.SENT
+        q.sent_at = timezone.now()
+        q.save(update_fields=["status", "sent_at"])
+        log_audit(action="QUOTE_SENT", request=request, user=request.user, tenant=tenant, detail=q.quote_number)
+        messages.success(request, f"Quote {q.quote_number} {'emailed' if sent else 'marked sent (no customer email)'}.")
+    return redirect("quote_detail", quote_id=q.id)
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def quote_status(request, quote_id, to):
+    tenant = _get_default_tenant(request)
+    q = get_object_or_404(SalesQuote, id=quote_id, tenant=tenant)
+    mapping = {"accept": SalesQuote.Status.ACCEPTED, "decline": SalesQuote.Status.DECLINED,
+               "cancel": SalesQuote.Status.CANCELLED}
+    if request.method == "POST" and to in mapping:
+        q.status = mapping[to]
+        q.save(update_fields=["status"])
+        messages.success(request, f"Quote {q.quote_number} marked {q.get_status_display()}.")
+    return redirect("quote_detail", quote_id=q.id)
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def quote_to_order(request, quote_id):
+    tenant = _get_default_tenant(request)
+    q = get_object_or_404(SalesQuote, id=quote_id, tenant=tenant)
+    if request.method == "POST":
+        from core.numbering import next_order_number
+        order = CustomerOrder.objects.create(
+            tenant=tenant, customer=q.customer, order_number=next_order_number(tenant),
+            currency_code=q.currency_code, notes=q.notes, terms=q.terms, quote=q,
+            status=CustomerOrder.Status.CONFIRMED)
+        _copy_sales_lines(q, order, CustomerOrderLine, "order")
+        q.status = SalesQuote.Status.CONVERTED
+        q.save(update_fields=["status"])
+        log_audit(action="QUOTE_CONVERTED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{q.quote_number} -> order {order.order_number}")
+        messages.success(request, f"Quote {q.quote_number} converted to sales order {order.order_number}.")
+        return redirect("corder_detail", order_id=order.id)
+    return redirect("quote_detail", quote_id=q.id)
+
+
+def _invoice_from_lines(tenant, customer, currency, notes, terms, src, line_attr, user):
+    """Create a draft CustomerInvoice copying a quote/order's lines."""
+    from core.numbering import next_invoice_number
+    inv = CustomerInvoice.objects.create(
+        tenant=tenant, customer=customer, invoice_number=next_invoice_number(tenant),
+        currency_code=currency, notes=notes, terms=terms)
+    if tenant.default_payment_terms_days:
+        inv.due_date = inv.invoice_date + timezone.timedelta(days=tenant.default_payment_terms_days)
+    setattr(inv, line_attr, src)
+    inv.save()
+    for l in src.lines.all():
+        CustomerInvoiceLine.objects.create(
+            invoice=inv, product=l.product, description=l.description, qty=l.qty,
+            unit_price=l.unit_price, discount_pct=l.discount_pct, tax_code=l.tax_code)
+    return inv
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def quote_to_invoice(request, quote_id):
+    tenant = _get_default_tenant(request)
+    q = get_object_or_404(SalesQuote, id=quote_id, tenant=tenant)
+    if request.method == "POST":
+        inv = _invoice_from_lines(tenant, q.customer, q.currency_code, q.notes, q.terms, q, "source_quote", request.user)
+        q.status = SalesQuote.Status.CONVERTED
+        q.save(update_fields=["status"])
+        log_audit(action="QUOTE_CONVERTED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{q.quote_number} -> invoice {inv.invoice_number}")
+        messages.success(request, f"Quote {q.quote_number} converted to invoice {inv.invoice_number} (draft).")
+        return redirect("ar_invoice_detail", invoice_id=inv.id)
+    return redirect("quote_detail", quote_id=q.id)
+
+
+# ---- Customer sales orders ----
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def corder_list(request):
+    tenant = _get_default_tenant(request)
+    orders = CustomerOrder.objects.filter(tenant=tenant).select_related("customer").prefetch_related("lines", "lines__tax_code").order_by("-order_date", "-id")
+    return render(request, "sales/corder_list.html", {"tenant": tenant, "orders": orders})
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def corder_create(request):
+    tenant = _get_default_tenant(request)
+    o = CustomerOrder(tenant=tenant, currency_code=tenant.currency_code)
+    if request.method == "POST":
+        form = CustomerOrderForm(request.POST, instance=o)
+        formset = CustomerOrderLineFormSet(request.POST, instance=o)
+        if form.is_valid() and formset.is_valid():
+            o = form.save(commit=False)
+            o.tenant = tenant
+            o.currency_code = tenant.currency_code
+            if not (o.order_number or "").strip():
+                from core.numbering import next_order_number
+                o.order_number = next_order_number(tenant)
+            o.save()
+            formset.save()
+            messages.success(request, f"Sales order {o.order_number} saved.")
+            return redirect("corder_detail", order_id=o.id)
+    else:
+        from core.numbering import next_order_number
+        initial = {"order_number": next_order_number(tenant)}
+        if tenant.invoice_footer:
+            initial["terms"] = tenant.invoice_footer
+        form = CustomerOrderForm(instance=o, initial=initial)
+        line_initial = [{"tax_code": tenant.default_tax_code}] if tenant.default_tax_code_id else None
+        formset = CustomerOrderLineFormSet(instance=o, initial=line_initial)
+    return render(request, "sales/doc_form.html", {
+        "tenant": tenant, "form": form, "formset": formset,
+        "doc_label": "Sales order", "list_url": "/customer-orders/", "extra_fields": []})
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def corder_detail(request, order_id):
+    tenant = _get_default_tenant(request)
+    o = get_object_or_404(CustomerOrder, id=order_id, tenant=tenant)
+    return render(request, "sales/corder_detail.html", {"tenant": tenant, "o": o})
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def corder_pdf(request, order_id):
+    tenant = _get_default_tenant(request)
+    o = get_object_or_404(CustomerOrder, id=order_id, tenant=tenant)
+    from core.services.pdf import pdf_response
+    return pdf_response(f"sales-order-{o.order_number}.pdf", "documents/order_pdf.html",
+                        {"tenant": tenant, "o": o, "doc_title": "SALES ORDER", "number": o.order_number,
+                         "notes": o.notes, "terms": o.terms}, download=False)
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def corder_status(request, order_id, to):
+    tenant = _get_default_tenant(request)
+    o = get_object_or_404(CustomerOrder, id=order_id, tenant=tenant)
+    mapping = {"confirm": CustomerOrder.Status.CONFIRMED, "cancel": CustomerOrder.Status.CANCELLED}
+    if request.method == "POST" and to in mapping:
+        o.status = mapping[to]
+        o.save(update_fields=["status"])
+        messages.success(request, f"Sales order {o.order_number} marked {o.get_status_display()}.")
+    return redirect("corder_detail", order_id=o.id)
+
+
+@role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
+@transaction.atomic
+def corder_to_invoice(request, order_id):
+    tenant = _get_default_tenant(request)
+    o = get_object_or_404(CustomerOrder, id=order_id, tenant=tenant)
+    if request.method == "POST":
+        inv = _invoice_from_lines(tenant, o.customer, o.currency_code, o.notes, o.terms, o, "source_order", request.user)
+        o.status = CustomerOrder.Status.INVOICED
+        o.save(update_fields=["status"])
+        log_audit(action="ORDER_INVOICED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{o.order_number} -> invoice {inv.invoice_number}")
+        messages.success(request, f"Sales order {o.order_number} converted to invoice {inv.invoice_number} (draft).")
+        return redirect("ar_invoice_detail", invoice_id=inv.id)
+    return redirect("corder_detail", order_id=o.id)
 
 
 # ============================

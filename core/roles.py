@@ -95,10 +95,12 @@ NAV = [
         ("Dashboard", "/dashboard/", "grid-1x2", _ALL),
     ]),
     ("Sales", [
-        ("Sales Orders", "/sales-orders/", "cart-check", {ADMIN, MANAGER, SALES}),
-        ("Customers", "/customers/", "people", {ADMIN, MANAGER, SALES, ACCOUNTANT, FINANCE}),
+        ("Quotes", "/quotes/", "file-earmark-text", {ADMIN, MANAGER, SALES}),
+        ("Sales Orders", "/customer-orders/", "cart-check", {ADMIN, MANAGER, SALES}),
         ("Customer Invoices", "/ar/invoices/", "receipt", {ADMIN, MANAGER, SALES, ACCOUNTANT, FINANCE}),
+        ("Customers", "/customers/", "people", {ADMIN, MANAGER, SALES, ACCOUNTANT, FINANCE}),
         ("Returns (RMA)", "/returns/", "arrow-return-left", {ADMIN, MANAGER, SALES, WAREHOUSE}),
+        ("Channel Orders", "/sales-orders/", "bag", {ADMIN, MANAGER, SALES}),
     ]),
     ("Procurement", [
         ("Purchase Orders", "/po/", "file-earmark-text", {ADMIN, MANAGER, PURCHASING}),

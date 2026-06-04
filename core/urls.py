@@ -93,7 +93,24 @@ urlpatterns = [
     path("channels/<int:conn_id>/edit/", views.channel_edit, name="channel_edit"),
     path("channels/<int:conn_id>/delete/", views.channel_delete, name="channel_delete"),
 
-    # Sales Orders
+    # Customer sales documents: Quotes -> Sales Orders -> Invoices
+    path("quotes/", views.quote_list, name="quote_list"),
+    path("quotes/new/", views.quote_create, name="quote_create"),
+    path("quotes/<int:quote_id>/", views.quote_detail, name="quote_detail"),
+    path("quotes/<int:quote_id>/pdf/", views.quote_pdf, name="quote_pdf"),
+    path("quotes/<int:quote_id>/send/", views.quote_send, name="quote_send"),
+    path("quotes/<int:quote_id>/status/<str:to>/", views.quote_status, name="quote_status"),
+    path("quotes/<int:quote_id>/to-order/", views.quote_to_order, name="quote_to_order"),
+    path("quotes/<int:quote_id>/to-invoice/", views.quote_to_invoice, name="quote_to_invoice"),
+
+    path("customer-orders/", views.corder_list, name="corder_list"),
+    path("customer-orders/new/", views.corder_create, name="corder_create"),
+    path("customer-orders/<int:order_id>/", views.corder_detail, name="corder_detail"),
+    path("customer-orders/<int:order_id>/pdf/", views.corder_pdf, name="corder_pdf"),
+    path("customer-orders/<int:order_id>/status/<str:to>/", views.corder_status, name="corder_status"),
+    path("customer-orders/<int:order_id>/to-invoice/", views.corder_to_invoice, name="corder_to_invoice"),
+
+    # Sales Orders (channel/ecommerce)
     path("sales-orders/", views.sales_order_list, name="sales_order_list"),
     path("sales-orders/new/", views.sales_order_create, name="sales_order_create"),
     path("sales-orders/<int:order_id>/", views.sales_order_detail, name="sales_order_detail"),

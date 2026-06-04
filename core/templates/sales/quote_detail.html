@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Quote {{ q.quote_number }} - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{% url 'quote_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+    <div>
+      <h2 class="fw-bold mb-0">Quote {{ q.quote_number }}</h2>
+      <div class="text-muted">{{ q.customer.name }} &bull;
+        <span class="badge text-bg-secondary">{{ q.get_status_display }}</span>
+        {% if q.is_expired %}<span class="badge text-bg-warning">Expired</span>{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-secondary" href="{% url 'quote_pdf' q.id %}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i> PDF</a>
+    {% if q.status != 'CONVERTED' and q.status != 'CANCELLED' %}
+      <form method="post" action="{% url 'quote_send' q.id %}">{% csrf_token %}<button class="btn btn-primary"><i class="bi bi-envelope me-1"></i> Send</button></form>
+      {% if q.status != 'ACCEPTED' %}<form method="post" action="{% url 'quote_status' q.id 'accept' %}">{% csrf_token %}<button class="btn btn-outline-success">Accept</button></form>{% endif %}
+      <form method="post" action="{% url 'quote_status' q.id 'decline' %}">{% csrf_token %}<button class="btn btn-outline-danger">Decline</button></form>
+      <form method="post" action="{% url 'quote_to_order' q.id %}">{% csrf_token %}<button class="btn btn-success"><i class="bi bi-cart-check me-1"></i> To sales order</button></form>
+      <form method="post" action="{% url 'quote_to_invoice' q.id %}">{% csrf_token %}<button class="btn btn-outline-primary"><i class="bi bi-receipt me-1"></i> To invoice</button></form>
+    {% endif %}
+  </div>
+</div>
+
+{% if q.orders.exists or q.invoices.exists %}
+<div class="alert alert-info">
+  {% for o in q.orders.all %}Converted to sales order <a href="{% url 'corder_detail' o.id %}">{{ o.order_number }}</a>. {% endfor %}
+  {% for i in q.invoices.all %}Converted to invoice <a href="{% url 'ar_invoice_detail' i.id %}">{{ i.invoice_number }}</a>. {% endfor %}
+</div>
+{% endif %}
+
+{% include "sales/_doc_view.html" with doc=q currency=q.currency_code date_label="Quote date" date_val=q.quote_date %}
+{% endblock %}

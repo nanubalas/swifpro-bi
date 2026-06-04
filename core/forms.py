@@ -14,7 +14,8 @@ from core.models import (
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount,
-    Payment, AccessRequest, Expense, CreditNote, CreditNoteLine, BankTransaction
+    Payment, AccessRequest, Expense, CreditNote, CreditNoteLine, BankTransaction,
+    SalesQuote, SalesQuoteLine, CustomerOrder, CustomerOrderLine
 )
 
 
@@ -460,6 +461,53 @@ CreditNoteLineFormSet = inlineformset_factory(
     fields=("description", "qty", "unit_amount", "tax_code", "account"),
     extra=1,
     can_delete=True,
+)
+
+
+class SalesQuoteForm(TenantModelForm):
+    class Meta:
+        model = SalesQuote
+        fields = ["customer", "quote_number", "quote_date", "valid_until", "notes", "terms"]
+        widgets = {
+            "quote_date": forms.DateInput(attrs={"type": "date"}),
+            "valid_until": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+            "terms": forms.Textarea(attrs={"rows": 2}),
+        }
+        help_texts = {"quote_number": "Leave blank to auto-generate (e.g. QUO-0001)."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["quote_number"].required = False
+
+
+SalesQuoteLineFormSet = inlineformset_factory(
+    SalesQuote, SalesQuoteLine, form=TenantModelForm,
+    fields=("product", "description", "qty", "unit_price", "discount_pct", "tax_code"),
+    extra=1, can_delete=True,
+)
+
+
+class CustomerOrderForm(TenantModelForm):
+    class Meta:
+        model = CustomerOrder
+        fields = ["customer", "order_number", "order_date", "notes", "terms"]
+        widgets = {
+            "order_date": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+            "terms": forms.Textarea(attrs={"rows": 2}),
+        }
+        help_texts = {"order_number": "Leave blank to auto-generate (e.g. SO-0001)."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["order_number"].required = False
+
+
+CustomerOrderLineFormSet = inlineformset_factory(
+    CustomerOrder, CustomerOrderLine, form=TenantModelForm,
+    fields=("product", "description", "qty", "unit_price", "discount_pct", "tax_code"),
+    extra=1, can_delete=True,
 )
 
 
