@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load money %}
 {% block title %}Suppliers - SwifPro BI{% endblock %}
 
 {% block body %}
@@ -21,17 +22,22 @@
         <thead class="table-light">
           <tr>
             <th>Name</th>
-            <th>Email</th>
-            <th>Phone</th>
+            <th>Contact</th>
+            <th>Categories</th>
+            <th>Status</th>
+            <th class="text-end">Outstanding</th>
             <th class="text-end">Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for s in suppliers %}
           <tr>
-            <td class="fw-semibold">{{ s.name }}</td>
-            <td>{% if s.email %}{{ s.email }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if s.phone %}{{ s.phone }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td class="fw-semibold">{{ s.name }}
+              <div class="text-muted small fw-normal">{{ s.email|default:'' }}</div></td>
+            <td class="small">{{ s.contact_person|default:'-' }}</td>
+            <td>{% for c in s.category_list %}<span class="badge text-bg-light text-dark border">{{ c }}</span> {% empty %}<span class="text-muted">-</span>{% endfor %}</td>
+            <td>{% if s.status == 'ACTIVE' %}<span class="badge text-bg-success">Active</span>{% elif s.status == 'ON_HOLD' %}<span class="badge text-bg-warning">On hold</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+            <td class="text-end">{{ s.outstanding_payables|money:tenant.currency_code }}</td>
             <td class="text-end">
               <div class="btn-group">
                 <a class="btn btn-sm btn-outline-primary" href="/suppliers/{{ s.id }}/edit/">Edit</a>
@@ -41,7 +47,7 @@
           </tr>
           {% empty %}
           <tr>
-            <td colspan="4" class="text-center text-muted py-5">
+            <td colspan="6" class="text-center text-muted py-5">
               No suppliers yet. Create your first supplier to raise POs.
             </td>
           </tr>

@@ -15,22 +15,33 @@
   <div class="card-body p-4">
     <form method="post">
       {% csrf_token %}
+      {% if duplicates %}
+      <div class="alert alert-warning">
+        <div class="fw-semibold mb-1"><i class="bi bi-exclamation-triangle me-1"></i> Possible duplicate supplier(s):</div>
+        <ul class="mb-2">
+          {% for d in duplicates %}<li><a href="{% url 'supplier_detail' d.id %}">{{ d.name }}</a> - matched on {{ d.match }}</li>{% endfor %}
+        </ul>
+        <label class="form-check"><input class="form-check-input" type="checkbox" name="confirm_duplicate" value="1"> Save anyway (not a duplicate)</label>
+      </div>
+      {% endif %}
       <div class="row g-3">
-        <div class="col-md-6">
-          <label class="form-label">Name</label>
-          {{ form.name }}
-          {% if form.name.errors %}<div class="text-danger small">{{ form.name.errors }}</div>{% endif %}
-        </div>
-        <div class="col-md-6">
-          <label class="form-label">Email</label>
-          {{ form.email }}
-          {% if form.email.errors %}<div class="text-danger small">{{ form.email.errors }}</div>{% endif %}
-        </div>
-        <div class="col-md-6">
-          <label class="form-label">Phone</label>
-          {{ form.phone }}
-          {% if form.phone.errors %}<div class="text-danger small">{{ form.phone.errors }}</div>{% endif %}
-        </div>
+        <div class="col-md-6"><label class="form-label">Name</label>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-3"><label class="form-label">Status</label>{{ form.status }}</div>
+        <div class="col-md-3"><label class="form-label">Currency</label>{{ form.currency_code }}</div>
+        <div class="col-md-6"><label class="form-label">Contact person</label>{{ form.contact_person }}</div>
+        <div class="col-md-6"><label class="form-label">Email</label>{{ form.email }}{% for e in form.email.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-6"><label class="form-label">Phone</label>{{ form.phone }}</div>
+        <div class="col-md-6"><label class="form-label">Categories</label>{{ form.categories }}<div class="form-text">{{ form.categories.help_text }}</div></div>
+        <div class="col-md-6"><label class="form-label">VAT Number</label>{{ form.vat_number }}</div>
+        <div class="col-md-6"><label class="form-label">Company Number</label>{{ form.company_number }}</div>
+        <div class="col-md-3"><label class="form-label">Payment terms (days)</label>{{ form.payment_terms_days }}</div>
+        <div class="col-12"><label class="form-label">Address</label>{{ form.address }}</div>
+        <div class="col-12"><hr class="my-1"><div class="text-muted small fw-semibold">Bank details (for payments)</div></div>
+        <div class="col-md-6"><label class="form-label">Bank name</label>{{ form.bank_name }}</div>
+        <div class="col-md-6"><label class="form-label">Account name</label>{{ form.bank_account_name }}</div>
+        <div class="col-md-3"><label class="form-label">Sort code</label>{{ form.bank_sort_code }}</div>
+        <div class="col-md-3"><label class="form-label">Account number</label>{{ form.bank_account_number }}</div>
+        <div class="col-12"><label class="form-label">Notes</label>{{ form.notes }}</div>
       </div>
 
       <div class="d-flex justify-content-end gap-2 mt-4">
@@ -44,6 +55,9 @@
 </div>
 
 <script>
-  document.querySelectorAll("input, select, textarea").forEach(el => el.classList.add("form-control"));
+  document.querySelectorAll("form input, form select, form textarea").forEach(el => {
+    if (el.type === "checkbox") el.classList.add("form-check-input");
+    else el.classList.add("form-control");
+  });
 </script>
 {% endblock %}

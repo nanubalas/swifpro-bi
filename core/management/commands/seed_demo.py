@@ -132,8 +132,21 @@ class Command(BaseCommand):
         Location.objects.get_or_create(tenant=tenant, name="Returns", defaults={"type": Location.Type.RETURNS})
 
         # Suppliers
-        globex, _ = Supplier.objects.get_or_create(tenant=tenant, name="Globex Supplies", defaults={"email": "sales@globex.example", "currency_code": "GBP"})
-        Supplier.objects.get_or_create(tenant=tenant, name="Acme Imports", defaults={"email": "orders@acme.example", "currency_code": "USD"})
+        globex, _ = Supplier.objects.get_or_create(tenant=tenant, name="Globex Supplies", defaults={
+            "email": "sales@globex.example", "currency_code": "GBP", "contact_person": "Pat Lee",
+            "phone": "+44 161 555 0100", "vat_number": "GB444555666", "company_number": "11223344",
+            "address": "Globex House\nSalford\nM50 2ST", "payment_terms_days": 30,
+            "bank_name": "Barclays", "bank_account_name": "Globex Supplies Ltd",
+            "bank_sort_code": "20-00-00", "bank_account_number": "12345678",
+            "categories": "Raw materials, Components", "notes": "Primary components supplier."})
+        Supplier.objects.get_or_create(tenant=tenant, name="Acme Imports", defaults={
+            "email": "orders@acme.example", "currency_code": "USD", "contact_person": "Dana Cruz",
+            "phone": "+1 415 555 0142", "vat_number": "US99-1234567",
+            "address": "500 Market St\nSan Francisco\nCA", "payment_terms_days": 45,
+            "categories": "Imports, Logistics", "status": Supplier.Status.ACTIVE})
+        Supplier.objects.get_or_create(tenant=tenant, name="Dormant Packaging Co", defaults={
+            "email": "old@dormantpack.example", "currency_code": "GBP",
+            "categories": "Packaging", "status": Supplier.Status.INACTIVE})
 
         # Products
         def make_product(sku, name, cost):
