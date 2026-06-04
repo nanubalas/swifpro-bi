@@ -1,0 +1,45 @@
+{% extends "documents/_pdf_base.html" %}
+{% load money %}
+{% block meta %}
+  Date: {{ inv.invoice_date|date:'d M Y' }}<br>
+  {% if inv.due_date %}Due: {{ inv.due_date|date:'d M Y' }}<br>{% endif %}
+  Status: {{ inv.display_status }}
+{% endblock %}
+
+{% block content %}
+<table style="margin-bottom:14px"><tr>
+  <td style="width:55%">
+    <div class="muted small">Bill to</div>
+    <div><strong>{{ inv.customer.name }}</strong></div>
+    {% if inv.customer.billing_address %}<div class="small">{{ inv.customer.billing_address|linebreaksbr }}</div>{% endif %}
+    {% if inv.customer.vat_number %}<div class="small muted">VAT: {{ inv.customer.vat_number }}</div>{% endif %}
+  </td>
+  <td style="width:45%"></td>
+</tr></table>
+
+<table class="lines">
+  <thead>
+    <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit price</th><th class="right">Disc %</th><th class="right">VAT</th><th class="right">Line total</th></tr>
+  </thead>
+  <tbody>
+    {% for l in inv.lines.all %}
+    <tr>
+      <td>{% if l.description %}{{ l.description }}{% elif l.product %}{{ l.product.name }}{% else %}-{% endif %}</td>
+      <td class="right">{{ l.qty|floatformat:2 }}</td>
+      <td class="right">{{ l.unit_price|money:inv.currency_code }}</td>
+      <td class="right">{% if l.discount_pct %}{{ l.discount_pct|floatformat:2 }}{% else %}-{% endif %}</td>
+      <td class="right">{{ l.tax_code.code|default:'-' }}</td>
+      <td class="right">{{ l.line_total|money:inv.currency_code }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals" style="margin-top:10px">
+  <tr><td class="right" style="width:75%">Subtotal</td><td class="right">{{ inv.subtotal|money:inv.currency_code }}</td></tr>
+  <tr><td class="right">VAT</td><td class="right">{{ inv.tax_total|money:inv.currency_code }}</td></tr>
+  <tr class="grand"><td class="right">Grand total</td><td class="right">{{ inv.total|money:inv.currency_code }}</td></tr>
+  {% if inv.amount_paid %}<tr><td class="right">Paid</td><td class="right">{{ inv.amount_paid|money:inv.currency_code }}</td></tr>
+  <tr><td class="right">Outstanding</td><td class="right">{{ inv.outstanding|money:inv.currency_code }}</td></tr>{% endif %}
+</table>
+{% endblock %}

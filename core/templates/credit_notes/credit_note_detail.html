@@ -13,11 +13,14 @@
       </div>
     </div>
   </div>
-  {% if cn.status != 'POSTED' %}
-  <form method="post" action="{% url 'credit_note_post' cn.id %}">{% csrf_token %}
-    <button class="btn btn-primary"><i class="bi bi-check-lg me-1"></i> Post to ledger</button>
-  </form>
-  {% endif %}
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'credit_note_pdf' cn.id %}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i> PDF</a>
+    {% if cn.status != 'POSTED' %}
+    <form method="post" action="{% url 'credit_note_post' cn.id %}">{% csrf_token %}
+      <button class="btn btn-primary"><i class="bi bi-check-lg me-1"></i> Post to ledger</button>
+    </form>
+    {% endif %}
+  </div>
 </div>
 
 {% if cn.customer_invoice or cn.supplier_invoice %}

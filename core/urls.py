@@ -143,6 +143,7 @@ path("ar/invoices/", views.ar_invoice_list, name="ar_invoice_list"),
 path("ar/invoices/new/", views.ar_invoice_create, name="ar_invoice_create"),
 path("ar/invoices/<int:invoice_id>/", views.ar_invoice_detail, name="ar_invoice_detail"),
 path("ar/invoices/<int:invoice_id>/issue/", views.ar_invoice_issue, name="ar_invoice_issue"),
+path("ar/invoices/<int:invoice_id>/pdf/", views.ar_invoice_pdf, name="ar_invoice_pdf"),
 path("ar/invoices/<int:invoice_id>/send/", views.ar_invoice_send, name="ar_invoice_send"),
 path("ar/invoices/<int:invoice_id>/cancel/", views.ar_invoice_cancel, name="ar_invoice_cancel"),
 
@@ -186,6 +187,7 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("credit-notes/new/", views.credit_note_create, name="credit_note_create"),
     path("credit-notes/<int:note_id>/", views.credit_note_detail, name="credit_note_detail"),
     path("credit-notes/<int:note_id>/post/", views.credit_note_post, name="credit_note_post"),
+    path("credit-notes/<int:note_id>/pdf/", views.credit_note_pdf, name="credit_note_pdf"),
 
     # VAT return (MTD)
     path("vat/", views.vat_index, name="vat_index"),

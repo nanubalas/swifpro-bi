@@ -22,6 +22,7 @@
     </div>
   </div>
   <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'ar_invoice_pdf' inv.id %}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i> PDF</a>
     {% if inv.status == "DRAFT" %}
       <a class="btn btn-success" href="/ar/invoices/{{ inv.id }}/issue/"><i class="bi bi-check-lg me-1"></i> Issue</a>
     {% endif %}

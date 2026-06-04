@@ -2700,6 +2700,16 @@ def ar_invoice_detail(request, invoice_id):
     inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
     return render(request, "ar/ar_invoice_detail.html", {"tenant": tenant, "inv": inv})
 
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+def ar_invoice_pdf(request, invoice_id):
+    tenant = _get_default_tenant(request)
+    inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
+    from core.services.pdf import pdf_response
+    return pdf_response(f"invoice-{inv.invoice_number}.pdf", "documents/invoice_pdf.html",
+                        {"tenant": tenant, "inv": inv, "doc_title": "INVOICE", "number": inv.invoice_number,
+                         "notes": inv.notes, "terms": inv.terms}, download=False)
+
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 @transaction.atomic
 def ar_invoice_issue(request, invoice_id):
@@ -2722,7 +2732,12 @@ def ar_invoice_send(request, invoice_id):
         if inv.status == CustomerInvoice.Status.DRAFT:
             post_customer_invoice(inv, user=request.user)
         from core import notify
-        sent = notify.notify_invoice(inv, request=request)
+        from core.services.pdf import render_to_pdf
+        pdf = render_to_pdf("documents/invoice_pdf.html", {
+            "tenant": tenant, "inv": inv, "doc_title": "INVOICE", "number": inv.invoice_number,
+            "notes": inv.notes, "terms": inv.terms})
+        attachment = (f"invoice-{inv.invoice_number}.pdf", pdf, "application/pdf") if pdf else None
+        sent = notify.notify_invoice(inv, request=request, attachment=attachment)
         inv.status = CustomerInvoice.Status.SENT
         inv.sent_at = timezone.now()
         inv.save(update_fields=["status", "sent_at"])
@@ -3130,6 +3145,16 @@ def credit_note_detail(request, note_id):
     cn = get_object_or_404(CreditNote, id=note_id, tenant=tenant)
     je = JournalEntry.objects.filter(tenant=tenant, ref_type="CREDIT_NOTE", ref_id=str(cn.id)).prefetch_related("lines", "lines__account").order_by("-id").first()
     return render(request, "credit_notes/credit_note_detail.html", {"tenant": tenant, "cn": cn, "je": je})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def credit_note_pdf(request, note_id):
+    tenant = _get_default_tenant(request)
+    cn = get_object_or_404(CreditNote, id=note_id, tenant=tenant)
+    from core.services.pdf import pdf_response
+    return pdf_response(f"credit-note-{cn.credit_note_number}.pdf", "documents/credit_note_pdf.html",
+                        {"tenant": tenant, "cn": cn, "doc_title": "CREDIT NOTE", "number": cn.credit_note_number,
+                         "notes": cn.reason}, download=False)
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])

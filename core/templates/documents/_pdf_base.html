@@ -1,0 +1,52 @@
+{% load money %}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 1.6cm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #1f2937; }
+  h1 { font-size: 20pt; margin: 0 0 2pt 0; color: #0f2742; }
+  .muted { color: #6b7280; }
+  .right { text-align: right; }
+  .small { font-size: 8.5pt; }
+  table { width: 100%; border-collapse: collapse; }
+  .head td { vertical-align: top; padding-bottom: 14px; }
+  .lines th { background: #0f2742; color: #fff; padding: 6px 8px; text-align: left; font-size: 9pt; }
+  .lines td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+  .totals td { padding: 3px 8px; }
+  .totals .grand td { border-top: 2px solid #0f2742; font-weight: bold; font-size: 11pt; }
+  .doc-title { color: #0d9488; }
+  .box { background: #f8fafc; border: 1px solid #e5e7eb; padding: 8px 10px; }
+  .terms { margin-top: 18px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+</style>
+</head>
+<body>
+  <table class="head">
+    <tr>
+      <td style="width:55%">
+        <h1>{{ tenant.trading_name|default:tenant.name }}</h1>
+        <div class="small muted">
+          {% if tenant.address_line1 %}{{ tenant.address_line1 }}<br>{% endif %}
+          {% if tenant.address_city %}{{ tenant.address_city }} {{ tenant.address_postcode }}<br>{% endif %}
+          {% if tenant.vat_registered and tenant.vat_number %}VAT: {{ tenant.vat_number }}<br>{% endif %}
+          {% if tenant.email %}{{ tenant.email }}{% endif %}
+        </div>
+      </td>
+      <td class="right" style="width:45%">
+        <h1 class="doc-title">{{ doc_title }}</h1>
+        <div class="small">
+          <strong>{{ number }}</strong><br>
+          {% block meta %}{% endblock %}
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  {% block content %}{% endblock %}
+
+  {% if notes %}<div class="terms"><div class="muted small">Notes</div>{{ notes|linebreaksbr }}</div>{% endif %}
+  {% if terms %}<div class="terms"><div class="muted small">Terms &amp; conditions</div><div class="small">{{ terms|linebreaksbr }}</div></div>{% endif %}
+  {% if tenant.invoice_footer and not terms %}<div class="terms small muted">{{ tenant.invoice_footer }}</div>{% endif %}
+</body>
+</html>

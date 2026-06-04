@@ -1706,3 +1706,43 @@ class InvoiceCompletenessTests(TestCase):
         inv.due_date = inv.invoice_date.replace(year=2000)
         inv.save()
         self.assertEqual(inv.display_status, "Overdue")
+
+
+class PdfGenerationTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="PDF Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust", email="c@example.com")
+        self.inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-PDF1")
+        CustomerInvoiceLine.objects.create(invoice=self.inv, description="Widget", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(self.inv)
+        self.user = User.objects.create_user("pdfu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="pdfu", password="pw")
+
+    def test_invoice_pdf_renders(self):
+        resp = self.client.get(f"/ar/invoices/{self.inv.id}/pdf/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "application/pdf")
+        self.assertTrue(resp.content[:5] == b"%PDF-")
+
+    def test_credit_note_pdf_renders(self):
+        from core.models import CreditNote, CreditNoteLine
+        from core.services.gl import post_credit_note
+        cn = CreditNote.objects.create(tenant=self.tenant, kind=CreditNote.Kind.SALES,
+                                       credit_note_number="CN-PDF1", customer=self.customer)
+        CreditNoteLine.objects.create(credit_note=cn, description="Refund", qty=Decimal("1"), unit_amount=Decimal("50.00"), tax_code=self.std)
+        post_credit_note(cn)
+        resp = self.client.get(f"/credit-notes/{cn.id}/pdf/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.content[:5] == b"%PDF-")
+
+    def test_send_attaches_pdf(self):
+        from django.core import mail
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.client.post(f"/ar/invoices/{self.inv.id}/send/")
+            self.assertEqual(len(mail.outbox), 1)
+            self.assertTrue(mail.outbox[0].attachments)
+            fname, content, mime = mail.outbox[0].attachments[0]
+            self.assertEqual(mime, "application/pdf")
