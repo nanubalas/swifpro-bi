@@ -2841,3 +2841,42 @@ class StockAdjustmentTests(TestCase):
             "product": self.product.id, "location": self.loc.id, "reason": "ADJUSTMENT", "qty_delta": "0"})
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "cannot be zero")
+
+
+class LowStockAndLedgerTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, Location, InventoryMovement
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="LS Co")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.user = User.objects.create_user("lsu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="lsu", password="pw")
+        # low: reorder 50, on hand 10
+        self.low = Product.objects.create(tenant=self.tenant, sku="SKU-LOW", name="Low", reorder_level=Decimal("50"))
+        apply_movement(tenant=self.tenant, product=self.low, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="SEED", ref_id="1", unit_cost=Decimal("1"), user=self.user)
+        # ok: reorder 5, on hand 100
+        self.ok = Product.objects.create(tenant=self.tenant, sku="SKU-OK", name="Ok", reorder_level=Decimal("5"))
+        apply_movement(tenant=self.tenant, product=self.ok, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("100"), ref_type="SEED", ref_id="2", unit_cost=Decimal("1"))
+
+    def test_low_stock_lists_only_below_reorder(self):
+        resp = self.client.get("/inventory/low-stock/")
+        self.assertEqual(resp.status_code, 200)
+        skus = [r["product"].sku for r in resp.context["rows"]]
+        self.assertEqual(skus, ["SKU-LOW"])
+        self.assertEqual(resp.context["rows"][0]["shortfall"], Decimal("40.00"))
+
+    def test_stock_movements_ledger_and_filter(self):
+        resp = self.client.get("/inventory/movements/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context["movements"]), 2)
+        # filter by product
+        resp = self.client.get(f"/inventory/movements/?product={self.low.id}")
+        self.assertEqual([m.product.sku for m in resp.context["movements"]], ["SKU-LOW"])
+        # filter by type
+        resp = self.client.get("/inventory/movements/?type=RECEIVE")
+        self.assertEqual(len(resp.context["movements"]), 2)
+        # the ledger shows the user who made the movement
+        self.assertContains(self.client.get("/inventory/movements/"), "lsu")

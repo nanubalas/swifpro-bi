@@ -1675,6 +1675,61 @@ def adjustment_reject(request, adj_id):
     return redirect("adjustment_list")
 
 
+# ============================
+# Low-stock alerts + stock movement history
+# ============================
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])
+def low_stock(request):
+    """Products whose total on-hand has fallen below their reorder level."""
+    tenant = _get_default_tenant(request)
+    rows = []
+    for p in (Product.objects.filter(tenant=tenant, reorder_level__gt=0, is_active=True)
+              .select_related("preferred_supplier")):
+        on_hand = p.on_hand_total
+        if on_hand < p.reorder_level:
+            rows.append({"product": p, "on_hand": on_hand, "reorder": p.reorder_level,
+                         "shortfall": p.reorder_level - on_hand})
+    rows.sort(key=lambda r: r["shortfall"], reverse=True)
+    return render(request, "inventory/low_stock.html", {"tenant": tenant, "rows": rows})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])
+def stock_movements(request):
+    """The stock ledger: every movement, filterable by product/location/type/date."""
+    tenant = _get_default_tenant(request)
+    product_id = request.GET.get("product") or ""
+    location_id = request.GET.get("location") or ""
+    mtype = request.GET.get("type") or ""
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+
+    qs = InventoryMovement.objects.filter(tenant=tenant).select_related("product", "location", "user")
+    if product_id:
+        qs = qs.filter(product_id=product_id)
+    if location_id:
+        qs = qs.filter(location_id=location_id)
+    if mtype:
+        qs = qs.filter(movement_type=mtype)
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+    movements = qs.order_by("-created_at", "-id")[:300]
+
+    return render(request, "inventory/stock_movements.html", {
+        "tenant": tenant, "movements": movements,
+        "product": product_id, "location": location_id, "type": mtype,
+        "date_from": date_from, "date_to": date_to,
+        "products": Product.objects.filter(tenant=tenant).order_by("sku"),
+        "locations": Location.objects.filter(tenant=tenant).order_by("name"),
+        "type_choices": InventoryMovement.MovementType.choices,
+        "filtered": bool(product_id or location_id or mtype or date_from or date_to),
+    })
+
+
 @login_required
 @role_required([ROLE_ADMIN, ROLE_FINANCE, ROLE_READONLY])
 
