@@ -102,6 +102,7 @@ NAV = [
         ("Customers", "/customers/", "people", {ADMIN, MANAGER, SALES, ACCOUNTANT, FINANCE}),
         ("Returns (RMA)", "/returns/", "arrow-return-left", {ADMIN, MANAGER, SALES, WAREHOUSE}),
         ("Channel Orders", "/sales-orders/", "bag", {ADMIN, MANAGER, SALES}),
+        ("Sales Reports", "/sales/reports/", "graph-up", {ADMIN, MANAGER, SALES, ACCOUNTANT, FINANCE}),
     ]),
     ("Procurement", [
         ("Purchase Orders", "/po/", "file-earmark-text", {ADMIN, MANAGER, PURCHASING}),

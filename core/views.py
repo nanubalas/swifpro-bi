@@ -534,6 +534,34 @@ def _finance_export_data(tenant, kind, date_from, date_to, as_of):
                 for r in vat_svc.vat_transactions(tenant, date_from, date_to)]
         return f"vat-records-{date_from}-to-{date_to}.csv", cols, rows
 
+    if kind in ("sales-history", "sales-by-product", "sales-by-customer", "sales-by-channel"):
+        from core.services import sales_reports
+        if kind == "sales-history":
+            d = sales_reports.sales_history(tenant, date_from, date_to)
+            cols = ["Invoice", "Date", "Customer", "Status", "Net", "VAT", "Total"]
+            rows = [[r["invoice"].invoice_number, r["invoice"].invoice_date, r["invoice"].customer.name,
+                     r["invoice"].display_status, money(r["net"]), money(r["vat"]), money(r["total"])]
+                    for r in d["rows"]]
+            rows.append(["", "", "", "TOTAL", money(d["net_total"]), money(d["vat_total"]), money(d["grand_total"])])
+            return f"sales-history-{date_from}-to-{date_to}.csv", cols, rows
+        if kind == "sales-by-product":
+            d = sales_reports.sales_by_product(tenant, date_from, date_to)
+            cols = ["Product", "Name", "Qty", "Net", "Total"]
+            rows = [[r["key"], r["name"], money(r["qty"]), money(r["net"]), money(r["total"])] for r in d["rows"]]
+            rows.append(["", "TOTAL", "", money(d["net_total"]), money(d["grand_total"])])
+            return f"sales-by-product-{date_from}-to-{date_to}.csv", cols, rows
+        if kind == "sales-by-customer":
+            d = sales_reports.sales_by_customer(tenant, date_from, date_to)
+            cols = ["Customer", "Invoices", "Net", "Total"]
+            rows = [[r["name"], r["count"], money(r["net"]), money(r["total"])] for r in d["rows"]]
+            rows.append(["TOTAL", "", money(d["net_total"]), money(d["grand_total"])])
+            return f"sales-by-customer-{date_from}-to-{date_to}.csv", cols, rows
+        d = sales_reports.sales_by_channel(tenant, date_from, date_to)
+        cols = ["Channel", "Orders", "Total"]
+        rows = [[r["channel"], r["count"], money(r["total"])] for r in d["rows"]]
+        rows.append(["TOTAL", "", money(d["grand_total"])])
+        return f"sales-by-channel-{date_from}-to-{date_to}.csv", cols, rows
+
     return None
 
 
@@ -544,7 +572,8 @@ def finance_export(request, kind):
     as_of = _parse_date(request.GET.get("as_of")) or _parse_date(request.GET.get("to")) or timezone.localdate()
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
-    if kind in ("profit-and-loss", "cash-flow", "vat-return", "vat-transactions") and not date_from and not date_to:
+    if kind in ("profit-and-loss", "cash-flow", "vat-return", "vat-transactions",
+                "sales-history", "sales-by-product", "sales-by-customer", "sales-by-channel") and not date_from and not date_to:
         date_from, date_to = reports_service.current_financial_year(tenant)
     result = _finance_export_data(tenant, kind, date_from, date_to, as_of)
     if result is None:
@@ -3121,6 +3150,71 @@ def recurring_run_due(request):
                   detail=f"run due: {len(created)} invoice(s)")
         messages.success(request, f"Generated {len(created)} invoice(s) from due recurring templates." if created else "No recurring invoices were due.")
     return redirect("recurring_list")
+
+
+# ---- Sales reports ----
+
+def _sales_period(request, tenant):
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    if not date_from and not date_to:
+        date_from, date_to = reports_service.current_financial_year(tenant)
+    elif not date_to:
+        date_to = timezone.localdate()
+    return date_from, date_to
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def sales_reports_index(request):
+    tenant = _get_default_tenant(request)
+    return render(request, "sales/reports_index.html", {"tenant": tenant})
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def report_sales_history(request):
+    tenant = _get_default_tenant(request)
+    date_from, date_to = _sales_period(request, tenant)
+    from core.services import sales_reports
+    data = sales_reports.sales_history(tenant, date_from, date_to)
+    return render(request, "sales/report_history.html", {
+        "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to,
+        "export_kind": "sales-history", "export_qs": f"?from={date_from}&to={date_to}"})
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def report_sales_by_product(request):
+    tenant = _get_default_tenant(request)
+    date_from, date_to = _sales_period(request, tenant)
+    from core.services import sales_reports
+    data = sales_reports.sales_by_product(tenant, date_from, date_to)
+    return render(request, "sales/report_grouped.html", {
+        "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to,
+        "title": "Sales by Product", "label": "Product", "show_qty": True,
+        "export_kind": "sales-by-product", "export_qs": f"?from={date_from}&to={date_to}"})
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def report_sales_by_customer(request):
+    tenant = _get_default_tenant(request)
+    date_from, date_to = _sales_period(request, tenant)
+    from core.services import sales_reports
+    data = sales_reports.sales_by_customer(tenant, date_from, date_to)
+    return render(request, "sales/report_grouped.html", {
+        "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to,
+        "title": "Sales by Customer", "label": "Customer", "show_count": True,
+        "export_kind": "sales-by-customer", "export_qs": f"?from={date_from}&to={date_to}"})
+
+
+@role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
+def report_sales_by_channel(request):
+    tenant = _get_default_tenant(request)
+    date_from, date_to = _sales_period(request, tenant)
+    from core.services import sales_reports
+    data = sales_reports.sales_by_channel(tenant, date_from, date_to)
+    return render(request, "sales/report_grouped.html", {
+        "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to,
+        "title": "Sales by Channel", "label": "Channel", "show_count": True, "channel_mode": True,
+        "export_kind": "sales-by-channel", "export_qs": f"?from={date_from}&to={date_to}"})
 
 
 # ============================

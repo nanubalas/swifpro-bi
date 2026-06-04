@@ -2000,3 +2000,69 @@ class CustomerStatementTests(TestCase):
             self.assertEqual(len(mail.outbox), 1)
             self.assertTrue(mail.outbox[0].attachments)
         self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="STATEMENT_SENT").exists())
+
+
+class SalesReportsTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        import datetime
+        self.tenant = Tenant.objects.create(name="SR Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.c1 = Customer.objects.create(tenant=self.tenant, name="Alpha")
+        self.c2 = Customer.objects.create(tenant=self.tenant, name="Beta")
+        self.p1 = Product.objects.create(tenant=self.tenant, sku="SKU-1", name="Widget")
+        self.p2 = Product.objects.create(tenant=self.tenant, sku="SKU-2", name="Gadget")
+        self._inv(self.c1, [(self.p1, 2, 100), (self.p2, 1, 50)], "INV-1", datetime.date(2026, 3, 1))
+        self._inv(self.c2, [(self.p1, 1, 100)], "INV-2", datetime.date(2026, 3, 2))
+        self.user = User.objects.create_user("sru", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="sru", password="pw")
+
+    def _inv(self, customer, lines, number, date):
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=customer, invoice_number=number, invoice_date=date)
+        for prod, qty, price in lines:
+            CustomerInvoiceLine.objects.create(invoice=inv, product=prod, qty=Decimal(qty), unit_price=Decimal(price), tax_code=self.std)
+        post_customer_invoice(inv)
+        return inv
+
+    def _range(self):
+        import datetime
+        return datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)
+
+    def test_history_totals(self):
+        from core.services import sales_reports
+        d = sales_reports.sales_history(self.tenant, *self._range())
+        self.assertEqual(len(d["rows"]), 2)
+        self.assertEqual(d["net_total"], Decimal("350.00"))   # 250 + 100
+        self.assertEqual(d["grand_total"], Decimal("420.00"))  # +20% VAT
+
+    def test_by_product(self):
+        from core.services import sales_reports
+        d = sales_reports.sales_by_product(self.tenant, *self._range())
+        by_sku = {r["key"]: r for r in d["rows"]}
+        self.assertEqual(by_sku["SKU-1"]["qty"], Decimal("3.00"))   # 2 + 1
+        self.assertEqual(by_sku["SKU-1"]["net"], Decimal("300.00"))
+        self.assertEqual(by_sku["SKU-2"]["net"], Decimal("50.00"))
+
+    def test_by_customer(self):
+        from core.services import sales_reports
+        d = sales_reports.sales_by_customer(self.tenant, *self._range())
+        by_name = {r["name"]: r for r in d["rows"]}
+        self.assertEqual(by_name["Alpha"]["total"], Decimal("300.00"))  # (250)*1.2
+        self.assertEqual(by_name["Beta"]["total"], Decimal("120.00"))
+
+    def test_by_channel_direct(self):
+        from core.services import sales_reports
+        d = sales_reports.sales_by_channel(self.tenant, *self._range())
+        direct = [r for r in d["rows"] if r["channel"].startswith("Direct")][0]
+        self.assertEqual(direct["count"], 2)
+        self.assertEqual(direct["total"], Decimal("420.00"))
+
+    def test_report_pages_and_exports(self):
+        for path in ["/sales/reports/", "/sales/reports/history/", "/sales/reports/by-product/",
+                     "/sales/reports/by-customer/", "/sales/reports/by-channel/"]:
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+        for k in ["sales-history", "sales-by-product", "sales-by-customer", "sales-by-channel"]:
+            r = self.client.get(f"/finance/export/{k}.csv?from=2026-01-01&to=2026-12-31")
+            self.assertEqual(r.status_code, 200, k)
+            self.assertEqual(r["Content-Type"], "text/csv")
