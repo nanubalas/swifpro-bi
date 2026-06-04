@@ -2133,3 +2133,70 @@ class InvoiceInventoryCogsTests(TestCase):
                                            unit_price=Decimal("25.00"), tax_code=std2)
         post_customer_invoice(inv)
         self.assertFalse(JournalEntry.objects.filter(tenant=t2, ref_type="COGS").exists())
+
+
+class SalesEditTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, SalesQuote, SalesQuoteLine
+        self.tenant = Tenant.objects.create(name="Edit Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.user = User.objects.create_user("editu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="editu", password="pw")
+
+    def _formset(self, prefix_id, desc, qty, price, extra=None):
+        data = {
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "1",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-id": str(prefix_id), "lines-0-description": desc, "lines-0-qty": str(qty),
+            "lines-0-unit_price": str(price), "lines-0-discount_pct": "0", "lines-0-tax_code": self.std.id,
+        }
+        if extra:
+            data.update(extra)
+        return data
+
+    def test_edit_draft_invoice(self):
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-E1")
+        line = CustomerInvoiceLine.objects.create(invoice=inv, description="Old", qty=Decimal("1"), unit_price=Decimal("10"), tax_code=self.std)
+        data = {"customer": self.customer.id, "invoice_number": "INV-E1", "invoice_date": "2026-06-01", "action": "save"}
+        data.update(self._formset(line.id, "New widget", 3, 50))
+        resp = self.client.post(f"/ar/invoices/{inv.id}/edit/", data)
+        self.assertEqual(resp.status_code, 302)
+        inv.refresh_from_db()
+        self.assertEqual(inv.subtotal, Decimal("150.00"))
+        self.assertEqual(inv.lines.first().description, "New widget")
+
+    def test_cannot_edit_issued_invoice(self):
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-E2")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="X", qty=Decimal("1"), unit_price=Decimal("10"), tax_code=self.std)
+        post_customer_invoice(inv)
+        resp = self.client.get(f"/ar/invoices/{inv.id}/edit/")
+        self.assertEqual(resp.status_code, 302)  # redirected away
+
+    def test_edit_draft_quote(self):
+        from core.models import SalesQuote, SalesQuoteLine
+        q = SalesQuote.objects.create(tenant=self.tenant, customer=self.customer, quote_number="QUO-E1")
+        line = SalesQuoteLine.objects.create(quote=q, description="Old", qty=Decimal("1"), unit_price=Decimal("10"), tax_code=self.std)
+        data = {"customer": self.customer.id, "quote_number": "QUO-E1", "quote_date": "2026-06-01"}
+        data.update(self._formset(line.id, "Revised", 2, 75))
+        resp = self.client.post(f"/quotes/{q.id}/edit/", data)
+        self.assertEqual(resp.status_code, 302)
+        q.refresh_from_db()
+        self.assertEqual(q.total, Decimal("180.00"))  # 150 + 20% VAT
+
+    def test_edit_recurring_template(self):
+        from core.models import RecurringInvoice, RecurringInvoiceLine
+        import datetime
+        t = RecurringInvoice.objects.create(tenant=self.tenant, customer=self.customer, name="Old name",
+                                            frequency="MONTHLY", interval=1, start_date=datetime.date(2026, 1, 1),
+                                            next_run_date=datetime.date(2026, 1, 1))
+        line = RecurringInvoiceLine.objects.create(template=t, description="Svc", qty=Decimal("1"), unit_price=Decimal("100"), tax_code=self.std)
+        data = {"name": "New name", "customer": self.customer.id, "frequency": "MONTHLY", "interval": "1",
+                "start_date": "2026-01-01", "next_run_date": "2026-01-01", "auto_issue": "on"}
+        data.update(self._formset(line.id, "Svc", 1, 150))
+        resp = self.client.post(f"/recurring-invoices/{t.id}/edit/", data)
+        self.assertEqual(resp.status_code, 302)
+        t.refresh_from_db()
+        self.assertEqual(t.name, "New name")
+        self.assertEqual(t.total, Decimal("180.00"))
