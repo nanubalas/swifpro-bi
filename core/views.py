@@ -1819,14 +1819,20 @@ def inventory_list(request):
 # ============================
 
 def _post_stock_adjustment(adj, user):
-    """Write the inventory movement for an adjustment and mark it posted."""
+    """Write the inventory movement for an adjustment, post its GL impact, and
+    mark it posted. The GL value follows the costed movement value so damage /
+    write-off / shrinkage hit the books (DR Inventory Adjustments / CR Inventory),
+    keeping the inventory control account in step with the stock ledger."""
     from core.models import StockAdjustment
-    apply_movement(
+    from core.services.gl import post_stock_adjustment
+    movement = apply_movement(
         tenant=adj.tenant, product=adj.product, location=adj.location,
         movement_type=adj.movement_type, qty_delta=adj.qty_delta,
         ref_type="STOCK_ADJ", ref_id=str(adj.id),
         notes=(adj.get_reason_display() + (f": {adj.notes}" if adj.notes else "")), user=user,
     )
+    # Book the GL impact using the costed movement value (signed like qty_delta).
+    post_stock_adjustment(adj, getattr(movement, "value", None) or Decimal("0.00"), user=user)
     adj.status = StockAdjustment.Status.POSTED
     adj.posted_at = timezone.now()
     adj.approved_by = user

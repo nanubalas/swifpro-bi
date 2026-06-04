@@ -26,6 +26,7 @@ DEFAULT_ACCOUNTS = [
     ("4000", "Sales Revenue", "INCOME"),
     ("5000", "Cost of Goods Sold", "COGS"),
     ("5100", "Purchase Price Variance", "EXPENSE"),
+    ("5200", "Inventory Adjustments / Shrinkage", "EXPENSE"),
     # Operating expense accounts (used by the Expenses module).
     ("6000", "General Expenses", "EXPENSE"),
     ("6100", "Rent & Rates", "EXPENSE"),
