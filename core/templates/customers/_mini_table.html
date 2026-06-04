@@ -1,0 +1,43 @@
+{% load money %}
+<div class="card mb-3"><div class="card-body">
+  <h6 class="fw-bold mb-3">{{ title }}</h6>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          {% if kind == "invoice" %}
+            <td><a class="text-decoration-none" href="{% url 'ar_invoice_detail' r.id %}">{{ r.invoice_number }}</a></td>
+            <td class="text-muted small">{{ r.invoice_date|date:'d M Y' }}</td>
+            <td>{{ r.display_status }}</td>
+            <td class="text-end">{{ r.total|money:tenant.currency_code }}</td>
+            <td class="text-end text-muted">{{ r.outstanding|money:tenant.currency_code }} due</td>
+          {% elif kind == "payment" %}
+            <td><a class="text-decoration-none" href="{% url 'payment_detail' r.id %}">{{ r.get_direction_display }}</a></td>
+            <td class="text-muted small">{{ r.payment_date|date:'d M Y' }}</td>
+            <td>{{ r.get_method_display }}</td>
+            <td class="text-end">{{ r.amount|money:tenant.currency_code }}</td>
+          {% elif kind == "credit" %}
+            <td><a class="text-decoration-none" href="{% url 'credit_note_detail' r.id %}">{{ r.credit_note_number }}</a></td>
+            <td class="text-muted small">{{ r.credit_note_date|date:'d M Y' }}</td>
+            <td>{{ r.get_status_display }}</td>
+            <td class="text-end">{{ r.total|money:tenant.currency_code }}</td>
+          {% elif kind == "order" %}
+            <td><a class="text-decoration-none" href="{% url 'corder_detail' r.id %}">{{ r.order_number }}</a></td>
+            <td class="text-muted small">{{ r.order_date|date:'d M Y' }}</td>
+            <td>{{ r.get_status_display }}</td>
+            <td class="text-end">{{ r.total|money:tenant.currency_code }}</td>
+          {% elif kind == "quote" %}
+            <td><a class="text-decoration-none" href="{% url 'quote_detail' r.id %}">{{ r.quote_number }}</a></td>
+            <td class="text-muted small">{{ r.quote_date|date:'d M Y' }}</td>
+            <td>{{ r.get_status_display }}</td>
+            <td class="text-end">{{ r.total|money:tenant.currency_code }}</td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td class="text-muted text-center py-3">None.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>

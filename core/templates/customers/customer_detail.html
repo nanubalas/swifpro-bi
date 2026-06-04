@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}{{ c.name }} - Customer - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{% url 'customer_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+    <div>
+      <h2 class="fw-bold mb-0">{{ c.name }}</h2>
+      <div class="text-muted">
+        <span class="badge text-bg-secondary">{{ c.get_customer_type_display }}</span>
+        {% if c.status == 'ACTIVE' %}<span class="badge text-bg-success">Active</span>{% elif c.status == 'ON_HOLD' %}<span class="badge text-bg-warning">On hold</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}
+        {% for t in c.tag_list %}<span class="badge text-bg-light text-dark border">{{ t }}</span>{% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'customer_statement' c.id %}"><i class="bi bi-file-text me-1"></i> Statement</a>
+    <a class="btn btn-outline-primary" href="{% url 'customer_edit' c.id %}"><i class="bi bi-pencil me-1"></i> Edit</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4"><div class="card stat-card p-3"><div class="text-muted small">Outstanding balance</div><div class="fs-4 fw-bold">{{ c.outstanding_balance|money:tenant.currency_code }}</div>
+    {% if c.is_over_limit %}<div class="small text-danger">Over credit limit</div>{% elif c.available_credit is not None %}<div class="small text-muted">{{ c.available_credit|money:tenant.currency_code }} credit available</div>{% endif %}</div></div>
+  <div class="col-md-4"><div class="card stat-card p-3"><div class="text-muted small">Lifetime sales (issued)</div><div class="fs-4 fw-bold">{{ sales_total|money:tenant.currency_code }}</div><div class="small text-muted">{{ invoice_count }} invoice(s)</div></div></div>
+  <div class="col-md-4"><div class="card stat-card p-3"><div class="text-muted small">Credit limit / terms</div><div class="fs-5 fw-bold">{{ c.credit_limit|money:tenant.currency_code }}</div><div class="small text-muted">{% if c.payment_terms_days %}{{ c.payment_terms_days }} day terms{% else %}Default terms{% endif %}</div></div></div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-4">
+    <div class="card mb-4"><div class="card-body">
+      <h5 class="fw-bold mb-3">Details</h5>
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-muted fw-normal">Contact</dt><dd class="col-7">{{ c.contact_person|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">Email</dt><dd class="col-7">{{ c.email|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">Phone</dt><dd class="col-7">{{ c.phone|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">VAT number</dt><dd class="col-7">{{ c.vat_number|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">Company no.</dt><dd class="col-7">{{ c.company_number|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">Billing</dt><dd class="col-7">{{ c.billing_address|linebreaksbr|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">Shipping</dt><dd class="col-7">{{ c.shipping_address|linebreaksbr|default:'-' }}</dd>
+      </dl>
+      {% if c.notes %}<hr><div class="text-muted small">Notes</div><div class="small">{{ c.notes|linebreaksbr }}</div>{% endif %}
+    </div></div>
+
+    <div class="card"><div class="card-body">
+      <h5 class="fw-bold mb-3">Activity timeline</h5>
+      <ul class="list-unstyled mb-0">
+        {% for e in timeline %}
+        <li class="d-flex gap-2 mb-3">
+          <span class="text-muted"><i class="bi bi-{{ e.icon }}"></i></span>
+          <div>
+            <a class="text-decoration-none" href="{{ e.url }}">{{ e.text }}</a>
+            <div class="text-muted small">{{ e.date|date:'d M Y' }}</div>
+          </div>
+        </li>
+        {% empty %}
+        <li class="text-muted">No activity yet.</li>
+        {% endfor %}
+      </ul>
+    </div></div>
+  </div>
+
+  <div class="col-lg-8">
+    {% include "customers/_mini_table.html" with title="Recent invoices" rows=invoices kind="invoice" %}
+    {% include "customers/_mini_table.html" with title="Payments & refunds" rows=payments kind="payment" %}
+    {% include "customers/_mini_table.html" with title="Credit notes" rows=credit_notes kind="credit" %}
+    {% include "customers/_mini_table.html" with title="Sales orders" rows=orders kind="order" %}
+    {% include "customers/_mini_table.html" with title="Quotes" rows=quotes kind="quote" %}
+  </div>
+</div>
+{% endblock %}

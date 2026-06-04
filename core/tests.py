@@ -2330,3 +2330,43 @@ class CustomerRecordTests(TestCase):
         body = self.client.get("/export/customers.csv").content.decode()
         self.assertIn("customer_type", body)
         self.assertIn("Imported Ltd", body)
+
+
+class CustomerProfileTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, Payment, PaymentAllocation, CreditNote, CreditNoteLine
+        from core.services.gl import post_customer_invoice, post_payment, post_credit_note
+        self.tenant = Tenant.objects.create(name="Prof Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Profile Cust", email="p@example.com",
+                                                customer_type="TRADE", credit_limit=Decimal("1000.00"))
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-P1")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="Item", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(inv)
+        p = Payment.objects.create(tenant=self.tenant, direction=Payment.Direction.RECEIPT, customer=self.customer,
+                                   amount=Decimal("100.00"), method="BANK")
+        PaymentAllocation.objects.create(payment=p, customer_invoice=inv, amount=Decimal("100.00"))
+        post_payment(p)
+        cn = CreditNote.objects.create(tenant=self.tenant, kind=CreditNote.Kind.SALES, credit_note_number="CN-P1", customer=self.customer)
+        CreditNoteLine.objects.create(credit_note=cn, description="Adj", qty=Decimal("1"), unit_amount=Decimal("10.00"), tax_code=self.std)
+        post_credit_note(cn)
+        self.user = User.objects.create_user("profu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="profu", password="pw")
+
+    def test_profile_page_shows_everything(self):
+        resp = self.client.get(f"/customers/{self.customer.id}/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "INV-P1")        # invoice
+        self.assertContains(resp, "CN-P1")         # credit note
+        self.assertContains(resp, "Receipt")       # payment
+        self.assertContains(resp, "Activity timeline")
+        # outstanding = invoice 240 - 100 paid = 140 (standalone credit note not allocated to it)
+        self.assertEqual(resp.context["c"].outstanding_balance, Decimal("140.00"))
+
+    def test_timeline_is_populated_and_sorted(self):
+        resp = self.client.get(f"/customers/{self.customer.id}/")
+        timeline = resp.context["timeline"]
+        self.assertGreaterEqual(len(timeline), 3)  # invoice + payment + credit note
+        dates = [e["date"] for e in timeline]
+        self.assertEqual(dates, sorted(dates, reverse=True))
