@@ -57,7 +57,50 @@ def post_customer_invoice(inv: CustomerInvoice, user=None) -> JournalEntry:
     inv.issued_at = timezone.now()
     inv.save()
 
+    # Inventory + COGS: deduct stock and expense cost of goods for stocked
+    # product lines. Description-only (service) lines and tenants without a
+    # stock location are skipped, so service businesses are unaffected.
+    _post_invoice_cogs(inv, user=user)
+
     return je
+
+
+def _post_invoice_cogs(inv, user=None):
+    """Deduct stock and post COGS for an issued customer invoice's product lines.
+
+    Mirrors the channel sales-order behaviour (moving-average / FIFO cost via
+    apply_movement; negative stock allowed). Idempotent via the COGS journal
+    entry's ref, so re-issuing never double-counts."""
+    from core.models import Location, InventoryMovement
+    from core.services.inventory import apply_movement
+
+    tenant = inv.tenant
+    product_lines = [l for l in inv.lines.all() if l.product_id]
+    if not product_lines:
+        return None
+    location = (Location.objects.filter(tenant=tenant, type=Location.Type.WAREHOUSE).order_by("id").first()
+                or Location.objects.filter(tenant=tenant).order_by("id").first())
+    if location is None:
+        return None  # no stock location configured -> treat as non-stock sale
+
+    # Guard against double-posting if somehow called twice.
+    if JournalEntry.objects.filter(tenant=tenant, ref_type="COGS", ref_id=inv.invoice_number).exists():
+        return None
+
+    cogs_total = Decimal("0.00")
+    for line in product_lines:
+        movement = apply_movement(
+            tenant=tenant, product=line.product, location=location,
+            movement_type=InventoryMovement.MovementType.SALE,
+            qty_delta=(line.qty or Decimal("0.00")) * Decimal("-1"),
+            ref_type="AR_INVOICE", ref_id=inv.invoice_number,
+            notes=f"Invoice {inv.invoice_number}",
+        )
+        cogs_total += -(movement.value or Decimal("0.00"))
+
+    if cogs_total > Decimal("0.00"):
+        post_cogs(tenant, cogs_total, inv.invoice_number, user=user, entry_date=inv.invoice_date)
+    return cogs_total
 
 @transaction.atomic
 def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
