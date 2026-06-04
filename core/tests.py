@@ -3064,6 +3064,54 @@ class PurchaseRequisitionTests(TestCase):
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
 
 
+class SupplierScorecardTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        from django.utils import timezone
+        self.tenant = Tenant.objects.create(name="Score Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Globex")
+        self.prod = Product.objects.create(tenant=self.tenant, sku="SC1", name="P")
+        self.today = timezone.localdate()
+        self.user = User.objects.create_user("scu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="scu", password="pw")
+
+    def test_spend_otd_and_variance(self):
+        from core.models import (PurchaseOrder, PurchaseOrderLine, GoodsReceipt,
+                                 SupplierInvoice, SupplierInvoiceLine)
+        from core.services.gl import post_supplier_invoice
+        from core.services import purchasing
+        from datetime import timedelta
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-SC", supplier=self.supplier,
+                                          status=PurchaseOrder.Status.RECEIVED, expected_date=self.today)
+        pol = PurchaseOrderLine.objects.create(po=po, product=self.prod, ordered_qty=Decimal("10"),
+                                               unit_cost=Decimal("10.00"), tax_code=self.std)
+        grn = GoodsReceipt.objects.create(tenant=self.tenant, po=po, grn_number="GRN-SC", received_to=self.loc,
+                                          status=GoodsReceipt.Status.POSTED)
+        inv = SupplierInvoice.objects.create(tenant=self.tenant, supplier=self.supplier, po=po,
+                                             receipt=grn, invoice_number="BILL-SC", invoice_date=self.today)
+        SupplierInvoiceLine.objects.create(invoice=inv, product=self.prod, po_line=pol,
+                                           qty=Decimal("10"), unit_cost=Decimal("11.00"), tax_code=self.std)
+        post_supplier_invoice(inv)
+
+        data = purchasing.supplier_scorecard(self.tenant, self.today - timedelta(days=1),
+                                             self.today + timedelta(days=1))
+        r = data["rows"][0]
+        self.assertEqual(r["bills"], 1)
+        self.assertEqual(r["receipts"], 1)
+        self.assertEqual(r["on_time"], 1)
+        self.assertEqual(r["otd_pct"], Decimal("100.0"))
+        self.assertEqual(r["price_variance"], Decimal("10.00"))  # 10 units x (11-10)
+        self.assertEqual(r["spend"], inv.total)
+
+    def test_page_renders(self):
+        resp = self.client.get("/reports/supplier-scorecard/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Supplier Scorecard")
+
+
 class ProfitabilityReportTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership

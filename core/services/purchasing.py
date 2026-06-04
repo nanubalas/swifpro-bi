@@ -70,6 +70,61 @@ def average_price(tenant, supplier, product):
     return agg["a"]
 
 
+def supplier_scorecard(tenant, date_from, date_to):
+    """Per-supplier performance for the period: spend, on-time delivery and
+    purchase price variance.
+
+    - spend: total of posted supplier bills (by invoice date).
+    - OTD: posted GRNs received on/before the PO's expected date, as a % of GRNs
+      that had an expected date.
+    - price variance: sum over matched bill lines of (billed - ordered) unit cost
+      x qty (positive = paid more than the PO price)."""
+    from core.models import SupplierInvoice, GoodsReceipt
+    Z = Decimal("0.00")
+    rows = {}
+
+    def row(supplier):
+        return rows.setdefault(supplier.id, {
+            "supplier": supplier, "spend": Z, "bills": 0,
+            "receipts": 0, "on_time": 0, "rated": 0, "price_variance": Z,
+        })
+
+    bills = (SupplierInvoice.objects
+             .filter(tenant=tenant, status="POSTED",
+                     invoice_date__gte=date_from, invoice_date__lte=date_to)
+             .select_related("supplier")
+             .prefetch_related("lines", "lines__po_line", "lines__tax_code"))
+    for b in bills:
+        r = row(b.supplier)
+        r["spend"] += b.total
+        r["bills"] += 1
+        for l in b.lines.all():
+            if l.po_line_id:
+                r["price_variance"] += (l.unit_cost - l.po_line.unit_cost) * (l.qty or Z)
+
+    grns = (GoodsReceipt.objects
+            .filter(tenant=tenant, status="POSTED",
+                    received_at__date__gte=date_from, received_at__date__lte=date_to)
+            .select_related("po", "po__supplier"))
+    for g in grns:
+        if g.po.supplier_id is None:
+            continue
+        r = row(g.po.supplier)
+        r["receipts"] += 1
+        if g.po.expected_date:
+            r["rated"] += 1
+            if g.received_at.date() <= g.po.expected_date:
+                r["on_time"] += 1
+
+    out = []
+    for r in rows.values():
+        r["otd_pct"] = ((Decimal(r["on_time"]) / r["rated"] * Decimal("100")).quantize(Decimal("0.1"))
+                        if r["rated"] else None)
+        out.append(r)
+    out.sort(key=lambda r: r["spend"], reverse=True)
+    return {"rows": out, "total_spend": sum((r["spend"] for r in out), Z)}
+
+
 @transaction.atomic
 def create_return_credit_note(adj, value, user=None):
     """Create and post a purchase credit note for a return-to-supplier stock

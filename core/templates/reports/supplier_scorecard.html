@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Supplier Scorecard - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-0">Supplier Scorecard</h2>
+    <div class="text-muted small">Spend, on-time delivery and purchase price variance for the period.</div>
+  </div>
+  <form method="get" class="d-flex align-items-end gap-2">
+    <div><label class="form-label mb-1">From</label><input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <div><label class="form-label mb-1">To</label><input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <button class="btn btn-primary btn-sm">Apply</button>
+  </form>
+</div>
+
+<div class="card"><div class="card-body">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Supplier</th>
+          <th class="text-end">Spend</th>
+          <th class="text-end">Bills</th>
+          <th class="text-end">Receipts</th>
+          <th class="text-end">On-time</th>
+          <th class="text-end">OTD %</th>
+          <th class="text-end">Price variance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.rows %}
+        <tr>
+          <td class="fw-semibold"><a class="text-decoration-none" href="{% url 'supplier_detail' r.supplier.id %}">{{ r.supplier.name }}</a></td>
+          <td class="text-end">{{ r.spend|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ r.bills }}</td>
+          <td class="text-end">{{ r.receipts }}</td>
+          <td class="text-end">{{ r.on_time }}/{{ r.rated }}</td>
+          <td class="text-end">
+            {% if r.otd_pct is None %}<span class="text-muted">—</span>
+            {% elif r.otd_pct >= 90 %}<span class="badge text-bg-success">{{ r.otd_pct }}%</span>
+            {% elif r.otd_pct >= 70 %}<span class="badge text-bg-warning">{{ r.otd_pct }}%</span>
+            {% else %}<span class="badge text-bg-danger">{{ r.otd_pct }}%</span>{% endif %}
+          </td>
+          <td class="text-end {% if r.price_variance > 0 %}text-danger{% elif r.price_variance < 0 %}text-success{% endif %}">{{ r.price_variance|money:tenant.currency_code }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-5">No supplier activity in this period.</td></tr>
+        {% endfor %}
+      </tbody>
+      {% if data.rows %}
+      <tfoot class="table-light"><tr class="fw-bold"><td class="text-end">Total spend</td><td class="text-end">{{ data.total_spend|money:tenant.currency_code }}</td><td colspan="5"></td></tr></tfoot>
+      {% endif %}
+    </table>
+  </div>
+  <div class="text-muted small mt-2">Price variance: positive (red) means billed above the PO price; negative (green) means below.</div>
+</div></div>
+{% endblock %}

@@ -111,6 +111,7 @@ NAV = [
         ("Suppliers", "/suppliers/", "shop", {ADMIN, MANAGER, PURCHASING, ACCOUNTANT, FINANCE}),
         ("Shipments", "/shipments/", "truck", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Supplier Invoices", "/invoices/", "receipt-cutoff", {ADMIN, ACCOUNTANT, FINANCE}),
+        ("Supplier Scorecard", "/reports/supplier-scorecard/", "speedometer2", {ADMIN, MANAGER, PURCHASING, FINANCE, ACCOUNTANT}),
     ]),
     ("Inventory", [
         ("Inventory", "/inventory/", "boxes", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),

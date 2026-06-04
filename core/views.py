@@ -4331,6 +4331,18 @@ def report_profitability(request):
         "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to})
 
 
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_FINANCE, ROLE_READONLY],
+               write_groups=[ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_FINANCE])
+def report_supplier_scorecard(request):
+    """Supplier performance: spend, on-time delivery and price variance."""
+    tenant = _get_default_tenant(request)
+    date_from, date_to = _sales_period(request, tenant)
+    from core.services import purchasing
+    data = purchasing.supplier_scorecard(tenant, date_from, date_to)
+    return render(request, "reports/supplier_scorecard.html", {
+        "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to})
+
+
 # ============================
 # General Ledger
 # ============================
