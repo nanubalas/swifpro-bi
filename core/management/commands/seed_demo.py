@@ -565,4 +565,94 @@ class Command(BaseCommand):
             generated = recurring_service.generate_for_template(retainer, today=today)
             self.stdout.write(f"Seeded recurring retainer ({len(generated)} invoices generated).")
 
+        # ----------------------------------------------------------------
+        # Product master demo data: every product type, categories +
+        # subcategories, variants, pack size, batch/expiry/serial tracking,
+        # barcodes, sales prices and opening stock. Guarded on a marker SKU.
+        # ----------------------------------------------------------------
+        from core.models import ProductCategory, ProductBarcode
+        std_tax = TaxCode.objects.filter(tenant=tenant, code="STD").first()
+        zero_tax = TaxCode.objects.filter(tenant=tenant, code="ZERO").first()
+
+        cat_office, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Office", parent=None)
+        cat_elec, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Electronics", parent=None)
+        cat_lighting, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Lighting", parent=cat_elec)
+        cat_apparel, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Apparel", parent=None)
+        cat_tshirts, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="T-Shirts", parent=cat_apparel)
+        cat_food, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Food & Drink", parent=None)
+        cat_services, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Services", parent=None)
+        cat_materials, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Raw Materials", parent=None)
+
+        # Enrich the existing demo products (incl. the channel/sales ones).
+        for sku, ptype, cat, brand, sale, reorder in [
+            ("SKU-001", Product.Type.FINISHED_GOOD, cat_lighting, "Aurora", "24.99", "20"),
+            ("SKU-002", Product.Type.STOCK, cat_elec, "Nimbus", "14.99", "30"),
+            ("SKU-003", Product.Type.STOCK, cat_office, "Halcyon", "4.99", "100"),
+            ("SKU-004", Product.Type.STOCK, cat_elec, "Stratus", "39.99", "15"),
+            ("SKU-005", Product.Type.FINISHED_GOOD, cat_lighting, "Lumen", "9.99", "40"),
+            ("SKU-KIT-001", Product.Type.BUNDLE, cat_office, "SwifPro", "49.99", "0"),
+        ]:
+            Product.objects.filter(tenant=tenant, sku=sku).update(
+                product_type=ptype, category=cat, brand=brand, sales_price=Decimal(sale),
+                tax_code=std_tax, reorder_level=Decimal(reorder))
+
+        if not Product.objects.filter(tenant=tenant, sku="TSH").exists():
+            def make_full_product(sku, name, ptype, cat, brand, sale, cost, reorder="0",
+                                  parent=None, o1=None, o2=None, pack=None,
+                                  lots=False, expiry=False, serial=False, tax=None, opening=0):
+                p, _ = Product.objects.get_or_create(
+                    tenant=tenant, sku=sku,
+                    defaults={"name": name, "base_uom": each, "uom": "each"})
+                Product.objects.filter(pk=p.pk).update(
+                    name=name, product_type=ptype, category=cat, brand=brand,
+                    sales_price=Decimal(sale), standard_cost=Decimal(cost), tax_code=(tax or std_tax),
+                    reorder_level=Decimal(reorder), parent=parent, option1=o1, option2=o2,
+                    pack_size=pack, track_lots=lots, track_expiry=expiry, track_serial=serial,
+                    description=f"{name} - demo product.")
+                p.refresh_from_db()
+                if opening and not InventoryMovement.objects.filter(tenant=tenant, product=p, ref_type="OPENING").exists():
+                    apply_movement(tenant=tenant, product=p, location=wh,
+                                   movement_type=InventoryMovement.MovementType.RECEIVE,
+                                   qty_delta=Decimal(opening), ref_type="OPENING", ref_id=sku,
+                                   notes="Opening stock", unit_cost=Decimal(cost))
+                return p
+
+            # Service + non-stock + raw material.
+            make_full_product("PRO-INSTALL", "On-site Installation", Product.Type.SERVICE,
+                              cat_services, "SwifPro", "75.00", "0")
+            make_full_product("GIFT-25", "Gift Voucher GBP25", Product.Type.NON_STOCK,
+                              cat_services, "SwifPro", "25.00", "0", tax=zero_tax)
+            make_full_product("RAW-ALU", "Aluminium Sheet 1m", Product.Type.RAW_MATERIAL,
+                              cat_materials, "MetalCo", "0.00", "12.00", reorder="50",
+                              pack="Bundle of 10", lots=True, opening="200")
+
+            # Batch + expiry tracked, and serial tracked.
+            make_full_product("FOOD-BAR", "Protein Bar 60g", Product.Type.STOCK,
+                              cat_food, "FuelUp", "1.99", "0.80", reorder="200",
+                              pack="Case of 24", lots=True, expiry=True, opening="480")
+            make_full_product("SN-LAPTOP", "Pro Laptop 14\"", Product.Type.FINISHED_GOOD,
+                              cat_elec, "Stratus", "899.00", "640.00", reorder="5",
+                              serial=True, opening="8")
+
+            # Variant parent + size/colour variants.
+            tsh = make_full_product("TSH", "Classic T-Shirt", Product.Type.FINISHED_GOOD,
+                                    cat_tshirts, "SwifPro", "12.99", "4.50")
+            for vsku, size, colour, qty in [("TSH-S-BLK", "S", "Black", "40"),
+                                            ("TSH-M-BLK", "M", "Black", "60"),
+                                            ("TSH-L-BLK", "L", "Black", "35"),
+                                            ("TSH-M-WHT", "M", "White", "50")]:
+                make_full_product(vsku, f"Classic T-Shirt ({size} / {colour})", Product.Type.FINISHED_GOOD,
+                                  cat_tshirts, "SwifPro", "12.99", "4.50", reorder="20",
+                                  parent=tsh, o1=size, o2=colour, opening=qty)
+
+            # Barcodes (EAN-13) for a few products.
+            for sku, code in [("SKU-001", "5012345000018"), ("SKU-002", "5012345000025"),
+                              ("FOOD-BAR", "5012345000513"), ("SN-LAPTOP", "5012345000810"),
+                              ("TSH-M-BLK", "5012345001213")]:
+                p = Product.objects.filter(tenant=tenant, sku=sku).first()
+                if p:
+                    ProductBarcode.objects.get_or_create(tenant=tenant, code=code, defaults={"product": p})
+
+            self.stdout.write("Seeded full product master (types, categories, variants, tracking, barcodes, opening stock).")
+
         self.stdout.write(self.style.SUCCESS("Demo data ready. Open http://127.0.0.1:8000/"))
