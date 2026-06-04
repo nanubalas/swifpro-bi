@@ -16,6 +16,7 @@ DEFAULT_ACCOUNT_CODES = {
     "sales": "4000",
     "cogs": "5000",
     "ppv": "5100",
+    "inventory_adjustment": "5200",
 }
 
 def _acc(tenant: Tenant, key: str) -> GLAccount:
@@ -344,6 +345,44 @@ def post_credit_note(cn, user=None) -> JournalEntry:
         if inv.outstanding <= Decimal("0.00"):
             inv.status = CustomerInvoice.Status.PAID
             inv.save(update_fields=["status"])
+    return je
+
+
+@transaction.atomic
+def post_stock_adjustment(adj, value, user=None, entry_date=None):
+    """Book the GL impact of a stock adjustment (damage / write-off / found stock).
+
+    `value` is the signed change in inventory value (same sign as qty_delta):
+      loss (value < 0): DR Inventory Adjustments expense / CR Inventory.
+      gain (value > 0): DR Inventory / CR Inventory Adjustments expense (reduces loss).
+    A zero-value adjustment (e.g. cost unknown) posts nothing. Idempotent via the
+    STOCK_ADJ ref so re-posting never double-counts."""
+    value = Decimal(value)
+    if value == Decimal("0.00"):
+        return None
+    tenant = adj.tenant
+    ref_id = str(adj.id)
+    existing = JournalEntry.objects.filter(tenant=tenant, ref_type="STOCK_ADJ", ref_id=ref_id).order_by("-id").first()
+    if existing:
+        return existing
+
+    je = JournalEntry.objects.create(
+        tenant=tenant, entry_date=entry_date or timezone.now().date(),
+        ref_type="STOCK_ADJ", ref_id=ref_id,
+        memo=f"Stock adjustment {adj.product.sku} ({adj.get_reason_display()})",
+        posted_by=user, posted_at=timezone.now(),
+    )
+    inv_acc = _acc(tenant, "inventory")
+    adj_acc = _acc(tenant, "inventory_adjustment")
+    amount = abs(value)
+    if value < Decimal("0.00"):
+        # Inventory decreases; recognise the loss as an expense.
+        JournalLine.objects.create(entry=je, account=adj_acc, description="Inventory loss / write-off", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=Decimal("0.00"), credit=amount)
+    else:
+        # Inventory increases (e.g. found stock); reduces the expense.
+        JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=adj_acc, description="Inventory gain", debit=Decimal("0.00"), credit=amount)
     return je
 
 

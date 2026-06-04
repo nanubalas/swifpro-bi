@@ -3033,6 +3033,68 @@ class PurchaseRequisitionTests(TestCase):
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
 
 
+class StockAdjustmentGLTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, GLAccount
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="Adj Co")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="ADJ1", name="P")
+        # Seed 100 units @ £2 so the product has an average cost.
+        apply_movement(tenant=self.tenant, product=self.prod, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("100"), ref_type="SEED", ref_id="1",
+                       unit_cost=Decimal("2.00"))
+        self.inv_acc = GLAccount.objects.get(tenant=self.tenant, code="1000")
+        self.adj_acc = GLAccount.objects.get(tenant=self.tenant, code="5200")
+        self.user = User.objects.create_user("adju", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="adju", password="pw")
+
+    def _acc_balance(self, acc):
+        from core.models import JournalLine
+        from django.db.models import Sum
+        agg = JournalLine.objects.filter(account=acc).aggregate(d=Sum("debit"), c=Sum("credit"))
+        return (agg["d"] or Decimal("0.00")) - (agg["c"] or Decimal("0.00"))
+
+    def test_write_off_posts_loss_to_gl(self):
+        from core.models import StockAdjustment, JournalEntry
+        resp = self.client.post("/inventory/adjustments/new/", {
+            "product": self.prod.id, "location": self.loc.id, "reason": "WRITE_OFF",
+            "qty_delta": "-10", "notes": "broken",
+        })
+        self.assertEqual(resp.status_code, 302)
+        adj = StockAdjustment.objects.get(tenant=self.tenant)
+        self.assertEqual(adj.status, StockAdjustment.Status.POSTED)
+        JournalEntry.objects.get(tenant=self.tenant, ref_type="STOCK_ADJ", ref_id=str(adj.id))
+        # 10 units @ £2 = £20 loss: DR 5200 / CR 1000 (only GL postings hit acct 1000)
+        self.assertEqual(self._acc_balance(self.adj_acc), Decimal("20.00"))
+        self.assertEqual(self._acc_balance(self.inv_acc), Decimal("-20.00"))
+
+    def test_found_stock_posts_gain_to_gl(self):
+        from core.models import StockAdjustment
+        self.client.post("/inventory/adjustments/new/", {
+            "product": self.prod.id, "location": self.loc.id, "reason": "ADJUSTMENT",
+            "qty_delta": "5", "notes": "found",
+        })
+        adj = StockAdjustment.objects.get(tenant=self.tenant)
+        self.assertEqual(adj.status, StockAdjustment.Status.POSTED)
+        # 5 units @ £2 = £10 gain: DR 1000 / CR 5200
+        self.assertEqual(self._acc_balance(self.adj_acc), Decimal("-10.00"))
+        self.assertEqual(self._acc_balance(self.inv_acc), Decimal("10.00"))
+
+    def test_je_balances(self):
+        from core.models import StockAdjustment, JournalEntry
+        from django.db.models import Sum
+        self.client.post("/inventory/adjustments/new/", {
+            "product": self.prod.id, "location": self.loc.id, "reason": "DAMAGE",
+            "qty_delta": "-3", "notes": "",
+        })
+        adj = StockAdjustment.objects.get(tenant=self.tenant)
+        je = JournalEntry.objects.get(tenant=self.tenant, ref_type="STOCK_ADJ", ref_id=str(adj.id))
+        agg = je.lines.aggregate(d=Sum("debit"), c=Sum("credit"))
+        self.assertEqual(agg["d"], agg["c"])
+
+
 class CreditLimitEnforcementTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership
