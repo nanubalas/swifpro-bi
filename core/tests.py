@@ -1746,3 +1746,81 @@ class PdfGenerationTests(TestCase):
             self.assertTrue(mail.outbox[0].attachments)
             fname, content, mime = mail.outbox[0].attachments[0]
             self.assertEqual(mime, "application/pdf")
+
+
+class SalesDocumentFlowTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Flow Co", default_payment_terms_days=30)
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.tenant.default_tax_code = self.std
+        self.tenant.save()
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust", email="c@example.com")
+        self.user = User.objects.create_user("flowu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="flowu", password="pw")
+
+    def _make_quote(self, number=""):
+        self.client.post("/quotes/new/", {
+            "customer": self.customer.id, "quote_number": number, "quote_date": "2026-06-01",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0", "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-description": "Widget", "lines-0-qty": "2", "lines-0-unit_price": "100",
+            "lines-0-discount_pct": "0", "lines-0-tax_code": self.std.id,
+        })
+        from core.models import SalesQuote
+        return SalesQuote.objects.get(tenant=self.tenant)
+
+    def test_quote_auto_numbered(self):
+        q = self._make_quote()
+        self.assertEqual(q.quote_number, "QUO-0001")
+        self.assertEqual(q.total, Decimal("240.00"))
+
+    def test_quote_to_order_copies_lines(self):
+        from core.models import CustomerOrder
+        q = self._make_quote()
+        resp = self.client.post(f"/quotes/{q.id}/to-order/")
+        self.assertEqual(resp.status_code, 302)
+        q.refresh_from_db()
+        self.assertEqual(q.status, "CONVERTED")
+        order = CustomerOrder.objects.get(tenant=self.tenant)
+        self.assertEqual(order.quote_id, q.id)
+        self.assertEqual(order.lines.count(), 1)
+        self.assertEqual(order.total, Decimal("240.00"))
+
+    def test_quote_to_invoice(self):
+        q = self._make_quote()
+        self.client.post(f"/quotes/{q.id}/to-invoice/")
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        self.assertEqual(inv.source_quote_id, q.id)
+        self.assertEqual(inv.lines.count(), 1)
+        self.assertEqual(inv.invoice_number, "INV-0001")
+        self.assertIsNotNone(inv.due_date)
+
+    def test_order_to_invoice(self):
+        from core.models import CustomerOrder
+        q = self._make_quote()
+        self.client.post(f"/quotes/{q.id}/to-order/")
+        order = CustomerOrder.objects.get(tenant=self.tenant)
+        self.client.post(f"/customer-orders/{order.id}/to-invoice/")
+        order.refresh_from_db()
+        self.assertEqual(order.status, "INVOICED")
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        self.assertEqual(inv.source_order_id, order.id)
+        self.assertEqual(inv.total, Decimal("240.00"))
+
+    def test_quote_pdf_and_send(self):
+        from django.core import mail
+        q = self._make_quote()
+        self.assertTrue(self.client.get(f"/quotes/{q.id}/pdf/").content[:5] == b"%PDF-")
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.client.post(f"/quotes/{q.id}/send/")
+            self.assertEqual(len(mail.outbox), 1)
+            self.assertTrue(mail.outbox[0].attachments)
+        q.refresh_from_db()
+        self.assertEqual(q.status, "SENT")
+
+    def test_quote_accept(self):
+        q = self._make_quote()
+        self.client.post(f"/quotes/{q.id}/status/accept/")
+        q.refresh_from_db()
+        self.assertEqual(q.status, "ACCEPTED")

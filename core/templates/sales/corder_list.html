@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Sales Orders - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">Sales Orders</h2>
+    <div class="text-muted">Customer orders - convert to an invoice when ready to bill.</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'corder_create' %}"><i class="bi bi-plus-lg me-1"></i> New sales order</a>
+</div>
+
+<div class="card"><div class="card-body">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light"><tr><th>Order</th><th>Customer</th><th>From quote</th><th>Status</th><th class="text-end">Date</th><th class="text-end">Total</th></tr></thead>
+      <tbody>
+        {% for o in orders %}
+        <tr onclick="window.location='{% url 'corder_detail' o.id %}'" style="cursor:pointer;">
+          <td class="fw-semibold">{{ o.order_number }}</td>
+          <td>{{ o.customer.name }}</td>
+          <td class="small text-muted">{{ o.quote.quote_number|default:'-' }}</td>
+          <td>
+            {% if o.status == 'CONFIRMED' %}<span class="badge text-bg-success">Confirmed</span>
+            {% elif o.status == 'INVOICED' %}<span class="badge text-bg-primary">Invoiced</span>
+            {% elif o.status == 'DRAFT' %}<span class="badge text-bg-secondary">Draft</span>
+            {% else %}<span class="badge text-bg-dark">{{ o.get_status_display }}</span>{% endif %}
+          </td>
+          <td class="text-end text-muted">{{ o.order_date|date:'d M Y' }}</td>
+          <td class="text-end">{{ o.total|money:o.currency_code }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted py-5">No sales orders yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>
+{% endblock %}

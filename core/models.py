@@ -857,6 +857,122 @@ class ReturnLine(models.Model):
 
 
 # ============================
+# Customer sales documents (non-POS): Quote -> Sales Order -> Invoice
+# ============================
+
+class _SalesTotalsMixin:
+    """Subtotal / VAT / grand-total computed from `self.lines`."""
+    @property
+    def subtotal(self):
+        return sum((l.line_total for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def tax_total(self):
+        return sum((l.tax_amount for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def total(self):
+        return self.subtotal + self.tax_total
+
+
+class _SalesLine(models.Model):
+    """Shared line shape for quotes and customer orders (mirrors invoice lines)."""
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, blank=True, null=True)
+    description = models.CharField(max_length=255, blank=True, null=True)
+    qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1.00"))
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"), blank=True)
+    tax_code = models.ForeignKey("TaxCode", on_delete=models.PROTECT, blank=True, null=True)
+
+    class Meta:
+        abstract = True
+
+    @property
+    def gross(self):
+        return (self.qty or Decimal("0.00")) * (self.unit_price or Decimal("0.00"))
+
+    @property
+    def discount_amount(self):
+        return (self.gross * (self.discount_pct or Decimal("0.00")) / Decimal("100")).quantize(Decimal("0.01"))
+
+    @property
+    def line_total(self):
+        return self.gross - self.discount_amount
+
+    @property
+    def tax_amount(self):
+        rate = self.tax_code.rate if self.tax_code else Decimal("0.00")
+        return self.line_total * rate
+
+
+class SalesQuote(_SalesTotalsMixin, models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SENT = "SENT", "Sent"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        DECLINED = "DECLINED", "Declined"
+        EXPIRED = "EXPIRED", "Expired"
+        CANCELLED = "CANCELLED", "Cancelled"
+        CONVERTED = "CONVERTED", "Converted"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="quotes")
+    customer = models.ForeignKey("Customer", on_delete=models.PROTECT, related_name="quotes")
+    quote_number = models.CharField(max_length=50)
+    quote_date = models.DateField(default=timezone.now)
+    valid_until = models.DateField(blank=True, null=True)
+    currency_code = models.CharField(max_length=3, default="GBP")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True, null=True)
+    terms = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    sent_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        unique_together = ("tenant", "quote_number")
+
+    def __str__(self):
+        return self.quote_number
+
+    @property
+    def is_expired(self):
+        from django.utils import timezone as _tz
+        return bool(self.valid_until and self.status in ("SENT", "DRAFT") and self.valid_until < _tz.localdate())
+
+
+class SalesQuoteLine(_SalesLine):
+    quote = models.ForeignKey(SalesQuote, related_name="lines", on_delete=models.CASCADE)
+
+
+class CustomerOrder(_SalesTotalsMixin, models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        CONFIRMED = "CONFIRMED", "Confirmed"
+        INVOICED = "INVOICED", "Invoiced"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="customer_orders")
+    customer = models.ForeignKey("Customer", on_delete=models.PROTECT, related_name="customer_orders")
+    order_number = models.CharField(max_length=50)
+    order_date = models.DateField(default=timezone.now)
+    currency_code = models.CharField(max_length=3, default="GBP")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True, null=True)
+    terms = models.TextField(blank=True, null=True)
+    quote = models.ForeignKey(SalesQuote, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ("tenant", "order_number")
+
+    def __str__(self):
+        return self.order_number
+
+
+class CustomerOrderLine(_SalesLine):
+    order = models.ForeignKey(CustomerOrder, related_name="lines", on_delete=models.CASCADE)
+
+
+# ============================
 # Finance (VAT + AR + GL)
 # ============================
 
@@ -932,6 +1048,9 @@ class CustomerInvoice(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     issued_at = models.DateTimeField(blank=True, null=True)
     sent_at = models.DateTimeField(blank=True, null=True)
+    # Conversion traceability (set when generated from a quote / order).
+    source_quote = models.ForeignKey("SalesQuote", on_delete=models.SET_NULL, null=True, blank=True, related_name="invoices")
+    source_order = models.ForeignKey("CustomerOrder", on_delete=models.SET_NULL, null=True, blank=True, related_name="invoices")
 
     class Meta:
         unique_together = ("tenant", "invoice_number")

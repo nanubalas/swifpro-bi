@@ -17,6 +17,9 @@ from core.models import (
 admin.site.register(Expense)
 admin.site.register(CreditNote)
 admin.site.register(BankTransaction)
+from core.models import SalesQuote, CustomerOrder
+admin.site.register(SalesQuote)
+admin.site.register(CustomerOrder)
 
 class UserProfileInline(admin.StackedInline):
     model = UserProfile

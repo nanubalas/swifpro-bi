@@ -24,3 +24,13 @@ def next_document_number(model, tenant, field, prefix, pad=4):
 def next_invoice_number(tenant):
     from core.models import CustomerInvoice
     return next_document_number(CustomerInvoice, tenant, "invoice_number", "INV-")
+
+
+def next_quote_number(tenant):
+    from core.models import SalesQuote
+    return next_document_number(SalesQuote, tenant, "quote_number", "QUO-")
+
+
+def next_order_number(tenant):
+    from core.models import CustomerOrder
+    return next_document_number(CustomerOrder, tenant, "order_number", "SO-")

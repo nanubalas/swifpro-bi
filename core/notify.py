@@ -120,6 +120,29 @@ def notify_invoice(inv, request=None, attachment=None):
     return True
 
 
+def notify_sales_document(doc, label, number, request=None, attachment=None):
+    """Email a quote or sales order to its customer. Returns True if sent."""
+    from django.core.mail import EmailMessage
+    email = getattr(doc.customer, "email", None)
+    if not email:
+        return False
+    tenant = doc.tenant
+    body = (
+        f"Dear {doc.customer.name},\n\n"
+        f"Please find {label.lower()} {number} from {tenant.name} attached.\n\n"
+        f"Total: {doc.currency_code} {doc.total:.2f}\n\n"
+        "Thank you for your business.\n"
+    )
+    msg = EmailMessage(
+        subject=f"{label} {number} from {tenant.name}",
+        body=body, from_email=settings.DEFAULT_FROM_EMAIL, to=[email],
+    )
+    if attachment:
+        msg.attach(*attachment)
+    msg.send(fail_silently=True)
+    return True
+
+
 def notify_applicant_rejected(req, request=None):
     if not req.email:
         return
