@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Product Categories - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Product Categories</h2>
+    <div class="text-muted">Organise products into categories and subcategories.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{% url 'product_list' %}"><i class="bi bi-box-seam me-1"></i> Products</a>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-4">
+    <div class="card"><div class="card-body">
+      <h5 class="fw-bold mb-3">Add category</h5>
+      <form method="post">
+        {% csrf_token %}
+        <div class="mb-3"><label class="form-label">Name</label>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="mb-3"><label class="form-label">Parent (optional)</label>{{ form.parent }}<div class="form-text">{{ form.parent.help_text }}</div></div>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-plus-lg me-1"></i> Add</button>
+      </form>
+    </div></div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card"><div class="card-body">
+      <table class="table align-middle mb-0">
+        <thead class="table-light"><tr><th>Category</th><th class="text-end">Products</th><th class="text-end">Actions</th></tr></thead>
+        <tbody>
+          {% for c in categories %}
+          <tr>
+            <td class="fw-semibold">{{ c.name }}</td>
+            <td class="text-end">{{ c.products.count }}</td>
+            <td class="text-end">
+              <form method="post" action="{% url 'product_category_delete' c.id %}" onsubmit="return confirm('Delete category {{ c.name }}? Products keep their data but lose this category.');">{% csrf_token %}
+                <button class="btn btn-sm btn-outline-danger">Delete</button></form>
+            </td>
+          </tr>
+          {% for sub in c.subcategories.all %}
+          <tr>
+            <td class="ps-4 text-muted"><i class="bi bi-arrow-return-right me-1"></i>{{ sub.name }}</td>
+            <td class="text-end">{{ sub.products.count }}</td>
+            <td class="text-end">
+              <form method="post" action="{% url 'product_category_delete' sub.id %}" onsubmit="return confirm('Delete subcategory {{ sub.name }}?');">{% csrf_token %}
+                <button class="btn btn-sm btn-outline-danger">Delete</button></form>
+            </td>
+          </tr>
+          {% endfor %}
+          {% empty %}
+          <tr><td colspan="3" class="text-center text-muted py-5">No categories yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div></div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll("form input, form select").forEach(el => el.classList.add("form-control"));
+</script>
+{% endblock %}

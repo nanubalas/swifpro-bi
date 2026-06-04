@@ -2704,3 +2704,52 @@ class ProductDetailTests(TestCase):
         self.assertEqual(resp.context["p"].margin, Decimal("12.00"))
         # on hand: 100 received - 5 sold = 95
         self.assertEqual(resp.context["p"].on_hand_total, Decimal("95.00"))
+
+
+class ProductCategorySearchTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, ProductCategory
+        self.tenant = Tenant.objects.create(name="PC Co")
+        self.user = User.objects.create_user("pcu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="pcu", password="pw")
+        self.elec = ProductCategory.objects.create(tenant=self.tenant, name="Electronics")
+        Product.objects.create(tenant=self.tenant, sku="SKU-EL1", name="Webcam", brand="Acme",
+                               product_type="STOCK", category=self.elec, is_active=True)
+        Product.objects.create(tenant=self.tenant, sku="SKU-SV1", name="Setup service", brand="SwifPro",
+                               product_type="SERVICE", is_active=False)
+
+    def test_search_and_filters(self):
+        self.assertEqual([p.sku for p in self.client.get("/products/?q=webcam").context["products"]], ["SKU-EL1"])
+        self.assertEqual([p.sku for p in self.client.get("/products/?q=acme").context["products"]], ["SKU-EL1"])
+        self.assertEqual([p.sku for p in self.client.get("/products/?type=SERVICE").context["products"]], ["SKU-SV1"])
+        self.assertEqual([p.sku for p in self.client.get(f"/products/?category={self.elec.id}").context["products"]], ["SKU-EL1"])
+        self.assertEqual([p.sku for p in self.client.get("/products/?status=inactive").context["products"]], ["SKU-SV1"])
+
+    def test_category_create_and_subcategory_and_delete(self):
+        from core.models import ProductCategory
+        # create a top-level
+        self.client.post("/product-categories/", {"name": "Office"})
+        office = ProductCategory.objects.get(tenant=self.tenant, name="Office")
+        # create a subcategory under it
+        self.client.post("/product-categories/", {"name": "Stationery", "parent": office.id})
+        sub = ProductCategory.objects.get(tenant=self.tenant, name="Stationery")
+        self.assertEqual(sub.parent_id, office.id)
+        # page renders
+        self.assertEqual(self.client.get("/product-categories/").status_code, 200)
+        # delete: products keep data (FK SET_NULL)
+        self.client.post(f"/product-categories/{self.elec.id}/delete/")
+        self.assertFalse(ProductCategory.objects.filter(id=self.elec.id).exists())
+        self.assertTrue(Product.objects.filter(sku="SKU-EL1").exists())
+
+    def test_category_parent_choices_exclude_subcategories(self):
+        from core.forms import ProductCategoryForm
+        from core.models import ProductCategory
+        from core.current import set_current_tenant
+        set_current_tenant(self.tenant)
+        sub = ProductCategory.objects.create(tenant=self.tenant, name="Cameras", parent=self.elec)
+        form = ProductCategoryForm()
+        parents = list(form.fields["parent"].queryset)
+        self.assertIn(self.elec, parents)
+        self.assertNotIn(sub, parents)  # subcategories can't be parents
+        set_current_tenant(None)

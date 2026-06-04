@@ -116,6 +116,7 @@ NAV = [
         ("Cycle Counts", "/cycle-counts/", "clipboard-check", {ADMIN, MANAGER, WAREHOUSE}),
         ("Locations", "/locations/", "geo-alt", {ADMIN, MANAGER, WAREHOUSE}),
         ("Products", "/products/", "box-seam", {ADMIN, MANAGER, WAREHOUSE, PURCHASING, SALES}),
+        ("Product Categories", "/product-categories/", "tags", {ADMIN, MANAGER, PURCHASING}),
         ("BOMs / Kits", "/boms/", "diagram-3", {ADMIN, MANAGER, PURCHASING}),
     ]),
     ("Finance", [

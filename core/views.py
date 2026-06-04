@@ -1613,9 +1613,32 @@ def reconcile(request):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES, ROLE_READONLY])
 
 def product_list(request):
+    from core.models import ProductCategory
     tenant = _get_default_tenant(request)
-    qs = Product.objects.filter(tenant=tenant).order_by("sku")
-    return render(request, "products/product_list.html", {"tenant": tenant, "products": qs})
+    q = (request.GET.get("q") or "").strip()
+    ptype = request.GET.get("type") or ""
+    category = request.GET.get("category") or ""
+    status = request.GET.get("status") or ""
+    qs = Product.objects.filter(tenant=tenant).select_related("category")
+    if q:
+        qs = qs.filter(Q(sku__icontains=q) | Q(name__icontains=q) | Q(brand__icontains=q)
+                       | Q(barcodes__code__icontains=q)).distinct()
+    if ptype:
+        qs = qs.filter(product_type=ptype)
+    if category:
+        qs = qs.filter(category_id=category)
+    if status == "active":
+        qs = qs.filter(is_active=True)
+    elif status == "inactive":
+        qs = qs.filter(is_active=False)
+    qs = qs.order_by("sku")
+    return render(request, "products/product_list.html", {
+        "tenant": tenant, "products": qs,
+        "q": q, "type": ptype, "category": category, "status": status,
+        "type_choices": Product.Type.choices,
+        "categories": ProductCategory.objects.filter(tenant=tenant).order_by("name"),
+        "filtered": bool(q or ptype or category or status),
+    })
 
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
@@ -1717,6 +1740,43 @@ def product_detail(request, product_id):
         "po_lines": po_lines, "qty_purchased": qty_purchased, "price_history": price_history,
         "supplier_names": supplier_names,
     })
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY], [ROLE_ADMIN, ROLE_PROCUREMENT])
+def product_category_list(request):
+    from core.models import ProductCategory
+    from core.forms import ProductCategoryForm
+    tenant = _get_default_tenant(request)
+    if request.method == "POST":
+        form = ProductCategoryForm(request.POST)
+        if form.is_valid():
+            obj = form.save(commit=False)
+            obj.tenant = tenant
+            try:
+                obj.save()
+                messages.success(request, "Category saved.")
+            except IntegrityError:
+                messages.error(request, "That category already exists.")
+            return redirect("product_category_list")
+    else:
+        form = ProductCategoryForm()
+    cats = ProductCategory.objects.filter(tenant=tenant, parent__isnull=True).prefetch_related("subcategories", "products").order_by("name")
+    return render(request, "products/category_list.html", {"tenant": tenant, "form": form, "categories": cats})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
+def product_category_delete(request, category_id):
+    from core.models import ProductCategory
+    tenant = _get_default_tenant(request)
+    cat = get_object_or_404(ProductCategory, id=category_id, tenant=tenant)
+    if request.method == "POST":
+        name = str(cat)
+        cat.delete()  # products' category FK is SET_NULL; subcategories' parent SET_NULL
+        log_audit(action="RECORD_DELETED", request=request, user=request.user, tenant=tenant, detail=f"Category {name}")
+        messages.success(request, f"Category '{name}' deleted.")
+    return redirect("product_category_list")
 
 
 @login_required

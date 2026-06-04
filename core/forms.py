@@ -9,7 +9,7 @@ from core.models import (
     PurchaseOrder, PurchaseOrderLine, Shipment,
     Product, Supplier, Location, ChannelConnection,
     SalesOrder, SalesOrderLine, Tenant,
-    UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine, ProductBarcode,
+    UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine, ProductBarcode, ProductCategory,
     InventoryTransfer, InventoryTransferLine,
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
@@ -104,6 +104,22 @@ class ProductForm(TenantModelForm):
             if qs.exists():
                 raise forms.ValidationError("This barcode is already assigned to another product.")
         return code
+
+class ProductCategoryForm(TenantModelForm):
+    class Meta:
+        model = ProductCategory
+        fields = ["name", "parent"]
+        help_texts = {"parent": "Leave blank for a top-level category, or pick a parent for a subcategory."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only top-level categories can be parents (one level of nesting).
+        qs = self.fields["parent"].queryset.filter(parent__isnull=True)
+        if self.instance.pk:
+            qs = qs.exclude(pk=self.instance.pk)
+        self.fields["parent"].queryset = qs
+        self.fields["parent"].required = False
+
 
 class SupplierForm(TenantModelForm):
     class Meta:
