@@ -64,12 +64,46 @@ class ShipmentUpdateForm(TenantModelForm):
         fields = ["carrier", "tracking_number", "status"]
 
 class ProductForm(TenantModelForm):
-    barcode = forms.CharField(required=False, help_text="Optional EAN/UPC/Barcode")
+    barcode = forms.CharField(required=False, help_text="Optional EAN/UPC/Barcode; must be unique if provided.")
+    opening_stock = forms.DecimalField(required=False, min_value=0, help_text="Initial quantity on hand (created once).")
+    opening_location = forms.ModelChoiceField(queryset=Location.objects.none(), required=False,
+                                              help_text="Where the opening stock is held.")
 
     class Meta:
         model = Product
-        fields = ["parent", "sku", "name", "variant_name", "option1", "option2", "option3",
-                  "base_uom", "uom", "cost_method", "standard_cost", "preferred_supplier"]
+        fields = ["sku", "name", "product_type", "category", "brand", "description", "image",
+                  "is_active", "parent", "variant_name", "option1", "option2", "option3", "pack_size",
+                  "base_uom", "uom", "sales_price", "tax_code", "cost_method", "standard_cost",
+                  "reorder_level", "preferred_supplier", "track_lots", "track_expiry", "track_serial"]
+        widgets = {"description": forms.Textarea(attrs={"rows": 3})}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        tenant = get_current_tenant()
+        if tenant:
+            self.fields["opening_location"].queryset = Location.objects.filter(tenant=tenant)
+
+    def clean_sku(self):
+        sku = (self.cleaned_data.get("sku") or "").strip()
+        tenant = get_current_tenant()
+        if sku and tenant:
+            qs = Product.objects.filter(tenant=tenant, sku__iexact=sku)
+            if self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise forms.ValidationError("A product with this SKU already exists.")
+        return sku
+
+    def clean_barcode(self):
+        code = (self.cleaned_data.get("barcode") or "").strip()
+        tenant = get_current_tenant()
+        if code and tenant:
+            qs = ProductBarcode.objects.filter(tenant=tenant, code__iexact=code)
+            if self.instance.pk:
+                qs = qs.exclude(product=self.instance)
+            if qs.exists():
+                raise forms.ValidationError("This barcode is already assigned to another product.")
+        return code
 
 class SupplierForm(TenantModelForm):
     class Meta:

@@ -1623,20 +1623,24 @@ def product_list(request):
 def product_create(request):
     tenant = _get_default_tenant(request)
     if request.method == "POST":
-        form = ProductForm(request.POST)
+        form = ProductForm(request.POST, request.FILES)
         if form.is_valid():
             obj = form.save(commit=False)
             obj.tenant = tenant
-            try:
-                obj.save()
-                # Optional barcode
-                barcode = form.cleaned_data.get("barcode")
-                if barcode:
-                    ProductBarcode.objects.get_or_create(tenant=tenant, code=barcode, defaults={"product": obj})
-                messages.success(request, "Product created.")
-                return redirect("product_list")
-            except IntegrityError:
-                form.add_error("sku", "SKU already exists for this tenant.")
+            obj.save()
+            barcode = form.cleaned_data.get("barcode")
+            if barcode:
+                ProductBarcode.objects.get_or_create(tenant=tenant, code=barcode, defaults={"product": obj})
+            # Optional opening stock -> a one-off receipt movement (sets cost).
+            opening = form.cleaned_data.get("opening_stock")
+            loc = form.cleaned_data.get("opening_location")
+            if opening and opening > 0 and loc:
+                apply_movement(tenant=tenant, product=obj, location=loc,
+                               movement_type=InventoryMovement.MovementType.RECEIVE,
+                               qty_delta=opening, ref_type="OPENING", ref_id=obj.sku,
+                               notes="Opening stock", unit_cost=(obj.standard_cost or None))
+            messages.success(request, "Product created.")
+            return redirect("product_list")
     else:
         form = ProductForm()
 
@@ -1652,19 +1656,16 @@ def product_edit(request, product_id):
     obj = get_object_or_404(Product, id=product_id, tenant=tenant)
 
     if request.method == "POST":
-        form = ProductForm(request.POST, instance=obj)
+        form = ProductForm(request.POST, request.FILES, instance=obj)
         if form.is_valid():
-            try:
-                form.save()
-                barcode = form.cleaned_data.get("barcode")
-                if barcode:
-                    ProductBarcode.objects.update_or_create(
-                        tenant=tenant, code=barcode, defaults={"product": obj}
-                    )
-                messages.success(request, "Product updated.")
-                return redirect("product_list")
-            except IntegrityError:
-                form.add_error("sku", "SKU already exists for this tenant.")
+            form.save()
+            barcode = form.cleaned_data.get("barcode")
+            if barcode:
+                ProductBarcode.objects.update_or_create(
+                    tenant=tenant, code=barcode, defaults={"product": obj}
+                )
+            messages.success(request, "Product updated.")
+            return redirect("product_list")
     else:
         initial = {}
         bc = obj.barcodes.order_by('id').first() if hasattr(obj, 'barcodes') else None

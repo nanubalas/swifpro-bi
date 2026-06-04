@@ -276,15 +276,43 @@ class UOMConversion(models.Model):
         return f"{scope}: 1 {self.from_uom.code} = {self.multiplier} {self.to_uom.code}"
 
 
+class ProductCategory(models.Model):
+    """Product category, optionally nested one level for subcategories."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="product_categories")
+    name = models.CharField(max_length=120)
+    parent = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="subcategories")
+
+    class Meta:
+        unique_together = ("tenant", "name", "parent")
+        verbose_name_plural = "product categories"
+
+    def __str__(self):
+        return f"{self.parent.name} / {self.name}" if self.parent_id else self.name
+
+
 class Product(models.Model):
     class CostMethod(models.TextChoices):
         FIFO = "FIFO", "FIFO"
         AVERAGE = "AVERAGE", "Average"
         STANDARD = "STANDARD", "Standard"
 
+    class Type(models.TextChoices):
+        STOCK = "STOCK", "Stock item"
+        SERVICE = "SERVICE", "Service"
+        NON_STOCK = "NON_STOCK", "Non-stock item"
+        BUNDLE = "BUNDLE", "Bundle / kit"
+        RAW_MATERIAL = "RAW_MATERIAL", "Raw material"
+        FINISHED_GOOD = "FINISHED_GOOD", "Finished good"
+
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     sku = models.CharField(max_length=64)
     name = models.CharField(max_length=255)
+    product_type = models.CharField(max_length=15, choices=Type.choices, default=Type.STOCK)
+    category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name="products")
+    brand = models.CharField(max_length=120, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    image = models.ImageField(upload_to="product_images/", blank=True, null=True)
+    is_active = models.BooleanField(default=True)
 
     # Variants (keep SKU-level records; link variants to a parent 'style' SKU)
     parent = models.ForeignKey("self", on_delete=models.PROTECT, blank=True, null=True, related_name="variants")
@@ -292,22 +320,54 @@ class Product(models.Model):
     option1 = models.CharField(max_length=64, blank=True, null=True)  # e.g., Size=M
     option2 = models.CharField(max_length=64, blank=True, null=True)  # e.g., Color=Black
     option3 = models.CharField(max_length=64, blank=True, null=True)
+    pack_size = models.CharField(max_length=64, blank=True, null=True)  # e.g., "Box of 12"
 
     # UOM
     base_uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, blank=True, null=True)
     uom = models.CharField(max_length=32, default="each")  # legacy display / quick entry
+
+    # Pricing
+    sales_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    tax_code = models.ForeignKey("TaxCode", on_delete=models.SET_NULL, null=True, blank=True, related_name="products")
 
     # Costing
     cost_method = models.CharField(max_length=20, choices=CostMethod.choices, default=CostMethod.AVERAGE)
     standard_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     # Running moving-average cost, maintained on inbound movements.
     average_cost = models.DecimalField(max_digits=12, decimal_places=4, default=Decimal("0.0000"))
+    reorder_level = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     # Preferred supplier for reordering this product.
     preferred_supplier = models.ForeignKey("Supplier", on_delete=models.SET_NULL, null=True, blank=True,
                                            related_name="preferred_products")
+    # Batch / expiry / serial tracking flags.
+    track_lots = models.BooleanField(default=False)
+    track_expiry = models.BooleanField(default=False)
+    track_serial = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ("tenant", "sku")
+
+    @property
+    def cost_price(self):
+        return self.average_cost or self.standard_cost or Decimal("0.00")
+
+    @property
+    def margin(self):
+        if not self.sales_price:
+            return None
+        return self.sales_price - self.cost_price
+
+    @property
+    def margin_pct(self):
+        m = self.margin
+        if m is None or not self.sales_price:
+            return None
+        return (m / self.sales_price * Decimal("100")).quantize(Decimal("0.1"))
+
+    @property
+    def on_hand_total(self):
+        from decimal import Decimal as _D
+        return sum((b.on_hand or _D("0.00") for b in InventoryBalance.objects.filter(tenant=self.tenant, product=self)), _D("0.00"))
 
     def __str__(self):
         return f"{self.sku} - {self.name}"

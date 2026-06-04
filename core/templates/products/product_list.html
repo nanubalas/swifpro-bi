@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load money %}
 {% block title %}Products{% endblock %}
 
 {% block body %}
@@ -28,7 +29,11 @@
           <tr>
             <th>SKU</th>
             <th>Name</th>
-            <th>UOM</th>
+            <th>Type</th>
+            <th>Category</th>
+            <th class="text-end">Sales price</th>
+            <th class="text-end">Stock</th>
+            <th>Status</th>
             <th class="text-end">Actions</th>
           </tr>
         </thead>
@@ -36,8 +41,12 @@
           {% for p in products %}
           <tr>
             <td class="fw-semibold">{{ p.sku }}</td>
-            <td>{{ p.name }}</td>
-            <td><span class="badge text-bg-light">{{ p.uom }}</span></td>
+            <td>{{ p.name }}{% if p.brand %}<div class="text-muted small fw-normal">{{ p.brand }}</div>{% endif %}</td>
+            <td><span class="badge text-bg-light text-dark border">{{ p.get_product_type_display }}</span></td>
+            <td class="small">{{ p.category|default:'-' }}</td>
+            <td class="text-end">{{ p.sales_price|money:tenant.currency_code }}</td>
+            <td class="text-end">{{ p.on_hand_total|floatformat:0 }}</td>
+            <td>{% if p.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
             <td class="text-end">
               <div class="btn-group">
                 <a class="btn btn-sm btn-outline-primary" href="/products/{{ p.id }}/edit/">Edit</a>
@@ -47,7 +56,7 @@
           </tr>
           {% empty %}
           <tr>
-            <td colspan="4" class="text-center text-muted py-5">No products yet.</td>
+            <td colspan="8" class="text-center text-muted py-5">No products yet.</td>
           </tr>
           {% endfor %}
         </tbody>

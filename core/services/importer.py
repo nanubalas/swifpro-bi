@@ -41,11 +41,33 @@ def import_products(tenant, rows):
         method = (row.get("cost_method") or "AVERAGE").strip().upper()
         if method not in dict(Product.CostMethod.choices):
             method = "AVERAGE"
-        obj, was_created = Product.objects.update_or_create(
-            tenant=tenant, sku=sku,
-            defaults={"name": name, "uom": (row.get("uom") or "each").strip() or "each",
-                      "cost_method": method, "standard_cost": cost},
-        )
+        ptype = (row.get("product_type") or "STOCK").strip().upper()
+        if ptype not in dict(Product.Type.choices):
+            ptype = "STOCK"
+        try:
+            sales_price = Decimal((row.get("sales_price") or "0").strip() or "0")
+        except InvalidOperation:
+            sales_price = Decimal("0")
+        defaults = {"name": name, "uom": (row.get("uom") or "each").strip() or "each",
+                    "cost_method": method, "standard_cost": cost, "product_type": ptype,
+                    "brand": (row.get("brand") or "").strip() or None,
+                    "description": (row.get("description") or "").strip() or None,
+                    "sales_price": sales_price}
+        active = (row.get("is_active") or "").strip().lower()
+        if active in ("0", "false", "no", "inactive"):
+            defaults["is_active"] = False
+        # Resolve / create category (and optional "Parent / Child" subcategory).
+        cat_name = (row.get("category") or "").strip()
+        if cat_name:
+            from core.models import ProductCategory
+            if "/" in cat_name:
+                pname, _, cname = cat_name.partition("/")
+                parent, _ = ProductCategory.objects.get_or_create(tenant=tenant, name=pname.strip(), parent=None)
+                cat, _ = ProductCategory.objects.get_or_create(tenant=tenant, name=cname.strip(), parent=parent)
+            else:
+                cat, _ = ProductCategory.objects.get_or_create(tenant=tenant, name=cat_name, parent=None)
+            defaults["category"] = cat
+        obj, was_created = Product.objects.update_or_create(tenant=tenant, sku=sku, defaults=defaults)
         barcode = (row.get("barcode") or "").strip()
         if barcode:
             ProductBarcode.objects.get_or_create(tenant=tenant, code=barcode, defaults={"product": obj})
@@ -123,9 +145,11 @@ def export_rows(tenant, kind):
     cols = cfg["columns"]
     out = []
     if kind == "products":
-        for p in Product.objects.filter(tenant=tenant).order_by("sku"):
+        for p in Product.objects.filter(tenant=tenant).select_related("category").order_by("sku"):
             barcode = ProductBarcode.objects.filter(tenant=tenant, product=p).values_list("code", flat=True).first()
-            out.append([p.sku, p.name, p.uom, p.cost_method, p.standard_cost, barcode or ""])
+            out.append([p.sku, p.name, p.product_type, str(p.category) if p.category_id else "",
+                        p.brand or "", p.description or "", p.uom, p.cost_method, p.standard_cost,
+                        p.sales_price, "yes" if p.is_active else "no", barcode or ""])
     elif kind == "customers":
         for c in Customer.objects.filter(tenant=tenant).order_by("name"):
             out.append([c.name, c.customer_type, c.contact_person or "", c.email or "", c.phone or "",
@@ -144,8 +168,10 @@ def export_rows(tenant, kind):
 
 CONFIG = {
     "products":  {"label": "Products",  "key": "sku",
-                  "columns": ["sku", "name", "uom", "cost_method", "standard_cost", "barcode"],
-                  "sample": ["SKU-100", "Sample Widget", "each", "AVERAGE", "9.99", "5012345678900"],
+                  "columns": ["sku", "name", "product_type", "category", "brand", "description",
+                              "uom", "cost_method", "standard_cost", "sales_price", "is_active", "barcode"],
+                  "sample": ["SKU-100", "Sample Widget", "STOCK", "Electronics / Webcams", "Acme",
+                             "1080p HD webcam", "each", "AVERAGE", "9.99", "19.99", "yes", "5012345678900"],
                   "fn": import_products, "list_url": "/products/"},
     "customers": {"label": "Customers", "key": "name",
                   "columns": ["name", "customer_type", "contact_person", "email", "phone",

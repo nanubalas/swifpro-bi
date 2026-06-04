@@ -13,97 +13,70 @@
 
 <div class="card shadow-sm border-0">
   <div class="card-body p-4">
-    <form method="post">
+    <form method="post" enctype="multipart/form-data">
       {% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
 
+      <h6 class="fw-bold text-muted mb-2">Identity</h6>
+      <div class="row g-3 mb-3">
+        <div class="col-md-3"><label class="form-label">SKU</label>{{ form.sku }}{% for e in form.sku.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-3"><label class="form-label">Barcode (EAN/UPC)</label>{{ form.barcode }}{% for e in form.barcode.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-6"><label class="form-label">Name</label>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-3"><label class="form-label">Type</label>{{ form.product_type }}</div>
+        <div class="col-md-3"><label class="form-label">Category</label>{{ form.category }}</div>
+        <div class="col-md-3"><label class="form-label">Brand</label>{{ form.brand }}</div>
+        <div class="col-md-3 d-flex align-items-end"><div class="form-check"><label class="form-check-label">{{ form.is_active }} Active</label></div></div>
+        <div class="col-md-8"><label class="form-label">Description</label>{{ form.description }}</div>
+        <div class="col-md-4"><label class="form-label">Image</label>{{ form.image }}{% if product.image %}<div class="form-text">Current: {{ product.image.name }}</div>{% endif %}</div>
+      </div>
+
+      <h6 class="fw-bold text-muted mb-2">Pricing &amp; costing</h6>
+      <div class="row g-3 mb-3">
+        <div class="col-md-3"><label class="form-label">Sales price</label>{{ form.sales_price }}</div>
+        <div class="col-md-3"><label class="form-label">VAT rate</label>{{ form.tax_code }}</div>
+        <div class="col-md-3"><label class="form-label">Cost method</label>{{ form.cost_method }}</div>
+        <div class="col-md-3"><label class="form-label">Standard cost</label>{{ form.standard_cost }}</div>
+        <div class="col-md-3"><label class="form-label">Reorder level</label>{{ form.reorder_level }}</div>
+        <div class="col-md-3"><label class="form-label">Base UOM</label>{{ form.base_uom }}</div>
+        <div class="col-md-3"><label class="form-label">Display UOM</label>{{ form.uom }}</div>
+        <div class="col-md-3"><label class="form-label">Preferred supplier</label>{{ form.preferred_supplier }}</div>
+      </div>
+
+      {% if mode == "create" %}
+      <h6 class="fw-bold text-muted mb-2">Opening stock (optional)</h6>
+      <div class="row g-3 mb-3">
+        <div class="col-md-3"><label class="form-label">Opening quantity</label>{{ form.opening_stock }}</div>
+        <div class="col-md-4"><label class="form-label">Location</label>{{ form.opening_location }}</div>
+      </div>
+      {% endif %}
+
+      <h6 class="fw-bold text-muted mb-2">Variants &amp; tracking</h6>
       <div class="row g-3">
-  <div class="col-md-6">
-    <label class="form-label">Parent product (optional)</label>
-    {{ form.parent }}
-    {% if form.parent.errors %}<div class="text-danger small">{{ form.parent.errors }}</div>{% endif %}
-    <div class="form-text">Use this to group variants under one style.</div>
-  </div>
-
-  <div class="col-md-3">
-    <label class="form-label">SKU</label>
-    {{ form.sku }}
-    {% if form.sku.errors %}<div class="text-danger small">{{ form.sku.errors }}</div>{% endif %}
-  </div>
-
-  <div class="col-md-3">
-    <label class="form-label">Barcode (EAN/UPC)</label>
-    {{ form.barcode }}
-    {% if form.barcode.errors %}<div class="text-danger small">{{ form.barcode.errors }}</div>{% endif %}
-  </div>
-
-  <div class="col-md-6">
-    <label class="form-label">Name</label>
-    {{ form.name }}
-    {% if form.name.errors %}<div class="text-danger small">{{ form.name.errors }}</div>{% endif %}
-  </div>
-
-  <div class="col-md-6">
-    <label class="form-label">Variant name (optional)</label>
-    {{ form.variant_name }}
-    {% if form.variant_name.errors %}<div class="text-danger small">{{ form.variant_name.errors }}</div>{% endif %}
-    <div class="form-text">Example: “Black / Size M”.</div>
-  </div>
-
-  <div class="col-md-4">
-    <label class="form-label">Option 1</label>
-    {{ form.option1 }}
-    <div class="form-text">Example: Size=M</div>
-  </div>
-  <div class="col-md-4">
-    <label class="form-label">Option 2</label>
-    {{ form.option2 }}
-    <div class="form-text">Example: Color=Black</div>
-  </div>
-  <div class="col-md-4">
-    <label class="form-label">Option 3</label>
-    {{ form.option3 }}
-  </div>
-
-  <div class="col-md-4">
-    <label class="form-label">Base UOM (recommended)</label>
-    {{ form.base_uom }}
-  </div>
-
-  <div class="col-md-4">
-    <label class="form-label">Display UOM</label>
-    {{ form.uom }}
-    <div class="form-text">Quick display/entry label (legacy).</div>
-  </div>
-
-  <div class="col-md-4">
-    <label class="form-label">Cost method</label>
-    {{ form.cost_method }}
-  </div>
-
-  <div class="col-md-4">
-    <label class="form-label">Standard cost</label>
-    {{ form.standard_cost }}
-    <div class="form-text">Used only for “Standard” costing.</div>
-  </div>
-  <div class="col-md-4">
-    <label class="form-label">Preferred supplier</label>
-    {{ form.preferred_supplier }}
-    <div class="form-text">Default supplier for reordering this product.</div>
-  </div>
-</div></div>
+        <div class="col-md-4"><label class="form-label">Parent product</label>{{ form.parent }}<div class="form-text">Group variants under one style.</div></div>
+        <div class="col-md-4"><label class="form-label">Variant name</label>{{ form.variant_name }}</div>
+        <div class="col-md-4"><label class="form-label">Pack size</label>{{ form.pack_size }}<div class="form-text">e.g. “Box of 12”.</div></div>
+        <div class="col-md-4"><label class="form-label">Option 1 (e.g. Size)</label>{{ form.option1 }}</div>
+        <div class="col-md-4"><label class="form-label">Option 2 (e.g. Colour)</label>{{ form.option2 }}</div>
+        <div class="col-md-4"><label class="form-label">Option 3</label>{{ form.option3 }}</div>
+        <div class="col-12 d-flex gap-4">
+          <div class="form-check"><label class="form-check-label">{{ form.track_lots }} Batch / lot tracking</label></div>
+          <div class="form-check"><label class="form-check-label">{{ form.track_expiry }} Expiry tracking</label></div>
+          <div class="form-check"><label class="form-check-label">{{ form.track_serial }} Serial-number tracking</label></div>
+        </div>
+      </div>
 
       <div class="d-flex justify-content-end gap-2 mt-4">
         <a class="btn btn-outline-secondary" href="/products/">Cancel</a>
-        <button class="btn btn-primary" type="submit">
-          {% if mode == "create" %}Create{% else %}Save changes{% endif %}
-        </button>
+        <button class="btn btn-primary" type="submit">{% if mode == "create" %}Create{% else %}Save changes{% endif %}</button>
       </div>
     </form>
   </div>
 </div>
 
 <script>
-  // Make Django widgets look like Bootstrap
-  document.querySelectorAll("input, select, textarea").forEach(el => el.classList.add("form-control"));
+  document.querySelectorAll("form input, form select, form textarea").forEach(el => {
+    if (el.type === "checkbox") el.classList.add("form-check-input");
+    else el.classList.add("form-control");
+  });
 </script>
 {% endblock %}

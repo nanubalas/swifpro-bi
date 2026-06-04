@@ -2546,8 +2546,9 @@ class SupplierDedupPreferredTests(TestCase):
         prod = Product.objects.create(tenant=self.tenant, sku="SKU-PS1", name="Widget")
         # set preferred supplier via the product edit form
         resp = self.client.post(f"/products/{prod.id}/edit/", {
-            "sku": "SKU-PS1", "name": "Widget", "uom": "each", "cost_method": "AVERAGE",
-            "standard_cost": "5.00", "preferred_supplier": s.id,
+            "sku": "SKU-PS1", "name": "Widget", "product_type": "STOCK", "uom": "each",
+            "cost_method": "AVERAGE", "standard_cost": "5.00", "sales_price": "0",
+            "reorder_level": "0", "preferred_supplier": s.id,
         })
         self.assertEqual(resp.status_code, 302)
         prod.refresh_from_db()
@@ -2591,3 +2592,67 @@ class DetailPageRenderRegressionTests(TestCase):
         RecurringInvoiceLine.objects.create(template=t, product=None, description="Support retainer",
                                             qty=Decimal("1"), unit_price=Decimal("300"), tax_code=self.std)
         self.assertEqual(self.client.get(f"/recurring-invoices/{t.id}/").status_code, 200)
+
+
+class ProductRecordTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, Location
+        self.tenant = Tenant.objects.create(name="Prod Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.loc = Location.objects.create(tenant=self.tenant, name="Main WH", type=Location.Type.WAREHOUSE)
+        self.user = User.objects.create_user("produ", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="produ", password="pw")
+
+    def _post(self, **over):
+        data = {
+            "sku": "SKU-A1", "name": "Widget", "product_type": "STOCK", "brand": "Acme",
+            "description": "A widget", "is_active": "on", "uom": "each", "sales_price": "19.99",
+            "tax_code": self.std.id, "cost_method": "AVERAGE", "standard_cost": "8.00",
+            "reorder_level": "10", "barcode": "5012345678900",
+            "opening_stock": "50", "opening_location": self.loc.id,
+        }
+        data.update(over)
+        return self.client.post("/products/new/", data)
+
+    def test_create_with_fields_and_opening_stock(self):
+        from core.models import Product, InventoryBalance, ProductBarcode
+        resp = self._post()
+        self.assertEqual(resp.status_code, 302)
+        p = Product.objects.get(tenant=self.tenant, sku="SKU-A1")
+        self.assertEqual(p.product_type, "STOCK")
+        self.assertEqual(p.sales_price, Decimal("19.99"))
+        self.assertEqual(p.tax_code_id, self.std.id)
+        self.assertTrue(ProductBarcode.objects.filter(tenant=self.tenant, code="5012345678900").exists())
+        bal = InventoryBalance.objects.get(tenant=self.tenant, product=p, location=self.loc)
+        self.assertEqual(bal.on_hand, Decimal("50.00"))
+        # margin = 19.99 - 8.00 cost
+        self.assertEqual(p.margin, Decimal("11.99"))
+
+    def test_duplicate_sku_friendly_error(self):
+        self._post()
+        resp = self._post(barcode="")  # same SKU
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "SKU already exists")
+
+    def test_duplicate_barcode_friendly_error(self):
+        self._post()
+        resp = self._post(sku="SKU-A2")  # same barcode
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "already assigned to another product")
+
+    def test_import_creates_category_and_subcategory(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from core.models import Product, ProductCategory
+        csv = (b"sku,name,product_type,category,brand,description,uom,cost_method,standard_cost,sales_price,is_active,barcode\n"
+               b"SKU-IMP1,Imported Cam,STOCK,Electronics / Webcams,Acme,HD cam,each,AVERAGE,9.99,19.99,yes,5099999999999\n")
+        resp = self.client.post("/products/import/", {"file": SimpleUploadedFile("p.csv", csv, content_type="text/csv")})
+        self.assertEqual(resp.status_code, 200)
+        p = Product.objects.get(tenant=self.tenant, sku="SKU-IMP1")
+        self.assertEqual(p.product_type, "STOCK")
+        self.assertEqual(p.sales_price, Decimal("19.99"))
+        self.assertEqual(str(p.category), "Electronics / Webcams")
+        self.assertTrue(ProductCategory.objects.filter(tenant=self.tenant, name="Webcams", parent__name="Electronics").exists())
+        body = self.client.get("/export/products.csv").content.decode()
+        self.assertIn("product_type", body)
+        self.assertIn("SKU-IMP1", body)

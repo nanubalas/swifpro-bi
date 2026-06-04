@@ -164,6 +164,23 @@ class Command(BaseCommand):
         # Preferred suppliers for reordering.
         Product.objects.filter(pk__in=[p1.pk, p2.pk]).update(preferred_supplier=globex)
 
+        # Categories (with one subcategory) + product enrichment.
+        from core.models import ProductCategory
+        std_tax = TaxCode.objects.filter(tenant=tenant, code="STD").first()
+        cat_office, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Office", parent=None)
+        cat_elec, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Electronics", parent=None)
+        cat_lighting, _ = ProductCategory.objects.get_or_create(tenant=tenant, name="Lighting", parent=cat_elec)
+        for prod, ptype, cat, brand, sale, reorder in [
+            (p1, Product.Type.FINISHED_GOOD, cat_lighting, "Aurora", "24.99", "20"),
+            (p2, Product.Type.STOCK, cat_elec, "Nimbus", "14.99", "30"),
+            (p3, Product.Type.STOCK, cat_office, "Halcyon", "4.99", "100"),
+            (kit, Product.Type.BUNDLE, cat_office, "SwifPro", "49.99", "0"),
+        ]:
+            Product.objects.filter(pk=prod.pk).update(
+                product_type=ptype, category=cat, brand=brand,
+                sales_price=Decimal(sale), tax_code=std_tax, reorder_level=Decimal(reorder),
+                description=f"{prod.name} - demo product.")
+
         # BOM / kit: starter kit = 1 lamp + 1 mouse + 2 notebooks
         bom, _ = BillOfMaterials.objects.get_or_create(tenant=tenant, product=kit, name="Default BOM")
         BillOfMaterialsLine.objects.get_or_create(bom=bom, component=p1, defaults={"qty": Decimal("1"), "uom": each})
