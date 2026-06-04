@@ -161,6 +161,9 @@ class Command(BaseCommand):
         p3 = make_product("SKU-003", "Halcyon Notebook A5", "3.25")
         kit = make_product("SKU-KIT-001", "Home Office Starter Kit", "0.00")
 
+        # Preferred suppliers for reordering.
+        Product.objects.filter(pk__in=[p1.pk, p2.pk]).update(preferred_supplier=globex)
+
         # BOM / kit: starter kit = 1 lamp + 1 mouse + 2 notebooks
         bom, _ = BillOfMaterials.objects.get_or_create(tenant=tenant, product=kit, name="Default BOM")
         BillOfMaterialsLine.objects.get_or_create(bom=bom, component=p1, defaults={"qty": Decimal("1"), "uom": each})

@@ -69,7 +69,7 @@ class ProductForm(TenantModelForm):
     class Meta:
         model = Product
         fields = ["parent", "sku", "name", "variant_name", "option1", "option2", "option3",
-                  "base_uom", "uom", "cost_method", "standard_cost"]
+                  "base_uom", "uom", "cost_method", "standard_cost", "preferred_supplier"]
 
 class SupplierForm(TenantModelForm):
     class Meta:
