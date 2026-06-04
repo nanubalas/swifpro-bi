@@ -2066,3 +2066,70 @@ class SalesReportsTests(TestCase):
             r = self.client.get(f"/finance/export/{k}.csv?from=2026-01-01&to=2026-12-31")
             self.assertEqual(r.status_code, 200, k)
             self.assertEqual(r["Content-Type"], "text/csv")
+
+
+class InvoiceInventoryCogsTests(TestCase):
+    def setUp(self):
+        from core.models import Location, InventoryMovement, InventoryBalance
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="COGS Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.loc = Location.objects.create(tenant=self.tenant, name="Main WH", type=Location.Type.WAREHOUSE)
+        self.product = Product.objects.create(tenant=self.tenant, sku="SKU-C1", name="Widget",
+                                              cost_method=Product.CostMethod.AVERAGE)
+        # Opening stock: 100 @ 4.00 (sets moving-average cost).
+        apply_movement(tenant=self.tenant, product=self.product, location=self.loc,
+                       movement_type=InventoryMovement.MovementType.RECEIVE, qty_delta=Decimal("100"),
+                       ref_type="SEED", ref_id="OPEN", unit_cost=Decimal("4.00"))
+
+    def _invoice(self, with_product=True):
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-C1")
+        if with_product:
+            CustomerInvoiceLine.objects.create(invoice=inv, product=self.product, qty=Decimal("10"),
+                                               unit_price=Decimal("25.00"), tax_code=self.std)
+        else:
+            CustomerInvoiceLine.objects.create(invoice=inv, description="Consulting", qty=Decimal("1"),
+                                               unit_price=Decimal("250.00"), tax_code=self.std)
+        post_customer_invoice(inv)
+        return inv
+
+    def test_stock_deducted_and_cogs_posted(self):
+        from core.models import InventoryBalance, JournalEntry, GLAccount
+        from core.services import reports
+        self._invoice(with_product=True)
+        bal = InventoryBalance.objects.get(tenant=self.tenant, product=self.product, location=self.loc)
+        self.assertEqual(bal.on_hand, Decimal("90.00"))  # 100 - 10
+        cogs_je = JournalEntry.objects.filter(tenant=self.tenant, ref_type="COGS", ref_id="INV-C1").first()
+        self.assertIsNotNone(cogs_je)
+        self.assertEqual(cogs_je.total_debit, Decimal("40.00"))  # 10 @ 4.00
+        # P&L: revenue 250, COGS 40, gross profit 210.
+        pnl = reports.profit_and_loss(self.tenant)
+        self.assertEqual(pnl["cogs_total"], Decimal("40.00"))
+        self.assertEqual(pnl["gross_profit"], Decimal("210.00"))
+
+    def test_service_line_does_not_touch_stock(self):
+        from core.models import JournalEntry, InventoryBalance
+        self._invoice(with_product=False)
+        self.assertFalse(JournalEntry.objects.filter(tenant=self.tenant, ref_type="COGS").exists())
+        bal = InventoryBalance.objects.get(tenant=self.tenant, product=self.product, location=self.loc)
+        self.assertEqual(bal.on_hand, Decimal("100.00"))  # untouched
+
+    def test_reissue_does_not_double_post_cogs(self):
+        from core.models import JournalEntry
+        inv = self._invoice(with_product=True)
+        post_customer_invoice(inv)  # idempotent re-call
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.tenant, ref_type="COGS", ref_id="INV-C1").count(), 1)
+
+    def test_no_location_skips_cogs(self):
+        from core.models import JournalEntry
+        # A separate tenant with a product but no stock location at all.
+        t2 = Tenant.objects.create(name="NoLoc Co")
+        std2 = TaxCode.objects.get(tenant=t2, code="STD")
+        cust2 = Customer.objects.create(tenant=t2, name="C2")
+        prod2 = Product.objects.create(tenant=t2, sku="SKU-N1", name="Svc")
+        inv = CustomerInvoice.objects.create(tenant=t2, customer=cust2, invoice_number="INV-N1")
+        CustomerInvoiceLine.objects.create(invoice=inv, product=prod2, qty=Decimal("5"),
+                                           unit_price=Decimal("25.00"), tax_code=std2)
+        post_customer_invoice(inv)
+        self.assertFalse(JournalEntry.objects.filter(tenant=t2, ref_type="COGS").exists())
