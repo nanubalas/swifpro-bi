@@ -126,10 +126,12 @@ class Command(BaseCommand):
         # UOM
         each, _ = UnitOfMeasure.objects.get_or_create(tenant=tenant, code="each", defaults={"name": "Each"})
 
-        # Locations
+        # Locations (covering several location types)
         wh, _ = Location.objects.get_or_create(tenant=tenant, name="Main Warehouse", defaults={"type": Location.Type.WAREHOUSE})
         Location.objects.get_or_create(tenant=tenant, name="3PL London", defaults={"type": Location.Type.THREEPL})
         Location.objects.get_or_create(tenant=tenant, name="Returns", defaults={"type": Location.Type.RETURNS})
+        Location.objects.get_or_create(tenant=tenant, name="Manchester Shop", defaults={"type": Location.Type.SHOP})
+        Location.objects.get_or_create(tenant=tenant, name="Delivery Van 1", defaults={"type": Location.Type.VAN})
 
         # Suppliers
         globex, _ = Supplier.objects.get_or_create(tenant=tenant, name="Globex Supplies", defaults={
