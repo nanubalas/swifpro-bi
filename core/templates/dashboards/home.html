@@ -45,6 +45,25 @@
 </a>
 {% endif %}
 
+{% load money %}
+{% if kpis %}
+<div class="row g-3 mb-4">
+  {% for k in kpis %}
+  <div class="col-6 col-xl-3">
+    <a href="{{ k.url }}" class="card-soft p-3 h-100 d-block text-decoration-none text-reset">
+      <div class="d-flex align-items-center gap-2 mb-1 text-muted small">
+        <i class="bi bi-{{ k.icon }} text-{% if k.tone == 'muted' %}secondary{% else %}{{ k.tone }}{% endif %}"></i>
+        <span>{{ k.label }}</span>
+      </div>
+      <div class="fs-3 fw-bold {% if k.tone == 'danger' and k.value %}text-danger{% elif k.tone == 'warning' and k.value %}text-warning{% endif %}">
+        {% if k.is_money %}{{ k.value|money:tenant.currency_code }}{% else %}{{ k.value }}{% endif %}
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% for section_title, items in sections %}
 <div class="mb-4">
   <div class="launch-section-title mb-2">{{ section_title }}</div>
