@@ -302,6 +302,9 @@ class Product(models.Model):
     standard_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     # Running moving-average cost, maintained on inbound movements.
     average_cost = models.DecimalField(max_digits=12, decimal_places=4, default=Decimal("0.0000"))
+    # Preferred supplier for reordering this product.
+    preferred_supplier = models.ForeignKey("Supplier", on_delete=models.SET_NULL, null=True, blank=True,
+                                           related_name="preferred_products")
 
     class Meta:
         unique_together = ("tenant", "sku")

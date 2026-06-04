@@ -1699,8 +1699,43 @@ def product_delete(request, product_id):
 
 def supplier_list(request):
     tenant = _get_default_tenant(request)
-    suppliers = Supplier.objects.filter(tenant=tenant).order_by("name")
-    return render(request, "suppliers/supplier_list.html", {"tenant": tenant, "suppliers": suppliers})
+    q = (request.GET.get("q") or "").strip()
+    status = request.GET.get("status") or ""
+    category = (request.GET.get("category") or "").strip()
+    suppliers = Supplier.objects.filter(tenant=tenant)
+    if q:
+        suppliers = suppliers.filter(
+            Q(name__icontains=q) | Q(email__icontains=q) | Q(phone__icontains=q)
+            | Q(vat_number__icontains=q) | Q(company_number__icontains=q) | Q(contact_person__icontains=q))
+    if status:
+        suppliers = suppliers.filter(status=status)
+    if category:
+        suppliers = suppliers.filter(categories__icontains=category)
+    suppliers = suppliers.order_by("name")
+    return render(request, "suppliers/supplier_list.html", {
+        "tenant": tenant, "suppliers": suppliers, "q": q, "status": status, "category": category,
+        "status_choices": Supplier.Status.choices, "filtered": bool(q or status or category)})
+
+
+def _find_supplier_duplicates(tenant, obj, exclude_id=None):
+    """Possible duplicate suppliers matching email/phone/VAT/company number/name."""
+    checks = [("email", obj.email, "email"), ("phone", obj.phone, "phone"),
+              ("vat_number", obj.vat_number, "VAT number"),
+              ("company_number", obj.company_number, "company number"),
+              ("name", obj.name, "name")]
+    seen, out = set(), []
+    for field, value, label in checks:
+        value = (value or "").strip()
+        if not value:
+            continue
+        qs = Supplier.objects.filter(tenant=tenant, **{f"{field}__iexact": value})
+        if exclude_id:
+            qs = qs.exclude(id=exclude_id)
+        for match in qs:
+            if match.id not in seen:
+                seen.add(match.id)
+                out.append({"id": match.id, "name": match.name, "match": label})
+    return out
 
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
@@ -1711,10 +1746,14 @@ def supplier_create(request):
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
         obj.tenant = tenant
+        dups = _find_supplier_duplicates(tenant, obj)
+        if dups and request.POST.get("confirm_duplicate") != "1":
+            return render(request, "suppliers/supplier_form.html",
+                          {"tenant": tenant, "form": form, "mode": "create", "duplicates": dups})
         try:
             obj.save()
             messages.success(request, "Supplier created.")
-            return redirect("supplier_list")
+            return redirect("supplier_detail", supplier_id=obj.id)
         except IntegrityError:
             form.add_error("name", "Supplier name already exists.")
     return render(request, "suppliers/supplier_form.html", {"tenant": tenant, "form": form, "mode": "create"})
@@ -1727,10 +1766,15 @@ def supplier_edit(request, supplier_id):
     obj = get_object_or_404(Supplier, id=supplier_id, tenant=tenant)
     form = SupplierForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
+        edited = form.save(commit=False)
+        dups = _find_supplier_duplicates(tenant, edited, exclude_id=obj.id)
+        if dups and request.POST.get("confirm_duplicate") != "1":
+            return render(request, "suppliers/supplier_form.html",
+                          {"tenant": tenant, "form": form, "mode": "edit", "duplicates": dups})
         try:
             form.save()
             messages.success(request, "Supplier updated.")
-            return redirect("supplier_list")
+            return redirect("supplier_detail", supplier_id=obj.id)
         except IntegrityError:
             form.add_error("name", "Supplier name already exists.")
     return render(request, "suppliers/supplier_form.html", {"tenant": tenant, "form": form, "mode": "edit"})
@@ -1782,6 +1826,10 @@ def supplier_detail(request, supplier_id):
             price_history.append({"date": po_date, "product": p, "unit_cost": line.unit_cost,
                                   "ref": po.po_number})
     products_supplied = sorted(products.values(), key=lambda x: x["product"].sku)
+    # Products that name this supplier as their preferred supplier also count.
+    for p in Product.objects.filter(tenant=tenant, preferred_supplier=s):
+        if p.id not in products:
+            products_supplied.append({"product": p, "times": 0, "last_cost": p.standard_cost, "last_date": None})
     price_history.sort(key=lambda r: r["date"], reverse=True)
 
     timeline = []

@@ -2509,3 +2509,50 @@ class SupplierProfileTests(TestCase):
         dates = [e["date"] for e in resp.context["timeline"]]
         self.assertEqual(dates, sorted(dates, reverse=True))
         self.assertGreaterEqual(len(dates), 2)  # PO + bill
+
+
+class SupplierDedupPreferredTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="SD Co")
+        self.user = User.objects.create_user("sdu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="sdu", password="pw")
+        Supplier.objects.create(tenant=self.tenant, name="Globex", email="g@globex.example", phone="111",
+                                vat_number="GB1", status="ACTIVE", categories="Raw materials")
+        Supplier.objects.create(tenant=self.tenant, name="Acme", email="a@acme.example", phone="222",
+                                status="INACTIVE", categories="Logistics")
+
+    def test_search_and_filter(self):
+        self.assertEqual([s.name for s in self.client.get("/suppliers/?q=globex").context["suppliers"]], ["Globex"])
+        self.assertEqual([s.name for s in self.client.get("/suppliers/?q=222").context["suppliers"]], ["Acme"])
+        self.assertEqual([s.name for s in self.client.get("/suppliers/?status=INACTIVE").context["suppliers"]], ["Acme"])
+        self.assertEqual([s.name for s in self.client.get("/suppliers/?category=Raw").context["suppliers"]], ["Globex"])
+
+    def test_duplicate_detection(self):
+        data = {"name": "Globex North", "status": "ACTIVE", "currency_code": "GBP", "email": "g@globex.example"}
+        resp = self.client.post("/suppliers/new/", data)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context["duplicates"])
+        self.assertFalse(Supplier.objects.filter(tenant=self.tenant, name="Globex North").exists())
+        data["confirm_duplicate"] = "1"
+        resp = self.client.post("/suppliers/new/", data)
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Supplier.objects.filter(tenant=self.tenant, name="Globex North").exists())
+
+    def test_preferred_supplier_link_on_product(self):
+        from core.models import OrgMembership
+        s = Supplier.objects.get(tenant=self.tenant, name="Globex")
+        prod = Product.objects.create(tenant=self.tenant, sku="SKU-PS1", name="Widget")
+        # set preferred supplier via the product edit form
+        resp = self.client.post(f"/products/{prod.id}/edit/", {
+            "sku": "SKU-PS1", "name": "Widget", "uom": "each", "cost_method": "AVERAGE",
+            "standard_cost": "5.00", "preferred_supplier": s.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        prod.refresh_from_db()
+        self.assertEqual(prod.preferred_supplier_id, s.id)
+        # appears under products supplied on the supplier profile
+        resp = self.client.get(f"/suppliers/{s.id}/")
+        skus = [p["product"].sku for p in resp.context["products_supplied"]]
+        self.assertIn("SKU-PS1", skus)
