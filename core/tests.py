@@ -3031,3 +3031,62 @@ class PurchaseRequisitionTests(TestCase):
         req = self._make_req(status=PurchaseRequisition.Status.APPROVED)
         self.assertEqual(self.client.get("/requisitions/").status_code, 200)
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
+
+
+class LowStockReorderTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, InventoryBalance
+        self.tenant = Tenant.objects.create(name="Reorder Co")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.supA = Supplier.objects.create(tenant=self.tenant, name="Supplier A")
+        self.supB = Supplier.objects.create(tenant=self.tenant, name="Supplier B")
+        # Two products below reorder for supplier A, one for B, one unassigned.
+        self.p1 = Product.objects.create(tenant=self.tenant, sku="R1", name="P1", reorder_level=Decimal("20"),
+                                         preferred_supplier=self.supA, standard_cost=Decimal("2.00"))
+        self.p2 = Product.objects.create(tenant=self.tenant, sku="R2", name="P2", reorder_level=Decimal("30"),
+                                         preferred_supplier=self.supA, standard_cost=Decimal("5.00"))
+        self.p3 = Product.objects.create(tenant=self.tenant, sku="R3", name="P3", reorder_level=Decimal("10"),
+                                         preferred_supplier=self.supB)
+        self.p4 = Product.objects.create(tenant=self.tenant, sku="R4", name="P4", reorder_level=Decimal("10"))
+        for p, oh in [(self.p1, "5"), (self.p2, "0"), (self.p3, "2"), (self.p4, "1")]:
+            InventoryBalance.objects.create(tenant=self.tenant, product=p, location=self.loc, on_hand=Decimal(oh))
+        self.user = User.objects.create_user("ro", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="ro", password="pw")
+
+    def test_low_stock_lists_shortfalls(self):
+        resp = self.client.get("/inventory/low-stock/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context["rows"]), 4)
+
+    def test_reorder_groups_by_supplier(self):
+        from core.models import PurchaseRequisition
+        resp = self.client.post("/inventory/low-stock/reorder/", {
+            "select": [str(self.p1.id), str(self.p2.id), str(self.p3.id), str(self.p4.id)],
+            f"qty_{self.p1.id}": "15", f"qty_{self.p2.id}": "30",
+            f"qty_{self.p3.id}": "8", f"qty_{self.p4.id}": "9",
+        })
+        self.assertEqual(resp.status_code, 302)
+        # 3 groups: supA (2 lines), supB (1), unassigned (1)
+        reqs = PurchaseRequisition.objects.filter(tenant=self.tenant)
+        self.assertEqual(reqs.count(), 3)
+        a = reqs.get(preferred_supplier=self.supA)
+        self.assertEqual(a.lines.count(), 2)
+        self.assertEqual(a.status, PurchaseRequisition.Status.DRAFT)
+        line1 = a.lines.get(product=self.p1)
+        self.assertEqual(line1.quantity, Decimal("15.00"))
+        self.assertEqual(line1.estimated_unit_cost, Decimal("2.00"))
+        self.assertEqual(reqs.get(preferred_supplier=self.supB).lines.count(), 1)
+        self.assertEqual(reqs.filter(preferred_supplier__isnull=True).count(), 1)
+
+    def test_reorder_skips_zero_qty(self):
+        from core.models import PurchaseRequisition
+        self.client.post("/inventory/low-stock/reorder/", {
+            "select": [str(self.p1.id)], f"qty_{self.p1.id}": "0",
+        })
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 0)
+
+    def test_reorder_requires_selection(self):
+        from core.models import PurchaseRequisition
+        self.client.post("/inventory/low-stock/reorder/", {})
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 0)

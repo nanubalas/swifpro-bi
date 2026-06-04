@@ -1929,6 +1929,74 @@ def low_stock(request):
 
 
 @login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
+@transaction.atomic
+def low_stock_reorder(request):
+    """Create Purchase Requisitions from selected low-stock lines, grouped by
+    preferred supplier. Items without a preferred supplier go into one
+    'unassigned' requisition the buyer can complete later."""
+    tenant = _get_default_tenant(request)
+    if request.method != "POST":
+        return redirect("low_stock")
+
+    selected_ids = request.POST.getlist("select")
+    if not selected_ids:
+        messages.info(request, "Select at least one product to reorder.")
+        return redirect("low_stock")
+
+    products = {str(p.id): p for p in Product.objects.filter(tenant=tenant, id__in=selected_ids)
+                .select_related("preferred_supplier", "tax_code")}
+
+    # Build {supplier_or_None: [(product, qty), ...]}
+    groups = {}
+    for pid in selected_ids:
+        p = products.get(pid)
+        if p is None:
+            continue
+        raw = (request.POST.get(f"qty_{pid}") or "").strip()
+        try:
+            qty = Decimal(raw)
+        except (InvalidOperation, ValueError):
+            qty = max(p.reorder_level - p.on_hand_total, Decimal("0"))
+        if qty <= 0:
+            continue
+        groups.setdefault(p.preferred_supplier, []).append((p, qty))
+
+    if not groups:
+        messages.info(request, "Nothing to order (quantities were zero).")
+        return redirect("low_stock")
+
+    created = []
+    for supplier, items in groups.items():
+        req = PurchaseRequisition.objects.create(
+            tenant=tenant,
+            req_number=_generate_req_number(),
+            department="Auto-reorder",
+            preferred_supplier=supplier,
+            justification="Raised automatically from low-stock alerts.",
+            status=PurchaseRequisition.Status.DRAFT,
+            requested_by=request.user,
+        )
+        for p, qty in items:
+            PurchaseRequisitionLine.objects.create(
+                requisition=req,
+                product=p,
+                quantity=qty,
+                estimated_unit_cost=(p.standard_cost or None),
+                notes="Below reorder level",
+            )
+        created.append(req)
+        log_audit(action="requisition_create", request=request, user=request.user, tenant=tenant,
+                  detail=f"{req.req_number} auto-reorder ({len(items)} lines)")
+
+    if len(created) == 1:
+        messages.success(request, f"Created requisition {created[0].req_number} from low-stock.")
+        return redirect("requisition_detail", req_id=created[0].id)
+    messages.success(request, f"Created {len(created)} requisitions from low-stock (grouped by supplier).")
+    return redirect("requisition_list")
+
+
+@login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])
 def stock_movements(request):
     """The stock ledger: every movement, filterable by product/location/type/date."""
