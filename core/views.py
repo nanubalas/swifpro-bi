@@ -3957,6 +3957,31 @@ def corder_pdf(request, order_id):
                          "notes": o.notes, "terms": o.terms}, download=False)
 
 
+def _order_stock_location(tenant):
+    return (Location.objects.filter(tenant=tenant, type=Location.Type.WAREHOUSE).order_by("id").first()
+            or Location.objects.filter(tenant=tenant).order_by("id").first())
+
+
+def _reserve_customer_order(o):
+    """Reserve stock for a confirmed order's product lines (re-syncs existing
+    reservations so an edit reflects the latest lines)."""
+    from core.services.inventory import reserve_stock, release_reservations
+    tenant = o.tenant
+    loc = _order_stock_location(tenant)
+    release_reservations(tenant=tenant, ref_type="CUSTOMER_ORDER", ref_id=str(o.id))
+    if loc is None:
+        return
+    for line in o.lines.all():
+        if line.product_id and line.qty and line.qty > 0:
+            reserve_stock(tenant=tenant, product=line.product, location=loc, qty=line.qty,
+                          ref_type="CUSTOMER_ORDER", ref_id=str(o.id))
+
+
+def _release_customer_order(o):
+    from core.services.inventory import release_reservations
+    release_reservations(tenant=o.tenant, ref_type="CUSTOMER_ORDER", ref_id=str(o.id))
+
+
 @role_required(SALES_DOC_ROLES, write_groups=SALES_DOC_ROLES)
 @transaction.atomic
 def corder_status(request, order_id, to):
@@ -3975,6 +4000,11 @@ def corder_status(request, order_id, to):
                 messages.warning(request, reason)
         o.status = mapping[to]
         o.save(update_fields=["status"])
+        # Reserve stock on confirm; release it on cancel.
+        if to == "confirm":
+            _reserve_customer_order(o)
+        else:
+            _release_customer_order(o)
         messages.success(request, f"Sales order {o.order_number} marked {o.get_status_display()}.")
     return redirect("corder_detail", order_id=o.id)
 
@@ -3988,6 +4018,8 @@ def corder_to_invoice(request, order_id):
         inv = _invoice_from_lines(tenant, o.customer, o.currency_code, o.notes, o.terms, o, "source_order", request.user)
         o.status = CustomerOrder.Status.INVOICED
         o.save(update_fields=["status"])
+        # Release reservations: the invoice will deduct actual stock on issue.
+        _release_customer_order(o)
         log_audit(action="ORDER_INVOICED", request=request, user=request.user, tenant=tenant,
                   detail=f"{o.order_number} -> invoice {inv.invoice_number}")
         messages.success(request, f"Sales order {o.order_number} converted to invoice {inv.invoice_number} (draft).")
@@ -4005,6 +4037,7 @@ def corder_delete(request, order_id):
             messages.error(request, "Invoiced sales orders can't be deleted - they're linked to an invoice.")
             return redirect("corder_detail", order_id=o.id)
         number = o.order_number
+        _release_customer_order(o)  # free any reservations before removing the order
         o.delete()
         log_audit(action="ORDER_DELETED", request=request, user=request.user, tenant=tenant, detail=number)
         messages.success(request, f"Sales order {number} deleted.")
@@ -4173,6 +4206,9 @@ def corder_edit(request, order_id):
             o.tenant = tenant
             o.save()
             formset.save()
+            # Keep reservations in step with the edited lines on confirmed orders.
+            if o.status == CustomerOrder.Status.CONFIRMED:
+                _reserve_customer_order(o)
             messages.success(request, f"Sales order {o.order_number} updated.")
             return redirect("corder_detail", order_id=o.id)
     else:

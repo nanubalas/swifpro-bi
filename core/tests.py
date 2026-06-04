@@ -3064,6 +3064,62 @@ class PurchaseRequisitionTests(TestCase):
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
 
 
+class CustomerOrderReservationTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, InventoryBalance, CustomerOrder, CustomerOrderLine, Customer
+        self.tenant = Tenant.objects.create(name="Resv Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="RV1", name="P")
+        InventoryBalance.objects.create(tenant=self.tenant, product=self.prod, location=self.loc,
+                                        on_hand=Decimal("50"), reserved=Decimal("0"))
+        self.cust = Customer.objects.create(tenant=self.tenant, name="C")
+        self.order = CustomerOrder.objects.create(tenant=self.tenant, customer=self.cust, order_number="SO-RV1",
+                                                  status=CustomerOrder.Status.DRAFT)
+        CustomerOrderLine.objects.create(order=self.order, product=self.prod, qty=Decimal("8"),
+                                         unit_price=Decimal("10"), tax_code=self.std)
+        self.user = User.objects.create_user("rvu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="rvu", password="pw")
+
+    def _reserved(self):
+        from core.models import InventoryBalance
+        return InventoryBalance.objects.get(tenant=self.tenant, product=self.prod, location=self.loc).reserved
+
+    def test_confirm_reserves_stock(self):
+        from core.models import InventoryReservation
+        self.client.post(f"/customer-orders/{self.order.id}/status/confirm/")
+        self.assertEqual(self._reserved(), Decimal("8.00"))
+        self.assertEqual(InventoryReservation.objects.filter(
+            tenant=self.tenant, ref_type="CUSTOMER_ORDER", ref_id=str(self.order.id),
+            status=InventoryReservation.Status.ACTIVE).count(), 1)
+
+    def test_cancel_releases_stock(self):
+        self.client.post(f"/customer-orders/{self.order.id}/status/confirm/")
+        self.assertEqual(self._reserved(), Decimal("8.00"))
+        self.client.post(f"/customer-orders/{self.order.id}/status/cancel/")
+        self.assertEqual(self._reserved(), Decimal("0.00"))
+
+    def test_invoice_releases_reservation(self):
+        self.client.post(f"/customer-orders/{self.order.id}/status/confirm/")
+        self.assertEqual(self._reserved(), Decimal("8.00"))
+        self.client.post(f"/customer-orders/{self.order.id}/to-invoice/")
+        self.assertEqual(self._reserved(), Decimal("0.00"))
+
+    def test_edit_resyncs_reservation(self):
+        self.client.post(f"/customer-orders/{self.order.id}/status/confirm/")
+        line = self.order.lines.get()
+        resp = self.client.post(f"/customer-orders/{self.order.id}/edit/", {
+            "customer": self.cust.id, "order_number": "SO-RV1", "order_date": "2026-01-01",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "1",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-id": line.id, "lines-0-product": self.prod.id, "lines-0-qty": "20",
+            "lines-0-unit_price": "10", "lines-0-tax_code": self.std.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self._reserved(), Decimal("20.00"))
+
+
 class SupplierPriceHistoryTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership
