@@ -120,6 +120,43 @@ def notify_invoice(inv, request=None, attachment=None):
     return True
 
 
+def notify_overdue_invoice(inv, request=None, attachment=None):
+    """Email an overdue-payment reminder to the customer. Returns True if sent,
+    False if the customer has no email."""
+    from django.core.mail import EmailMessage
+    from django.utils import timezone as _tz
+    email = getattr(inv.customer, "email", None)
+    if not email:
+        return False
+    tenant = inv.tenant
+    days = (_tz.localdate() - inv.due_date).days if inv.due_date else 0
+    link = ""
+    if request is not None:
+        try:
+            link = request.build_absolute_uri(f"/ar/invoices/{inv.id}/")
+        except Exception:
+            link = ""
+    body = (
+        f"Dear {inv.customer.name},\n\n"
+        f"Our records show invoice {inv.invoice_number} from {tenant.name} is overdue"
+        f"{f' by {days} day(s)' if days > 0 else ''}.\n\n"
+        f"Invoice date: {inv.invoice_date}\n"
+        f"Due date:     {inv.due_date or '-'}\n"
+        f"Amount due:   {inv.currency_code} {inv.outstanding:.2f}\n\n"
+        + (f"View it online: {link}\n\n" if link else "")
+        + "If payment has already been made, please disregard this reminder.\n"
+        + "Thank you.\n"
+    )
+    msg = EmailMessage(
+        subject=f"Payment reminder: invoice {inv.invoice_number} from {tenant.name}",
+        body=body, from_email=settings.DEFAULT_FROM_EMAIL, to=[email],
+    )
+    if attachment:
+        msg.attach(*attachment)
+    msg.send(fail_silently=True)
+    return True
+
+
 def notify_sales_document(doc, label, number, request=None, attachment=None):
     """Email a quote or sales order to its customer. Returns True if sent."""
     from django.core.mail import EmailMessage

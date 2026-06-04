@@ -79,6 +79,12 @@ class Tenant(models.Model):
     # before they post (0 = no approval required; all adjustments auto-post).
     stock_adjustment_approval_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
+    # Automatic overdue-invoice reminders (dunning). When enabled, the daily
+    # housekeeping emails customers whose invoices are past due, at most once
+    # every `dunning_interval_days`.
+    dunning_enabled = models.BooleanField(default=True)
+    dunning_interval_days = models.PositiveSmallIntegerField(default=7)
+
     def __str__(self):
         return self.name
 
@@ -1422,6 +1428,9 @@ class CustomerInvoice(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     issued_at = models.DateTimeField(blank=True, null=True)
     sent_at = models.DateTimeField(blank=True, null=True)
+    # Dunning: when the last overdue reminder went out, and how many so far.
+    last_reminder_at = models.DateField(blank=True, null=True)
+    reminder_count = models.PositiveSmallIntegerField(default=0)
     # Conversion traceability (set when generated from a quote / order).
     source_quote = models.ForeignKey("SalesQuote", on_delete=models.SET_NULL, null=True, blank=True, related_name="invoices")
     source_order = models.ForeignKey("CustomerOrder", on_delete=models.SET_NULL, null=True, blank=True, related_name="invoices")

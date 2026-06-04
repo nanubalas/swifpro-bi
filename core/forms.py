@@ -245,6 +245,15 @@ class TenantSettingsForm(TenantModelForm):
         for fname in self.REQUIRED:
             if fname in self.fields:
                 self.fields[fname].required = True
+        # Optional credit-control fields: fall back to current/default on save.
+        if "dunning_interval_days" in self.fields:
+            self.fields["dunning_interval_days"].required = False
+
+    def clean_dunning_interval_days(self):
+        val = self.cleaned_data.get("dunning_interval_days")
+        if val:
+            return val
+        return getattr(self.instance, "dunning_interval_days", None) or 7
 
     class Meta:
         model = Tenant
@@ -264,6 +273,8 @@ class TenantSettingsForm(TenantModelForm):
             # Defaults & locale
             "currency_code", "country", "timezone", "financial_year_start_month",
             "default_tax_code", "default_payment_terms_days", "po_approval_threshold",
+            # Credit control / dunning
+            "dunning_enabled", "dunning_interval_days",
         ]
         widgets = {
             "invoice_footer": forms.Textarea(attrs={"rows": 2}),

@@ -3064,6 +3064,76 @@ class PurchaseRequisitionTests(TestCase):
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
 
 
+class DunningReminderTests(TestCase):
+    def setUp(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        self.tenant = Tenant.objects.create(name="Dun Co", dunning_enabled=True, dunning_interval_days=7)
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.today = timezone.localdate()
+        self.cust = Customer.objects.create(tenant=self.tenant, name="C", email="c@example.com")
+        self.cust_noemail = Customer.objects.create(tenant=self.tenant, name="NoMail")
+        self.due = self.today - timedelta(days=10)
+
+    def _invoice(self, customer, number, due=None):
+        from core.services.gl import post_customer_invoice
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=customer, invoice_number=number,
+                                             due_date=(due or self.due))
+        CustomerInvoiceLine.objects.create(invoice=inv, description="X", qty=Decimal("1"),
+                                           unit_price=Decimal("100"), tax_code=self.std)
+        post_customer_invoice(inv)  # -> ISSUED
+        return inv
+
+    def test_overdue_reminder_sent_once_per_interval(self):
+        from django.core import mail
+        from core.services import housekeeping
+        inv = self._invoice(self.cust, "INV-D1")
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            sent = housekeeping.send_overdue_reminders(self.tenant, today=self.today)
+            self.assertEqual(sent, 1)
+            self.assertEqual(len(mail.outbox), 1)
+            self.assertIn("INV-D1", mail.outbox[0].subject)
+            inv.refresh_from_db()
+            self.assertEqual(inv.reminder_count, 1)
+            self.assertEqual(inv.last_reminder_at, self.today)
+            # Same day re-run: throttled, nothing more.
+            self.assertEqual(housekeeping.send_overdue_reminders(self.tenant, today=self.today), 0)
+
+    def test_no_email_no_reminder(self):
+        from core.services import housekeeping
+        self._invoice(self.cust_noemail, "INV-D2")
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.assertEqual(housekeeping.send_overdue_reminders(self.tenant, today=self.today), 0)
+
+    def test_not_overdue_skipped(self):
+        from datetime import timedelta
+        from core.services import housekeeping
+        self._invoice(self.cust, "INV-D3", due=self.today + timedelta(days=5))
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.assertEqual(housekeeping.send_overdue_reminders(self.tenant, today=self.today), 0)
+
+    def test_disabled_tenant_sends_nothing(self):
+        from core.services import housekeeping
+        self.tenant.dunning_enabled = False
+        self.tenant.save()
+        self._invoice(self.cust, "INV-D4")
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.assertEqual(housekeeping.send_overdue_reminders(self.tenant, today=self.today), 0)
+
+    def test_paid_invoice_not_reminded(self):
+        from core.services import housekeeping
+        from core.services.gl import post_payment
+        from core.models import Payment, PaymentAllocation
+        inv = self._invoice(self.cust, "INV-D5")
+        pay = Payment.objects.create(tenant=self.tenant, customer=self.cust,
+                                     direction=Payment.Direction.RECEIPT, amount=Decimal("120"),
+                                     payment_date=self.today)
+        PaymentAllocation.objects.create(payment=pay, customer_invoice=inv, amount=Decimal("120"))
+        post_payment(pay)
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.assertEqual(housekeeping.send_overdue_reminders(self.tenant, today=self.today), 0)
+
+
 class ReturnToSupplierTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership, GLAccount

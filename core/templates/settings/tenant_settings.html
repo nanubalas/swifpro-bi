@@ -91,6 +91,12 @@
       <div class="col-md-4">{{ form.default_payment_terms_days.label_tag }}{{ form.default_payment_terms_days }} <div class="form-text">days</div></div>
       <div class="col-md-4">{{ form.po_approval_threshold.label_tag }}{{ form.po_approval_threshold }}</div>
     </div>
+    <div class="row g-3 mt-1">
+      <div class="col-md-4 d-flex align-items-center gap-2 pt-3">
+        {{ form.dunning_enabled }} {{ form.dunning_enabled.label_tag }}
+      </div>
+      <div class="col-md-4">{{ form.dunning_interval_days.label_tag }}{{ form.dunning_interval_days }} <div class="form-text">days between overdue reminders</div></div>
+    </div>
   </div>
 
   <div class="d-flex justify-content-end gap-2">
