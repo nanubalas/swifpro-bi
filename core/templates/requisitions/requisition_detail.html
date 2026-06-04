@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Requisition {{ req.req_number }}{% endblock %}
+
+{% block body %}
+<div class="d-flex gap-2 flex-wrap mb-3">
+  {% if req.status == "DRAFT" %}
+    <form method="post" action="{% url 'requisition_submit' req.id %}">{% csrf_token %}
+      <button class="btn btn-primary" type="submit">Submit for Approval</button>
+    </form>
+  {% endif %}
+  {% if req.status == "SUBMITTED" %}
+    <form method="post" action="{% url 'requisition_approve' req.id %}">{% csrf_token %}
+      <button class="btn btn-success" type="submit">Approve</button>
+    </form>
+    <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectModal">Reject</button>
+  {% endif %}
+  {% if req.status == "APPROVED" %}
+    <form method="post" action="{% url 'requisition_convert' req.id %}">{% csrf_token %}
+      <button class="btn btn-primary" type="submit"><i class="bi bi-arrow-right-circle me-1"></i> Convert to PO</button>
+    </form>
+  {% endif %}
+  {% if req.converted_po %}
+    <a class="btn btn-outline-primary" href="{% url 'po_detail' req.converted_po.id %}">Open PO {{ req.converted_po.po_number }}</a>
+  {% endif %}
+  {% if req.status == "DRAFT" or req.status == "SUBMITTED" or req.status == "APPROVED" %}
+    <form method="post" action="{% url 'requisition_cancel' req.id %}">{% csrf_token %}
+      <button class="btn btn-outline-secondary" type="submit">Cancel</button>
+    </form>
+  {% endif %}
+</div>
+
+<!-- Reject Modal -->
+<div class="modal fade" id="rejectModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{% url 'requisition_reject' req.id %}">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h5 class="modal-title">Reject Requisition</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <label class="form-label">Reason</label>
+          <input class="form-control" name="reason" placeholder="Why are you rejecting?">
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Close</button>
+          <button class="btn btn-danger" type="submit">Reject</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm border-0 p-4 bg-white">
+  <div class="d-flex justify-content-between mb-3">
+    <div>
+      <h2 class="fw-bold mb-1">PURCHASE REQUISITION</h2>
+      <div class="text-muted">Number: <strong>{{ req.req_number }}</strong></div>
+      <div class="text-muted">Raised: {{ req.created_at|date:"d M Y" }}</div>
+      {% if req.requested_by %}<div class="text-muted">Requested by: {{ req.requested_by.get_full_name|default:req.requested_by.username }}</div>{% endif %}
+    </div>
+    <div class="text-end">
+      <span class="badge fs-6
+        {% if req.status == 'APPROVED' %}text-bg-success
+        {% elif req.status == 'SUBMITTED' %}text-bg-warning
+        {% elif req.status == 'REJECTED' %}text-bg-danger
+        {% elif req.status == 'CONVERTED' %}text-bg-primary
+        {% elif req.status == 'CANCELLED' %}text-bg-secondary
+        {% else %}text-bg-light text-dark{% endif %}">{{ req.get_status_display }}</span>
+      {% if req.approved_by %}<div class="text-muted small mt-2">Approved by {{ req.approved_by.get_full_name|default:req.approved_by.username }}{% if req.approved_at %} on {{ req.approved_at|date:"d M Y" }}{% endif %}</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-md-4"><strong>Department:</strong> {{ req.department|default:"—" }}</div>
+    <div class="col-md-4"><strong>Preferred Supplier:</strong> {% if req.preferred_supplier %}{{ req.preferred_supplier.name }}{% else %}—{% endif %}</div>
+    <div class="col-md-4"><strong>Needed By:</strong> {{ req.needed_by|date:"d M Y"|default:"—" }}</div>
+  </div>
+  {% if req.justification %}<div class="mb-3"><strong>Justification:</strong> <span class="text-muted">{{ req.justification }}</span></div>{% endif %}
+  {% if req.status == "REJECTED" and req.rejected_reason %}<div class="alert alert-danger py-2">Rejected: {{ req.rejected_reason }}</div>{% endif %}
+
+  <table class="table table-bordered align-middle">
+    <thead class="table-light">
+      <tr>
+        <th>SKU</th><th>Product</th><th class="text-end">Qty</th>
+        <th class="text-end">Est. Unit Cost</th><th class="text-end">Est. Total</th><th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in req.lines.all %}
+      <tr>
+        <td>{{ line.product.sku }}</td>
+        <td>{{ line.product.name }}</td>
+        <td class="text-end">{{ line.quantity|floatformat:2 }}</td>
+        <td class="text-end">{% if line.estimated_unit_cost %}{{ line.estimated_unit_cost|floatformat:2 }}{% else %}—{% endif %}</td>
+        <td class="text-end">{{ line.estimated_total|money:tenant.currency_code }}</td>
+        <td>{{ line.notes|default:"" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="text-center text-muted">No lines.</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr class="fw-bold">
+        <td colspan="4" class="text-end">Estimated Total</td>
+        <td class="text-end">{{ req.estimated_total|money:tenant.currency_code }}</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+<div class="mt-3">
+  <a class="btn btn-outline-secondary" href="{% url 'requisition_list' %}">Back to Requisitions</a>
+</div>
+{% endblock %}

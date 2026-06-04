@@ -55,6 +55,16 @@ urlpatterns = [
     path("po/backorders/", views.po_backorders, name="po_backorders"),
     path("po/<int:po_id>/receive/", views.receive_po, name="receive_po"),
 
+    # Purchase Requisitions
+    path("requisitions/", views.requisition_list, name="requisition_list"),
+    path("requisitions/new/", views.requisition_create, name="requisition_create"),
+    path("requisitions/<int:req_id>/", views.requisition_detail, name="requisition_detail"),
+    path("requisitions/<int:req_id>/submit/", views.requisition_submit, name="requisition_submit"),
+    path("requisitions/<int:req_id>/approve/", views.requisition_approve, name="requisition_approve"),
+    path("requisitions/<int:req_id>/reject/", views.requisition_reject, name="requisition_reject"),
+    path("requisitions/<int:req_id>/cancel/", views.requisition_cancel, name="requisition_cancel"),
+    path("requisitions/<int:req_id>/convert/", views.requisition_convert, name="requisition_convert"),
+
     # Shipments
     path("po/<int:po_id>/shipments/new/", views.shipment_new, name="shipment_new"),
     path("shipments/", views.shipment_list, name="shipment_list"),

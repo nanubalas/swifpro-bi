@@ -2940,3 +2940,94 @@ class POCompletenessTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(resp.context["rows"]), 1)
         self.assertEqual(resp.context["rows"][0]["open_qty"], Decimal("6.00"))
+
+
+class PurchaseRequisitionTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Req Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Globex", email="g@globex.example")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="SKU-R1", name="Part",
+                                           standard_cost=Decimal("3.00"), preferred_supplier=self.supplier)
+        self.user = User.objects.create_user("requ", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="requ", password="pw")
+
+    def _make_req(self, status=None):
+        from core.models import PurchaseRequisition, PurchaseRequisitionLine
+        req = PurchaseRequisition.objects.create(
+            tenant=self.tenant, req_number="PR-T1", preferred_supplier=self.supplier,
+            status=status or PurchaseRequisition.Status.DRAFT,
+        )
+        PurchaseRequisitionLine.objects.create(
+            requisition=req, product=self.prod, quantity=Decimal("10"), estimated_unit_cost=Decimal("4.00"),
+        )
+        return req
+
+    def test_create_via_view(self):
+        from core.models import PurchaseRequisition
+        resp = self.client.post("/requisitions/new/", {
+            "department": "Ops", "preferred_supplier": self.supplier.id, "needed_by": "",
+            "justification": "Restock", "action": "submit",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-product": self.prod.id, "lines-0-quantity": "5",
+            "lines-0-estimated_unit_cost": "4.00", "lines-0-notes": "",
+        })
+        self.assertEqual(resp.status_code, 302)
+        req = PurchaseRequisition.objects.get(tenant=self.tenant)
+        self.assertEqual(req.status, PurchaseRequisition.Status.SUBMITTED)
+        self.assertEqual(req.requested_by, self.user)
+        self.assertEqual(req.lines.count(), 1)
+        self.assertEqual(req.estimated_total, Decimal("20.00"))
+
+    def test_submit_and_approve(self):
+        from core.models import PurchaseRequisition
+        req = self._make_req()
+        self.assertEqual(self.client.post(f"/requisitions/{req.id}/submit/").status_code, 302)
+        req.refresh_from_db()
+        self.assertEqual(req.status, PurchaseRequisition.Status.SUBMITTED)
+        self.assertEqual(self.client.post(f"/requisitions/{req.id}/approve/").status_code, 302)
+        req.refresh_from_db()
+        self.assertEqual(req.status, PurchaseRequisition.Status.APPROVED)
+        self.assertEqual(req.approved_by, self.user)
+
+    def test_reject(self):
+        from core.models import PurchaseRequisition
+        req = self._make_req(status=PurchaseRequisition.Status.SUBMITTED)
+        self.client.post(f"/requisitions/{req.id}/reject/", {"reason": "Over budget"})
+        req.refresh_from_db()
+        self.assertEqual(req.status, PurchaseRequisition.Status.REJECTED)
+        self.assertEqual(req.rejected_reason, "Over budget")
+
+    def test_convert_to_po_carries_lines(self):
+        from core.models import PurchaseRequisition, PurchaseOrder
+        req = self._make_req(status=PurchaseRequisition.Status.APPROVED)
+        resp = self.client.post(f"/requisitions/{req.id}/convert/")
+        self.assertEqual(resp.status_code, 302)
+        req.refresh_from_db()
+        self.assertEqual(req.status, PurchaseRequisition.Status.CONVERTED)
+        self.assertIsNotNone(req.converted_po)
+        po = req.converted_po
+        self.assertEqual(po.status, PurchaseOrder.Status.DRAFT)
+        self.assertEqual(po.supplier, self.supplier)
+        line = po.lines.get()
+        self.assertEqual(line.product, self.prod)
+        self.assertEqual(line.ordered_qty, Decimal("10.00"))
+        self.assertEqual(line.unit_cost, Decimal("4.00"))
+
+    def test_convert_requires_approved(self):
+        from core.models import PurchaseRequisition
+        req = self._make_req(status=PurchaseRequisition.Status.DRAFT)
+        self.client.post(f"/requisitions/{req.id}/convert/")
+        req.refresh_from_db()
+        self.assertEqual(req.status, PurchaseRequisition.Status.DRAFT)
+        self.assertIsNone(req.converted_po)
+
+    def test_detail_and_list_render(self):
+        from core.models import PurchaseRequisition
+        req = self._make_req(status=PurchaseRequisition.Status.APPROVED)
+        self.assertEqual(self.client.get("/requisitions/").status_code, 200)
+        self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)

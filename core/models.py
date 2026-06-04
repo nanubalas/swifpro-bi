@@ -504,6 +504,57 @@ class PurchaseOrderLine(models.Model):
 
 
 
+class PurchaseRequisition(models.Model):
+    """Internal purchase request that precedes a Purchase Order.
+
+    Flow: Draft -> Submitted (pending approval) -> Approved -> Converted (to PO).
+    May also be Rejected or Cancelled.
+    """
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Pending Approval"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        CONVERTED = "CONVERTED", "Converted to PO"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    req_number = models.CharField(max_length=40)
+    department = models.CharField(max_length=100, blank=True, null=True)
+    preferred_supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name="requisitions")
+    needed_by = models.DateField(null=True, blank=True)
+    justification = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    requested_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="requisitions")
+    approved_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="approved_requisitions")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_reason = models.CharField(max_length=255, blank=True, null=True)
+    converted_po = models.ForeignKey("PurchaseOrder", on_delete=models.SET_NULL, null=True, blank=True, related_name="from_requisition")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ("tenant", "req_number")
+
+    def __str__(self):
+        return self.req_number
+
+    @property
+    def estimated_total(self):
+        return sum((l.estimated_total for l in self.lines.all()), Decimal("0.00"))
+
+
+class PurchaseRequisitionLine(models.Model):
+    requisition = models.ForeignKey(PurchaseRequisition, related_name="lines", on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    estimated_unit_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    notes = models.CharField(max_length=255, blank=True, null=True)
+
+    @property
+    def estimated_total(self):
+        return self.quantity * (self.estimated_unit_cost or Decimal("0.00"))
+
+
 class PurchaseOrderAmendment(models.Model):
     """Tracks an amendment action and links old PO to new PO version."""
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)

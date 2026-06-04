@@ -7,6 +7,7 @@ from core.validators import (
 from core.models import (
     CycleCount, CycleCountLine, InventoryLotBalance, InventoryReservation,
     PurchaseOrder, PurchaseOrderLine, Shipment,
+    PurchaseRequisition, PurchaseRequisitionLine,
     Product, Supplier, Location, ChannelConnection,
     SalesOrder, SalesOrderLine, Tenant,
     UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine, ProductBarcode, ProductCategory,
@@ -63,6 +64,31 @@ PurchaseOrderLineFormSet = inlineformset_factory(
     extra=1,
     can_delete=True
 )
+
+class PurchaseRequisitionForm(TenantModelForm):
+    action = forms.ChoiceField(
+        choices=(("save", "Save Draft"), ("submit", "Submit for Approval")),
+        required=False
+    )
+
+    class Meta:
+        model = PurchaseRequisition
+        fields = ["department", "preferred_supplier", "needed_by", "justification"]
+        widgets = {
+            "needed_by": forms.DateInput(attrs={"type": "date"}),
+            "justification": forms.Textarea(attrs={"rows": 2}),
+        }
+
+
+PurchaseRequisitionLineFormSet = inlineformset_factory(
+    PurchaseRequisition,
+    PurchaseRequisitionLine,
+    form=TenantModelForm,
+    fields=("product", "quantity", "estimated_unit_cost", "notes"),
+    extra=1,
+    can_delete=True
+)
+
 
 class ShipmentUpdateForm(TenantModelForm):
     class Meta:

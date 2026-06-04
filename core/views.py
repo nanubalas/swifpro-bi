@@ -11,6 +11,7 @@ from django.template.loader import render_to_string
 
 from core.models import (
     Tenant, Location, PurchaseOrder, PurchaseOrderLine, PurchaseOrderAmendment, Shipment, ShipmentLine, Container, ShipmentEvent,
+    PurchaseRequisition, PurchaseRequisitionLine,
     InventoryBalance, InventoryMovement, ChannelSnapshot, SalesChannel, Product,
     Supplier, ChannelConnection, SalesOrder, SalesOrderLine,
     ProductBarcode, UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine,
@@ -33,6 +34,7 @@ from core.access import (
 from core.audit import log_audit
 from core.forms import (
     PurchaseOrderForm, PurchaseOrderLineFormSet,
+    PurchaseRequisitionForm, PurchaseRequisitionLineFormSet,
     ShipmentUpdateForm, ProductForm, SupplierForm,
     LocationForm, ChannelConnectionForm,
     SalesOrderForm, SalesOrderLineFormSet, TenantSettingsForm,
@@ -1331,6 +1333,203 @@ def po_submit(request, po_id):
     else:
         messages.success(request, f"PO {po.po_number} submitted.")
     return redirect("po_detail", po_id=po.id)
+
+# ---------------------------------------------------------------------------
+# Purchase Requisitions (internal purchase request -> PO)
+# ---------------------------------------------------------------------------
+
+def _generate_req_number():
+    return "PR-" + timezone.now().strftime("%Y%m%d-%H%M%S-%f")
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
+def requisition_list(request):
+    tenant = _get_default_tenant(request)
+    reqs = (PurchaseRequisition.objects
+            .filter(tenant=tenant)
+            .select_related("preferred_supplier", "requested_by", "converted_po")
+            .order_by("-created_at"))
+    return render(request, "requisitions/requisition_list.html", {"tenant": tenant, "reqs": reqs})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
+def requisition_create(request):
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "base.html", {"content": "Create a Tenant in admin first."})
+
+    req = PurchaseRequisition(tenant=tenant, req_number=_generate_req_number())
+
+    if request.method == "POST":
+        form = PurchaseRequisitionForm(request.POST, instance=req)
+        formset = PurchaseRequisitionLineFormSet(request.POST, instance=req)
+        if form.is_valid() and formset.is_valid():
+            req = form.save(commit=False)
+            req.tenant = tenant
+            req.requested_by = request.user
+            action = form.cleaned_data.get("action") or "save"
+            req.status = (PurchaseRequisition.Status.SUBMITTED if action == "submit"
+                          else PurchaseRequisition.Status.DRAFT)
+            req.save()
+            formset.save()
+            log_audit(action="requisition_create", request=request, user=request.user, tenant=tenant,
+                      detail=f"{req.req_number} ({req.status})")
+            messages.success(request, f"Requisition {req.req_number} created.")
+            return redirect("requisition_detail", req_id=req.id)
+    else:
+        form = PurchaseRequisitionForm(instance=req)
+        formset = PurchaseRequisitionLineFormSet(instance=req)
+
+    return render(request, "requisitions/requisition_create.html",
+                  {"tenant": tenant, "form": form, "formset": formset, "req": req})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
+def requisition_detail(request, req_id):
+    tenant = _get_default_tenant(request)
+    req = get_object_or_404(PurchaseRequisition, id=req_id, tenant=tenant)
+    return render(request, "requisitions/requisition_detail.html", {"tenant": tenant, "req": req})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
+def requisition_submit(request, req_id):
+    tenant = _get_default_tenant(request)
+    req = get_object_or_404(PurchaseRequisition, id=req_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("requisition_detail", req_id=req.id)
+    if req.status != PurchaseRequisition.Status.DRAFT:
+        messages.info(request, "Only Draft requisitions can be submitted.")
+        return redirect("requisition_detail", req_id=req.id)
+    if not req.lines.exists():
+        messages.error(request, "Add at least one line before submitting.")
+        return redirect("requisition_detail", req_id=req.id)
+    req.status = PurchaseRequisition.Status.SUBMITTED
+    req.save(update_fields=["status"])
+    log_audit(action="requisition_submit", request=request, user=request.user, tenant=tenant, detail=req.req_number)
+    messages.success(request, f"Requisition {req.req_number} submitted for approval.")
+    return redirect("requisition_detail", req_id=req.id)
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_FINANCE], [ROLE_ADMIN, ROLE_FINANCE])
+def requisition_approve(request, req_id):
+    tenant = _get_default_tenant(request)
+    req = get_object_or_404(PurchaseRequisition, id=req_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("requisition_detail", req_id=req.id)
+    if req.status != PurchaseRequisition.Status.SUBMITTED:
+        messages.info(request, "Requisition is not awaiting approval.")
+        return redirect("requisition_detail", req_id=req.id)
+    req.status = PurchaseRequisition.Status.APPROVED
+    req.approved_by = request.user
+    req.approved_at = timezone.now()
+    req.save(update_fields=["status", "approved_by", "approved_at"])
+    log_audit(action="requisition_approve", request=request, user=request.user, tenant=tenant, detail=req.req_number)
+    messages.success(request, f"Requisition {req.req_number} approved.")
+    return redirect("requisition_detail", req_id=req.id)
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_FINANCE], [ROLE_ADMIN, ROLE_FINANCE])
+def requisition_reject(request, req_id):
+    tenant = _get_default_tenant(request)
+    req = get_object_or_404(PurchaseRequisition, id=req_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("requisition_detail", req_id=req.id)
+    if req.status != PurchaseRequisition.Status.SUBMITTED:
+        messages.info(request, "Requisition is not awaiting approval.")
+        return redirect("requisition_detail", req_id=req.id)
+    req.status = PurchaseRequisition.Status.REJECTED
+    req.rejected_reason = (request.POST.get("reason") or "").strip() or None
+    req.save(update_fields=["status", "rejected_reason"])
+    log_audit(action="requisition_reject", request=request, user=request.user, tenant=tenant,
+              detail=f"{req.req_number}: {req.rejected_reason or ''}")
+    messages.success(request, f"Requisition {req.req_number} rejected.")
+    return redirect("requisition_detail", req_id=req.id)
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
+def requisition_cancel(request, req_id):
+    tenant = _get_default_tenant(request)
+    req = get_object_or_404(PurchaseRequisition, id=req_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("requisition_detail", req_id=req.id)
+    if req.status in (PurchaseRequisition.Status.CONVERTED, PurchaseRequisition.Status.CANCELLED):
+        messages.info(request, "Requisition cannot be cancelled.")
+        return redirect("requisition_detail", req_id=req.id)
+    req.status = PurchaseRequisition.Status.CANCELLED
+    req.save(update_fields=["status"])
+    log_audit(action="requisition_cancel", request=request, user=request.user, tenant=tenant, detail=req.req_number)
+    messages.success(request, f"Requisition {req.req_number} cancelled.")
+    return redirect("requisition_detail", req_id=req.id)
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
+@transaction.atomic
+def requisition_convert(request, req_id):
+    """Create a Draft Purchase Order from an approved requisition."""
+    tenant = _get_default_tenant(request)
+    req = get_object_or_404(PurchaseRequisition, id=req_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("requisition_detail", req_id=req.id)
+
+    if req.status != PurchaseRequisition.Status.APPROVED:
+        messages.error(request, "Only approved requisitions can be converted to a PO.")
+        return redirect("requisition_detail", req_id=req.id)
+    if req.converted_po_id:
+        messages.info(request, "This requisition has already been converted.")
+        return redirect("po_detail", po_id=req.converted_po_id)
+
+    supplier = req.preferred_supplier
+    if supplier is None:
+        # Fall back to a product's preferred supplier, else first supplier on file.
+        for l in req.lines.select_related("product"):
+            sup = getattr(l.product, "preferred_supplier", None)
+            if sup is not None:
+                supplier = sup
+                break
+    if supplier is None:
+        supplier = Supplier.objects.filter(tenant=tenant).order_by("id").first()
+    if supplier is None:
+        messages.error(request, "No supplier available. Set a preferred supplier on the requisition first.")
+        return redirect("requisition_detail", req_id=req.id)
+
+    po = PurchaseOrder.objects.create(
+        tenant=tenant,
+        po_number=_generate_po_number(),
+        supplier=supplier,
+        expected_date=req.needed_by,
+        notes=f"From requisition {req.req_number}." + (f" {req.justification}" if req.justification else ""),
+        status=PurchaseOrder.Status.DRAFT,
+        currency_code=getattr(supplier, "currency_code", None) or tenant.currency_code,
+    )
+    std_tx = TaxCode.objects.filter(tenant=tenant, code="STD", is_active=True).first()
+    for l in req.lines.select_related("product"):
+        unit_cost = l.estimated_unit_cost
+        if unit_cost is None:
+            unit_cost = getattr(l.product, "standard_cost", None) or Decimal("0.00")
+        PurchaseOrderLine.objects.create(
+            po=po,
+            product=l.product,
+            ordered_qty=l.quantity,
+            unit_cost=unit_cost,
+            tax_code=getattr(l.product, "tax_code", None) or std_tx,
+        )
+
+    req.status = PurchaseRequisition.Status.CONVERTED
+    req.converted_po = po
+    req.save(update_fields=["status", "converted_po"])
+    log_audit(action="requisition_convert", request=request, user=request.user, tenant=tenant,
+              detail=f"{req.req_number} -> {po.po_number}")
+    messages.success(request, f"Requisition {req.req_number} converted to draft PO {po.po_number}.")
+    return redirect("po_detail", po_id=po.id)
+
 
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])

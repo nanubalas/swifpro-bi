@@ -9,6 +9,7 @@ from core.auth import ALL_ROLES
 from core.models import (
     Tenant, UserProfile, Location, Supplier, UnitOfMeasure, Product,
     BillOfMaterials, BillOfMaterialsLine, PurchaseOrder, PurchaseOrderLine,
+    PurchaseRequisition, PurchaseRequisitionLine,
     Shipment, ShipmentLine, InventoryMovement, Customer, CustomerInvoice,
     CustomerInvoiceLine, TaxCode, SalesOrder, SalesOrderLine, ChannelConnection,
     SalesChannel, SyncRun, Payment, PaymentAllocation, OrgMembership,
@@ -234,6 +235,20 @@ class Command(BaseCommand):
             ShipmentLine.objects.create(shipment=shipment, po_line=pol1, expected_qty=Decimal("50"))
             ShipmentLine.objects.create(shipment=shipment, po_line=pol2, expected_qty=Decimal("100"))
             self.stdout.write("Created demo PO + inbound shipment.")
+
+        # Purchase requisition (approved, awaiting conversion to PO)
+        req, req_created = PurchaseRequisition.objects.get_or_create(
+            tenant=tenant, req_number="PR-DEMO-0001",
+            defaults={"department": "Operations", "preferred_supplier": globex,
+                      "needed_by": (timezone.now() + timezone.timedelta(days=21)).date(),
+                      "justification": "Restock fast-moving SKUs ahead of peak season.",
+                      "status": PurchaseRequisition.Status.APPROVED,
+                      "approved_at": timezone.now()},
+        )
+        if req_created:
+            PurchaseRequisitionLine.objects.create(requisition=req, product=p1, quantity=Decimal("40"), estimated_unit_cost=Decimal("12.50"), notes="Approved estimate")
+            PurchaseRequisitionLine.objects.create(requisition=req, product=p2, quantity=Decimal("60"), estimated_unit_cost=Decimal("8.00"))
+            self.stdout.write("Created demo purchase requisition (approved).")
 
         # Sales order (draft) - exercises kit explosion / reservations later
         so, so_created = SalesOrder.objects.get_or_create(

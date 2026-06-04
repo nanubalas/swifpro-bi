@@ -105,6 +105,7 @@ NAV = [
         ("Sales Reports", "/sales/reports/", "graph-up", {ADMIN, MANAGER, SALES, ACCOUNTANT, FINANCE}),
     ]),
     ("Procurement", [
+        ("Purchase Requisitions", "/requisitions/", "card-checklist", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Purchase Orders", "/po/", "file-earmark-text", {ADMIN, MANAGER, PURCHASING}),
         ("Backorders", "/po/backorders/", "hourglass-split", {ADMIN, MANAGER, PURCHASING}),
         ("Suppliers", "/suppliers/", "shop", {ADMIN, MANAGER, PURCHASING, ACCOUNTANT, FINANCE}),

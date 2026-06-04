@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Purchase Requisitions{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Purchase Requisitions</h2>
+    <div class="text-muted">Internal purchase requests that precede a Purchase Order.</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'requisition_create' %}"><i class="bi bi-plus-lg me-1"></i> New Requisition</a>
+</div>
+
+<div class="card shadow-sm border-0">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Number</th>
+            <th>Department</th>
+            <th>Preferred Supplier</th>
+            <th>Needed By</th>
+            <th class="text-end">Est. Total</th>
+            <th>Status</th>
+            <th>PO</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in reqs %}
+          <tr>
+            <td><a href="{% url 'requisition_detail' r.id %}">{{ r.req_number }}</a></td>
+            <td>{{ r.department|default:"—" }}</td>
+            <td>{% if r.preferred_supplier %}{{ r.preferred_supplier.name }}{% else %}—{% endif %}</td>
+            <td>{{ r.needed_by|date:"d M Y"|default:"—" }}</td>
+            <td class="text-end">{{ r.estimated_total|money:tenant.currency_code }}</td>
+            <td>
+              {% if r.status == "APPROVED" %}<span class="badge text-bg-success">{{ r.get_status_display }}</span>
+              {% elif r.status == "SUBMITTED" %}<span class="badge text-bg-warning">{{ r.get_status_display }}</span>
+              {% elif r.status == "REJECTED" %}<span class="badge text-bg-danger">{{ r.get_status_display }}</span>
+              {% elif r.status == "CONVERTED" %}<span class="badge text-bg-primary">{{ r.get_status_display }}</span>
+              {% elif r.status == "CANCELLED" %}<span class="badge text-bg-secondary">{{ r.get_status_display }}</span>
+              {% else %}<span class="badge text-bg-light text-dark">{{ r.get_status_display }}</span>{% endif %}
+            </td>
+            <td>{% if r.converted_po %}<a href="{% url 'po_detail' r.converted_po.id %}">{{ r.converted_po.po_number }}</a>{% else %}—{% endif %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-4">No requisitions yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

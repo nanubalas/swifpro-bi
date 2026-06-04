@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}New Purchase Requisition{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">New Purchase Requisition</h2>
+    <div class="text-muted">Raise an internal request to be approved and converted into a PO.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{% url 'requisition_list' %}">Back to Requisitions</a>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card shadow-sm border-0">
+        <div class="card-body">
+          <h5 class="fw-semibold mb-3">Request Details</h5>
+          <div class="mb-3">
+            <label class="form-label">Department (optional)</label>
+            {{ form.department }}
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Preferred Supplier (optional)</label>
+            {{ form.preferred_supplier }}
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Needed By</label>
+            {{ form.needed_by }}
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Justification (optional)</label>
+            {{ form.justification }}
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Action</label>
+            {{ form.action }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-8">
+      <div class="card shadow-sm border-0">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="fw-semibold mb-0">Requested Items</h5>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="add-line-btn">+ Add line</button>
+          </div>
+
+          {{ formset.management_form }}
+
+          <div class="table-responsive">
+            <table class="table table-bordered align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:34%">Product</th>
+                  <th class="text-end" style="width:14%">Qty</th>
+                  <th class="text-end" style="width:18%">Est. Unit Cost</th>
+                  <th style="width:24%">Notes</th>
+                  <th class="text-center" style="width:10%">Remove</th>
+                </tr>
+              </thead>
+              <tbody id="lines-body">
+                {% for f in formset %}
+                <tr class="line-row">
+                  {{ f.id }}
+                  <td>{{ f.product }}</td>
+                  <td class="text-end">{{ f.quantity }}</td>
+                  <td class="text-end">{{ f.estimated_unit_cost }}</td>
+                  <td>{{ f.notes }}</td>
+                  <td class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <template id="empty-form-template">
+            <tr class="line-row">
+              {{ formset.empty_form.id }}
+              <td>{{ formset.empty_form.product }}</td>
+              <td class="text-end">{{ formset.empty_form.quantity }}</td>
+              <td class="text-end">{{ formset.empty_form.estimated_unit_cost }}</td>
+              <td>{{ formset.empty_form.notes }}</td>
+              <td class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
+            </tr>
+          </template>
+
+          <div class="d-flex justify-content-end gap-2 mt-3">
+            <a class="btn btn-outline-secondary" href="{% url 'requisition_list' %}">Cancel</a>
+            <button class="btn btn-primary" type="submit">Save Requisition</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<script>
+  document.querySelectorAll("select, input, textarea").forEach(el => {
+    if (el.type === "checkbox") el.classList.add("form-check-input");
+    else el.classList.add("form-control");
+  });
+  const addBtn = document.getElementById("add-line-btn");
+  const tbody = document.getElementById("lines-body");
+  const template = document.getElementById("empty-form-template");
+  addBtn.addEventListener("click", () => {
+    const totalFormsInput = document.querySelector('input[name="{{ formset.prefix }}-TOTAL_FORMS"]');
+    const index = parseInt(totalFormsInput.value, 10);
+    const wrapper = document.createElement("tbody");
+    wrapper.innerHTML = template.innerHTML.replaceAll("__prefix__", index).trim();
+    const newRow = wrapper.querySelector("tr");
+    tbody.appendChild(newRow);
+    totalFormsInput.value = index + 1;
+    newRow.querySelectorAll("select, input, textarea").forEach(el => {
+      if (el.type === "checkbox") el.classList.add("form-check-input");
+      else el.classList.add("form-control");
+    });
+  });
+</script>
+{% endblock %}
