@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Statement - {{ customer.name }} - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{% url 'customer_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+    <div>
+      <h2 class="fw-bold mb-0">Statement</h2>
+      <div class="text-muted">{{ customer.name }} &bull; {{ data.date_from|date:'d M Y' }} - {{ data.date_to|date:'d M Y' }}</div>
+    </div>
+  </div>
+  <div class="d-flex align-items-end gap-2 flex-wrap">
+    <form method="get" class="d-flex align-items-end gap-2">
+      <div><label class="form-label mb-1">From</label><input type="date" name="from" value="{{ data.date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+      <div><label class="form-label mb-1">To</label><input type="date" name="to" value="{{ data.date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+      <button class="btn btn-primary btn-sm">Apply</button>
+    </form>
+    <a class="btn btn-outline-secondary" href="{% url 'customer_statement_pdf' customer.id %}?from={{ data.date_from|date:'Y-m-d' }}&to={{ data.date_to|date:'Y-m-d' }}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i> PDF</a>
+    <form method="post" action="{% url 'customer_statement_email' customer.id %}?from={{ data.date_from|date:'Y-m-d' }}&to={{ data.date_to|date:'Y-m-d' }}">{% csrf_token %}
+      <button class="btn btn-primary"><i class="bi bi-envelope me-1"></i> Email</button>
+    </form>
+  </div>
+</div>
+
+<div class="card"><div class="card-body">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead class="table-light"><tr><th>Date</th><th>Type</th><th>Reference</th><th class="text-end">Charges</th><th class="text-end">Payments</th><th class="text-end">Balance</th></tr></thead>
+      <tbody>
+        <tr class="table-light"><td colspan="5" class="fw-semibold">Opening balance</td><td class="text-end fw-semibold">{{ data.opening|money:tenant.currency_code }}</td></tr>
+        {% for r in data.rows %}
+        <tr>
+          <td class="text-muted small">{{ r.date|date:'d M Y' }}</td>
+          <td>{{ r.type }}</td>
+          <td class="small">{{ r.ref }}</td>
+          <td class="text-end">{% if r.debit %}{{ r.debit|money:tenant.currency_code }}{% endif %}</td>
+          <td class="text-end">{% if r.credit %}{{ r.credit|money:tenant.currency_code }}{% endif %}</td>
+          <td class="text-end">{{ r.balance|money:tenant.currency_code }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted py-4">No transactions in this period.</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light">
+        <tr class="fw-bold"><td colspan="3" class="text-end">Closing balance due</td>
+          <td class="text-end">{{ data.total_debit|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ data.total_credit|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ data.closing|money:tenant.currency_code }}</td></tr>
+      </tfoot>
+    </table>
+  </div>
+</div></div>
+{% endblock %}

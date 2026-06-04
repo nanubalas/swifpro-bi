@@ -27,7 +27,10 @@
             <td>{% if c.email %}{{ c.email }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
             <td>{% if c.vat_number %}{{ c.vat_number }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
             <td class="text-end">
-              <a class="btn btn-sm btn-outline-primary" href="/customers/{{ c.id }}/edit/">Edit</a>
+              <div class="btn-group">
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'customer_statement' c.id %}">Statement</a>
+                <a class="btn btn-sm btn-outline-primary" href="/customers/{{ c.id }}/edit/">Edit</a>
+              </div>
             </td>
           </tr>
           {% empty %}
