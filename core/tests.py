@@ -3033,6 +3033,58 @@ class PurchaseRequisitionTests(TestCase):
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
 
 
+class CreditLimitEnforcementTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Credit Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.user = User.objects.create_user("credu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="credu", password="pw")
+
+    def _invoice(self, customer, net):
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=customer,
+                                             invoice_number=f"INV-{customer.id}-{net}")
+        CustomerInvoiceLine.objects.create(invoice=inv, description="X", qty=Decimal("1"),
+                                           unit_price=Decimal(net), tax_code=self.std)
+        return inv
+
+    def test_credit_status_method(self):
+        c = Customer.objects.create(tenant=self.tenant, name="A", credit_limit=Decimal("500.00"))
+        ok, _ = c.credit_status(Decimal("100.00"))
+        self.assertTrue(ok)
+        ok, reason = c.credit_status(Decimal("600.00"))
+        self.assertFalse(ok)
+        self.assertIn("Credit limit exceeded", reason)
+
+    def test_no_limit_allows_anything(self):
+        c = Customer.objects.create(tenant=self.tenant, name="B", credit_limit=Decimal("0.00"))
+        ok, _ = c.credit_status(Decimal("999999.00"))
+        self.assertTrue(ok)
+
+    def test_on_hold_blocks(self):
+        c = Customer.objects.create(tenant=self.tenant, name="C", status=Customer.Status.ON_HOLD)
+        ok, reason = c.credit_status(Decimal("1.00"))
+        self.assertFalse(ok)
+        self.assertIn("on hold", reason)
+
+    def test_issue_blocked_when_over_limit(self):
+        c = Customer.objects.create(tenant=self.tenant, name="D", credit_limit=Decimal("100.00"))
+        inv = self._invoice(c, "200")  # 240 gross > 100 limit
+        resp = self.client.post(f"/ar/invoices/{inv.id}/issue/")
+        self.assertEqual(resp.status_code, 302)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, CustomerInvoice.Status.DRAFT)  # not issued
+
+    def test_issue_succeeds_when_within_limit(self):
+        c = Customer.objects.create(tenant=self.tenant, name="E", credit_limit=Decimal("1000.00"))
+        inv = self._invoice(c, "200")  # 240 gross < 1000
+        resp = self.client.post(f"/ar/invoices/{inv.id}/issue/")
+        self.assertEqual(resp.status_code, 302)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, CustomerInvoice.Status.ISSUED)
+
+
 class LowStockReorderTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership, InventoryBalance
