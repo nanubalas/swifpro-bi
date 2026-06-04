@@ -2675,8 +2675,61 @@ def customer_edit(request, customer_id):
     form = CustomerForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
         form.save()
-        return redirect("customer_list")
+        return redirect("customer_detail", customer_id=obj.id)
     return render(request, "customers/customer_form.html", {"tenant": tenant, "form": form, "mode": "edit"})
+
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+def customer_detail(request, customer_id):
+    """Customer profile: details, recent invoices/payments/credit notes/orders/
+    quotes, outstanding balance, notes and an activity timeline."""
+    tenant = _get_default_tenant(request)
+    c = get_object_or_404(Customer, id=customer_id, tenant=tenant)
+
+    invoices = list(CustomerInvoice.objects.filter(tenant=tenant, customer=c)
+                    .prefetch_related("lines", "lines__tax_code", "payment_allocations", "credit_notes")
+                    .order_by("-invoice_date", "-id"))
+    payments = list(Payment.objects.filter(tenant=tenant, customer=c)
+                    .order_by("-payment_date", "-id"))
+    credit_notes = list(CreditNote.objects.filter(tenant=tenant, customer=c, kind=CreditNote.Kind.SALES)
+                        .prefetch_related("lines", "lines__tax_code").order_by("-credit_note_date", "-id"))
+    orders = list(CustomerOrder.objects.filter(tenant=tenant, customer=c).order_by("-order_date", "-id"))
+    quotes = list(SalesQuote.objects.filter(tenant=tenant, customer=c).order_by("-quote_date", "-id"))
+
+    # Activity timeline: merge dated events newest-first.
+    timeline = []
+    for q in quotes:
+        timeline.append({"date": q.quote_date, "icon": "file-earmark-text", "kind": "Quote",
+                         "text": f"Quote {q.quote_number} ({q.get_status_display()})",
+                         "url": f"/quotes/{q.id}/"})
+    for o in orders:
+        timeline.append({"date": o.order_date, "icon": "cart-check", "kind": "Sales order",
+                         "text": f"Sales order {o.order_number} ({o.get_status_display()})",
+                         "url": f"/customer-orders/{o.id}/"})
+    for inv in invoices:
+        timeline.append({"date": inv.invoice_date, "icon": "receipt", "kind": "Invoice",
+                         "text": f"Invoice {inv.invoice_number} ({inv.display_status}) - {inv.total}",
+                         "url": f"/ar/invoices/{inv.id}/"})
+    for p in payments:
+        label = "Refund" if p.direction == Payment.Direction.REFUND else "Receipt"
+        icon = "arrow-counterclockwise" if p.direction == Payment.Direction.REFUND else "cash-coin"
+        timeline.append({"date": p.payment_date, "icon": icon, "kind": label,
+                         "text": f"{label} {p.amount} ({p.get_method_display()})",
+                         "url": f"/payments/{p.id}/"})
+    for cn in credit_notes:
+        timeline.append({"date": cn.credit_note_date, "icon": "arrow-return-left", "kind": "Credit note",
+                         "text": f"Credit note {cn.credit_note_number} - {cn.total}",
+                         "url": f"/credit-notes/{cn.id}/"})
+    timeline.sort(key=lambda e: e["date"], reverse=True)
+
+    sales_total = sum((inv.total for inv in invoices if inv.status in CustomerInvoice.ISSUED_STATES), Decimal("0.00"))
+
+    return render(request, "customers/customer_detail.html", {
+        "tenant": tenant, "c": c,
+        "invoices": invoices[:10], "payments": payments[:10], "credit_notes": credit_notes[:10],
+        "orders": orders[:10], "quotes": quotes[:10], "timeline": timeline[:40],
+        "sales_total": sales_total, "invoice_count": len(invoices),
+    })
 
 
 # ============================

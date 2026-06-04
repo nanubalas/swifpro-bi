@@ -24,7 +24,7 @@
         <tbody>
           {% for c in customers %}
           <tr>
-            <td class="fw-semibold">{{ c.name }}{% if c.tag_list %} {% for t in c.tag_list %}<span class="badge text-bg-light text-dark border ms-1">{{ t }}</span>{% endfor %}{% endif %}
+            <td class="fw-semibold"><a class="text-decoration-none" href="{% url 'customer_detail' c.id %}">{{ c.name }}</a>{% if c.tag_list %} {% for t in c.tag_list %}<span class="badge text-bg-light text-dark border ms-1">{{ t }}</span>{% endfor %}{% endif %}
               <div class="text-muted small fw-normal">{{ c.email|default:'' }}</div></td>
             <td><span class="badge text-bg-secondary">{{ c.get_customer_type_display }}</span></td>
             <td class="small">{{ c.contact_person|default:'-' }}</td>

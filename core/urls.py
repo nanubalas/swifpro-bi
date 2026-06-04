@@ -172,6 +172,7 @@ path("tax-codes/<int:tax_id>/delete/", views.taxcode_delete, name="taxcode_delet
 # Customers
 path("customers/", views.customer_list, name="customer_list"),
 path("customers/new/", views.customer_create, name="customer_create"),
+path("customers/<int:customer_id>/", views.customer_detail, name="customer_detail"),
 path("customers/<int:customer_id>/edit/", views.customer_edit, name="customer_edit"),
 path("customers/<int:customer_id>/statement/", views.customer_statement, name="customer_statement"),
 path("customers/<int:customer_id>/statement/pdf/", views.customer_statement_pdf, name="customer_statement_pdf"),
