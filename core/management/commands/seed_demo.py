@@ -14,8 +14,11 @@ from core.models import (
     SalesChannel, SyncRun, Payment, PaymentAllocation, OrgMembership,
     AuditLog, UserPermissionOverride, GLAccount, Expense, CreditNote, CreditNoteLine,
     BankTransaction,
+    SalesQuote, SalesQuoteLine, CustomerOrder, CustomerOrderLine,
+    RecurringInvoice, RecurringInvoiceLine,
 )
 from core.services.gl import post_expense, post_credit_note
+from core.services import recurring as recurring_service
 from core import permissions as permissions_mod
 from core import roles as roles_mod
 from core.services.inventory import apply_movement
@@ -340,5 +343,170 @@ class Command(BaseCommand):
                     created_at=now - delta,
                 )
             self.stdout.write(f"Seeded {len(events)} audit log events.")
+
+        # ----------------------------------------------------------------
+        # Sales module demo data: extra customers/products, quotes, sales
+        # orders, invoices across every status, recurring invoices, refunds.
+        # Guarded on SalesQuote so re-running the seed never duplicates.
+        # ----------------------------------------------------------------
+        if not SalesQuote.objects.filter(tenant=tenant).exists():
+            std_tax = TaxCode.objects.filter(tenant=tenant, code="STD").first()
+            red_tax = TaxCode.objects.filter(tenant=tenant, code="RED").first()
+            today = timezone.now().date()
+            now = timezone.now()
+            td = timezone.timedelta
+            am = recurring_service.add_months
+
+            # A few more customers so "Sales by customer" has variety.
+            def make_customer(name, email):
+                return Customer.objects.get_or_create(tenant=tenant, name=name, defaults={"email": email})[0]
+
+            northwind = make_customer("Northwind Traders", "ap@northwind.example")
+            meridian = make_customer("Meridian Components Ltd", "accounts@meridian.example")
+            caldera = make_customer("Caldera Studios", "hello@caldera.example")
+
+            # Two more products for richer "Sales by product".
+            p4 = make_product("SKU-004", "Stratus Webcam HD", "22.00")
+            p5 = make_product("SKU-005", "Lumen LED Strip", "6.50")
+
+            def add_lines(doc, line_model, fk, items):
+                for prod, qty, price, disc in items:
+                    line_model.objects.create(**{
+                        fk: doc, "product": prod, "description": prod.name,
+                        "qty": Decimal(qty), "unit_price": Decimal(price),
+                        "discount_pct": Decimal(disc), "tax_code": std_tax})
+
+            # ---- Quotes (one per key status) ----
+            q_draft = SalesQuote.objects.create(
+                tenant=tenant, customer=northwind, quote_number="QUO-DEMO-0001",
+                quote_date=today - td(days=3), valid_until=today + td(days=27),
+                currency_code="GBP", status=SalesQuote.Status.DRAFT,
+                terms=tenant.invoice_footer, notes="Initial proposal.")
+            add_lines(q_draft, SalesQuoteLine, "quote", [(p1, 5, "24.99", "0"), (p4, 2, "39.99", "5")])
+
+            q_sent = SalesQuote.objects.create(
+                tenant=tenant, customer=meridian, quote_number="QUO-DEMO-0002",
+                quote_date=today - td(days=6), valid_until=today + td(days=24),
+                currency_code="GBP", status=SalesQuote.Status.SENT, sent_at=now - td(days=6),
+                terms=tenant.invoice_footer)
+            add_lines(q_sent, SalesQuoteLine, "quote", [(p2, 10, "14.99", "0")])
+
+            q_accepted = SalesQuote.objects.create(
+                tenant=tenant, customer=caldera, quote_number="QUO-DEMO-0003",
+                quote_date=today - td(days=10), valid_until=today + td(days=20),
+                currency_code="GBP", status=SalesQuote.Status.ACCEPTED, sent_at=now - td(days=10),
+                terms=tenant.invoice_footer)
+            add_lines(q_accepted, SalesQuoteLine, "quote", [(p3, 20, "4.99", "10"), (p5, 15, "9.99", "0")])
+
+            # ---- Quote -> Sales order -> Invoice conversion chain ----
+            q_converted = SalesQuote.objects.create(
+                tenant=tenant, customer=northwind, quote_number="QUO-DEMO-0004",
+                quote_date=today - td(days=20), currency_code="GBP",
+                status=SalesQuote.Status.CONVERTED, sent_at=now - td(days=20),
+                terms=tenant.invoice_footer)
+            add_lines(q_converted, SalesQuoteLine, "quote", [(p1, 4, "24.99", "0"), (p2, 4, "14.99", "0")])
+
+            so_from_quote = CustomerOrder.objects.create(
+                tenant=tenant, customer=northwind, order_number="SO-DEMO-0001",
+                order_date=today - td(days=18), currency_code="GBP",
+                status=CustomerOrder.Status.INVOICED, quote=q_converted, terms=tenant.invoice_footer)
+            add_lines(so_from_quote, CustomerOrderLine, "order", [(p1, 4, "24.99", "0"), (p2, 4, "14.99", "0")])
+
+            # A standalone confirmed sales order (not yet invoiced).
+            so_open = CustomerOrder.objects.create(
+                tenant=tenant, customer=meridian, order_number="SO-DEMO-0002",
+                order_date=today - td(days=2), currency_code="GBP",
+                status=CustomerOrder.Status.CONFIRMED, terms=tenant.invoice_footer)
+            add_lines(so_open, CustomerOrderLine, "order", [(p4, 6, "39.99", "0"), (p5, 10, "9.99", "5")])
+
+            # ---- Invoices across every status ----
+            def make_invoice(number, cust, items, inv_date, due_days=30, source_order=None, source_quote=None):
+                inv = CustomerInvoice.objects.create(
+                    tenant=tenant, customer=cust, invoice_number=number, invoice_date=inv_date,
+                    due_date=inv_date + td(days=due_days), currency_code="GBP",
+                    terms=tenant.invoice_footer, source_order=source_order, source_quote=source_quote)
+                add_lines(inv, CustomerInvoiceLine, "invoice", items)
+                return inv
+
+            def receipt(inv, amount, pay_date):
+                p = Payment.objects.create(
+                    tenant=tenant, direction=Payment.Direction.RECEIPT, customer=inv.customer,
+                    amount=Decimal(amount), method=Payment.Method.BANK, payment_date=pay_date,
+                    reference=f"RCT-{inv.invoice_number}")
+                PaymentAllocation.objects.create(payment=p, customer_invoice=inv, amount=Decimal(amount))
+                post_payment(p)
+                return p
+
+            # Invoice generated from the converted order (issued + sent).
+            inv_from_order = make_invoice("INV-DEMO-0002", northwind,
+                                          [(p1, 4, "24.99", "0"), (p2, 4, "14.99", "0")],
+                                          today - td(days=18), source_order=so_from_quote, source_quote=q_converted)
+            post_customer_invoice(inv_from_order)
+            inv_from_order.status = CustomerInvoice.Status.SENT
+            inv_from_order.sent_at = now - td(days=18)
+            inv_from_order.save(update_fields=["status", "sent_at"])
+
+            # Partially paid.
+            inv_partial = make_invoice("INV-DEMO-0003", meridian, [(p2, 8, "14.99", "0")], today - td(days=25))
+            post_customer_invoice(inv_partial)
+            receipt(inv_partial, "60.00", today - td(days=10))
+
+            # Fully paid.
+            inv_paid = make_invoice("INV-DEMO-0004", caldera, [(p3, 10, "4.99", "10"), (p5, 8, "9.99", "0")], today - td(days=40))
+            post_customer_invoice(inv_paid)
+            receipt(inv_paid, inv_paid.total, today - td(days=30))
+
+            # Overdue (issued, past due, unpaid).
+            inv_overdue = make_invoice("INV-DEMO-0005", northwind, [(p4, 3, "39.99", "0")], today - td(days=60), due_days=30)
+            post_customer_invoice(inv_overdue)
+            inv_overdue.status = CustomerInvoice.Status.SENT
+            inv_overdue.sent_at = now - td(days=60)
+            inv_overdue.save(update_fields=["status", "sent_at"])
+
+            # Cancelled (draft that was voided before issue).
+            inv_cancelled = make_invoice("INV-DEMO-0006", meridian, [(p1, 1, "24.99", "0")], today - td(days=5))
+            inv_cancelled.status = CustomerInvoice.Status.CANCELLED
+            inv_cancelled.save(update_fields=["status"])
+
+            # Refunded (paid then refunded).
+            inv_refunded = make_invoice("INV-DEMO-0007", caldera, [(p2, 2, "14.99", "0")], today - td(days=15))
+            post_customer_invoice(inv_refunded)
+            receipt(inv_refunded, inv_refunded.total, today - td(days=12))
+            refund = Payment.objects.create(
+                tenant=tenant, direction=Payment.Direction.REFUND, customer=caldera,
+                amount=inv_refunded.amount_paid, method=Payment.Method.BANK,
+                payment_date=today - td(days=8), reference=f"Refund {inv_refunded.invoice_number}")
+            post_payment(refund)
+            inv_refunded.status = CustomerInvoice.Status.REFUNDED
+            inv_refunded.save(update_fields=["status"])
+
+            # A couple more paid invoices on spread dates for the history/report charts.
+            for n, (cust, items, days_ago) in enumerate([
+                (northwind, [(p5, 30, "9.99", "0")], 90),
+                (meridian, [(p1, 6, "24.99", "0"), (p3, 12, "4.99", "0")], 75),
+                (caldera, [(p4, 4, "39.99", "0")], 50),
+            ], start=8):
+                inv = make_invoice(f"INV-DEMO-{n:04d}", cust, items, today - td(days=days_ago))
+                post_customer_invoice(inv)
+                receipt(inv, inv.total, today - td(days=days_ago - 7))
+
+            # A draft invoice (work in progress).
+            make_invoice("INV-DEMO-0011", northwind, [(p1, 2, "24.99", "0")], today)
+
+            self.stdout.write("Seeded quotes, sales orders and invoices across every status.")
+
+            # ---- Recurring invoice template (monthly retainer), with catch-up ----
+            start = am(today, -5)
+            retainer = RecurringInvoice.objects.create(
+                tenant=tenant, customer=caldera, name="Monthly support retainer",
+                frequency=RecurringInvoice.Frequency.MONTHLY, interval=1,
+                start_date=start, next_run_date=start, auto_issue=True,
+                currency_code="GBP", terms=tenant.invoice_footer,
+                notes="Ongoing support and maintenance.")
+            RecurringInvoiceLine.objects.create(
+                template=retainer, product=None, description="Support & maintenance retainer",
+                qty=Decimal("1"), unit_price=Decimal("300.00"), tax_code=std_tax)
+            generated = recurring_service.generate_for_template(retainer, today=today)
+            self.stdout.write(f"Seeded recurring retainer ({len(generated)} invoices generated).")
 
         self.stdout.write(self.style.SUCCESS("Demo data ready. Open http://127.0.0.1:8000/"))
