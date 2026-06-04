@@ -199,17 +199,52 @@ class Location(models.Model):
 
 
 class Supplier(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        INACTIVE = "INACTIVE", "Inactive"
+        ON_HOLD = "ON_HOLD", "On hold"
+
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     name = models.CharField(max_length=200)
+    contact_person = models.CharField(max_length=200, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=50, blank=True, null=True)
-    currency_code = models.CharField(max_length=3, default="GBP")  # NEW
+    vat_number = models.CharField(max_length=50, blank=True, null=True)
+    company_number = models.CharField(max_length=50, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    currency_code = models.CharField(max_length=3, default="GBP")
+    payment_terms_days = models.PositiveSmallIntegerField(blank=True, null=True)  # null -> company default
+    # Bank details for paying the supplier.
+    bank_name = models.CharField(max_length=120, blank=True, null=True)
+    bank_account_name = models.CharField(max_length=200, blank=True, null=True)
+    bank_sort_code = models.CharField(max_length=20, blank=True, null=True)
+    bank_account_number = models.CharField(max_length=40, blank=True, null=True)
+    categories = models.CharField(max_length=255, blank=True, null=True)  # comma-separated
+    notes = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         unique_together = ("tenant", "name")
 
     def __str__(self):
         return self.name
+
+    @property
+    def category_list(self):
+        return [c.strip() for c in (self.categories or "").split(",") if c.strip()]
+
+    @property
+    def outstanding_payables(self):
+        """Total still owed across this supplier's posted bills."""
+        from decimal import Decimal as _D
+        total = _D("0.00")
+        for inv in SupplierInvoice.objects.filter(tenant=self.tenant, supplier=self, status="POSTED").prefetch_related(
+                "lines", "lines__tax_code", "payment_allocations", "credit_notes"):
+            out = inv.outstanding
+            if out > _D("0.00"):
+                total += out
+        return total
 
 
 class UnitOfMeasure(models.Model):

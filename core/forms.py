@@ -74,7 +74,18 @@ class ProductForm(TenantModelForm):
 class SupplierForm(TenantModelForm):
     class Meta:
         model = Supplier
-        fields = ["name","email","phone","currency_code"]
+        fields = ["name", "status", "contact_person", "email", "phone", "vat_number",
+                  "company_number", "address", "currency_code", "payment_terms_days",
+                  "bank_name", "bank_account_name", "bank_sort_code", "bank_account_number",
+                  "categories", "notes"]
+        widgets = {
+            "address": forms.Textarea(attrs={"rows": 3}),
+            "notes": forms.Textarea(attrs={"rows": 3}),
+        }
+        help_texts = {
+            "payment_terms_days": "Days to pay. Leave blank to use the company default.",
+            "categories": "Comma-separated, e.g. Raw materials, Logistics.",
+        }
 
 class LocationForm(TenantModelForm):
     class Meta:

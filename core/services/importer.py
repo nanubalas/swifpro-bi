@@ -93,12 +93,20 @@ def import_suppliers(tenant, rows):
         if not name:
             errors.append((n, "name is required"))
             continue
-        _, was_created = Supplier.objects.update_or_create(
-            tenant=tenant, name=name,
-            defaults={"email": (row.get("email") or "").strip() or None,
-                      "phone": (row.get("phone") or "").strip() or None,
-                      "currency_code": (row.get("currency_code") or "GBP").strip() or "GBP"},
-        )
+        terms = (row.get("payment_terms_days") or "").strip()
+        defaults = {
+            "contact_person": (row.get("contact_person") or "").strip() or None,
+            "email": (row.get("email") or "").strip() or None,
+            "phone": (row.get("phone") or "").strip() or None,
+            "vat_number": (row.get("vat_number") or "").strip() or None,
+            "company_number": (row.get("company_number") or "").strip() or None,
+            "address": (row.get("address") or "").strip() or None,
+            "currency_code": (row.get("currency_code") or "GBP").strip() or "GBP",
+            "categories": (row.get("categories") or "").strip() or None,
+        }
+        if terms.isdigit():
+            defaults["payment_terms_days"] = int(terms)
+        _, was_created = Supplier.objects.update_or_create(tenant=tenant, name=name, defaults=defaults)
         created += was_created
         updated += (0 if was_created else 1)
     return _summary(created, updated, errors, len(rows))
@@ -126,7 +134,11 @@ def export_rows(tenant, kind):
                         c.tags or ""])
     elif kind == "suppliers":
         for s in Supplier.objects.filter(tenant=tenant).order_by("name"):
-            out.append([s.name, s.email or "", s.phone or "", s.currency_code or "GBP"])
+            out.append([s.name, s.contact_person or "", s.email or "", s.phone or "",
+                        s.vat_number or "", s.company_number or "", s.address or "",
+                        s.currency_code or "GBP",
+                        (s.payment_terms_days if s.payment_terms_days is not None else ""),
+                        s.categories or ""])
     return cols, out
 
 
@@ -144,7 +156,9 @@ CONFIG = {
                              "Unit 5, Trade Park, Manchester", "30", "VIP, Reseller"],
                   "fn": import_customers, "list_url": "/customers/"},
     "suppliers": {"label": "Suppliers", "key": "name",
-                  "columns": ["name", "email", "phone", "currency_code"],
-                  "sample": ["Globex Supplies", "sales@globex.example", "+44 161 555 0100", "GBP"],
+                  "columns": ["name", "contact_person", "email", "phone", "vat_number",
+                              "company_number", "address", "currency_code", "payment_terms_days", "categories"],
+                  "sample": ["Globex Supplies", "Pat Lee", "sales@globex.example", "+44 161 555 0100",
+                             "GB444555666", "11223344", "Globex House, Salford", "GBP", "30", "Raw materials"],
                   "fn": import_suppliers, "list_url": "/suppliers/"},
 }

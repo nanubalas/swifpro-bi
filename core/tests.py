@@ -2418,3 +2418,53 @@ class CustomerSearchDedupTests(TestCase):
         matched = {(d["name"], d["match"]) for d in dups}
         self.assertIn(("Alpha Retail", "email"), matched)
         self.assertIn(("Beta Wholesale", "phone"), matched)
+
+
+class SupplierRecordTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Sup Co")
+        self.user = User.objects.create_user("supu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="supu", password="pw")
+
+    def test_create_with_all_fields(self):
+        resp = self.client.post("/suppliers/new/", {
+            "name": "Globex", "status": "ACTIVE", "currency_code": "GBP", "contact_person": "Pat",
+            "email": "p@globex.example", "phone": "111", "vat_number": "GB1", "company_number": "1122",
+            "address": "Globex House", "payment_terms_days": "30", "bank_name": "Barclays",
+            "bank_account_name": "Globex Ltd", "bank_sort_code": "20-00-00", "bank_account_number": "12345678",
+            "categories": "Raw materials, Logistics", "notes": "Primary",
+        })
+        self.assertEqual(resp.status_code, 302)
+        s = Supplier.objects.get(tenant=self.tenant, name="Globex")
+        self.assertEqual(s.payment_terms_days, 30)
+        self.assertEqual(s.bank_account_number, "12345678")
+        self.assertEqual(s.category_list, ["Raw materials", "Logistics"])
+
+    def test_outstanding_payables(self):
+        from core.models import PurchaseOrder, GoodsReceipt, Location, SupplierInvoice, SupplierInvoiceLine, Product
+        from core.services.gl import post_supplier_invoice
+        s = Supplier.objects.create(tenant=self.tenant, name="Bills Co")
+        std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        prod = Product.objects.create(tenant=self.tenant, sku="SKU-S1", name="Part")
+        loc = Location.objects.create(tenant=self.tenant, name="WH")
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-S1", supplier=s)
+        grn = GoodsReceipt.objects.create(tenant=self.tenant, po=po, grn_number="GRN-S1", received_to=loc, status=GoodsReceipt.Status.POSTED)
+        inv = SupplierInvoice.objects.create(tenant=self.tenant, supplier=s, po=po, receipt=grn, invoice_number="BILL-1")
+        SupplierInvoiceLine.objects.create(invoice=inv, product=prod, qty=Decimal("10"), unit_cost=Decimal("5.00"), tax_code=std)
+        post_supplier_invoice(inv)  # 60 owed
+        self.assertEqual(s.outstanding_payables, Decimal("60.00"))
+
+    def test_import_export_round_trip(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        csv = (b"name,contact_person,email,phone,vat_number,company_number,address,currency_code,payment_terms_days,categories\n"
+               b"Imported Supplies,Sam,sam@imp.example,123,GB9,9988,Addr,GBP,14,Raw materials\n")
+        resp = self.client.post("/suppliers/import/", {"file": SimpleUploadedFile("s.csv", csv, content_type="text/csv")})
+        self.assertEqual(resp.status_code, 200)
+        s = Supplier.objects.get(tenant=self.tenant, name="Imported Supplies")
+        self.assertEqual(s.payment_terms_days, 14)
+        self.assertEqual(s.contact_person, "Sam")
+        body = self.client.get("/export/suppliers.csv").content.decode()
+        self.assertIn("contact_person", body)
+        self.assertIn("Imported Supplies", body)
