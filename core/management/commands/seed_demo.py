@@ -657,4 +657,31 @@ class Command(BaseCommand):
 
             self.stdout.write("Seeded full product master (types, categories, variants, tracking, barcodes, opening stock).")
 
+        # Stock adjustments: approval threshold + a posted damage + a pending write-off.
+        from core.models import StockAdjustment
+        if tenant.stock_adjustment_approval_threshold != Decimal("100.00"):
+            tenant.stock_adjustment_approval_threshold = Decimal("100.00")
+            tenant.save(update_fields=["stock_adjustment_approval_threshold"])
+        if not StockAdjustment.objects.filter(tenant=tenant).exists():
+            admin_u = User.objects.filter(username="admin").first() or User.objects.filter(username="owner").first()
+            # Small damage -> auto-posted (below threshold).
+            dmg = StockAdjustment.objects.create(
+                tenant=tenant, product=p2, location=wh, reason=StockAdjustment.Reason.DAMAGE,
+                qty_delta=Decimal("-2.00"), notes="Crushed in transit",
+                status=StockAdjustment.Status.POSTED, estimated_value=(p2.average_cost or Decimal("0")) * 2,
+                requested_by=admin_u, approved_by=admin_u, posted_at=timezone.now())
+            apply_movement(tenant=tenant, product=p2, location=wh,
+                           movement_type=InventoryMovement.MovementType.DAMAGE, qty_delta=Decimal("-2.00"),
+                           ref_type="STOCK_ADJ", ref_id=str(dmg.id), notes="Damaged stock: Crushed in transit",
+                           user=admin_u)
+            # Large write-off -> pending approval (above threshold).
+            laptop = Product.objects.filter(tenant=tenant, sku="SN-LAPTOP").first()
+            if laptop:
+                StockAdjustment.objects.create(
+                    tenant=tenant, product=laptop, location=wh, reason=StockAdjustment.Reason.WRITE_OFF,
+                    qty_delta=Decimal("-1.00"), notes="Unit lost - investigating",
+                    status=StockAdjustment.Status.PENDING,
+                    estimated_value=(laptop.standard_cost or Decimal("0")), requested_by=admin_u)
+            self.stdout.write("Seeded stock adjustments (1 posted damage, 1 pending write-off).")
+
         self.stdout.write(self.style.SUCCESS("Demo data ready. Open http://127.0.0.1:8000/"))

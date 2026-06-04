@@ -75,6 +75,10 @@ class Tenant(models.Model):
     # invoice generation) for this tenant; throttles the in-app scheduler.
     last_housekeeping_date = models.DateField(null=True, blank=True)
 
+    # Stock adjustments whose absolute value is at/above this need approval
+    # before they post (0 = no approval required; all adjustments auto-post).
+    stock_adjustment_approval_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
     def __str__(self):
         return self.name
 
@@ -669,6 +673,52 @@ class InventoryMovement(models.Model):
     serial_number = models.CharField(max_length=100, blank=True, null=True)
     expiry_date = models.DateField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
+
+
+class StockAdjustment(models.Model):
+    """A manual stock change (correction, damage, write-off/loss, return to
+    supplier). Sensitive adjustments (value at/above the tenant threshold) wait
+    for approval; otherwise they post immediately. Posting writes one inventory
+    movement of the matching type."""
+    class Reason(models.TextChoices):
+        ADJUSTMENT = "ADJUSTMENT", "Manual adjustment"
+        DAMAGE = "DAMAGE", "Damaged stock"
+        WRITE_OFF = "WRITE_OFF", "Lost / write-off"
+        RETURN_SUPPLIER = "RETURN_SUPPLIER", "Return to supplier"
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending approval"
+        POSTED = "POSTED", "Posted"
+        REJECTED = "REJECTED", "Rejected"
+
+    # Reason -> the inventory movement type it posts as.
+    REASON_TO_MOVEMENT = {
+        "ADJUSTMENT": "ADJUSTMENT", "DAMAGE": "DAMAGE",
+        "WRITE_OFF": "WRITE_OFF", "RETURN_SUPPLIER": "RETURN_SUPPLIER",
+    }
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="stock_adjustments")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    location = models.ForeignKey(Location, on_delete=models.PROTECT)
+    reason = models.CharField(max_length=20, choices=Reason.choices, default=Reason.ADJUSTMENT)
+    qty_delta = models.DecimalField(max_digits=12, decimal_places=2)  # signed: +found / -loss
+    notes = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    estimated_value = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    requested_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="requested_adjustments")
+    approved_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="approved_adjustments")
+    created_at = models.DateTimeField(default=timezone.now)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Adj {self.product.sku} {self.qty_delta} ({self.get_reason_display()})"
+
+    @property
+    def movement_type(self):
+        return self.REASON_TO_MOVEMENT.get(self.reason, "ADJUSTMENT")
 
 
 class InventoryCostLayer(models.Model):

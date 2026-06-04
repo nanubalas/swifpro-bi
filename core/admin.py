@@ -17,10 +17,11 @@ from core.models import (
 admin.site.register(Expense)
 admin.site.register(CreditNote)
 admin.site.register(BankTransaction)
-from core.models import SalesQuote, CustomerOrder, ProductCategory
+from core.models import SalesQuote, CustomerOrder, ProductCategory, StockAdjustment
 admin.site.register(SalesQuote)
 admin.site.register(CustomerOrder)
 admin.site.register(ProductCategory)
+admin.site.register(StockAdjustment)
 
 class UserProfileInline(admin.StackedInline):
     model = UserProfile

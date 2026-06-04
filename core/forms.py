@@ -10,6 +10,7 @@ from core.models import (
     Product, Supplier, Location, ChannelConnection,
     SalesOrder, SalesOrderLine, Tenant,
     UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine, ProductBarcode, ProductCategory,
+    StockAdjustment,
     InventoryTransfer, InventoryTransferLine,
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
@@ -104,6 +105,19 @@ class ProductForm(TenantModelForm):
             if qs.exists():
                 raise forms.ValidationError("This barcode is already assigned to another product.")
         return code
+
+class StockAdjustmentForm(TenantModelForm):
+    class Meta:
+        model = StockAdjustment
+        fields = ["product", "location", "reason", "qty_delta", "notes"]
+        help_texts = {"qty_delta": "Negative to remove stock (damage / loss / return to supplier); positive to add found stock."}
+
+    def clean_qty_delta(self):
+        qty = self.cleaned_data.get("qty_delta")
+        if qty is not None and qty == 0:
+            raise forms.ValidationError("Quantity change cannot be zero.")
+        return qty
+
 
 class ProductCategoryForm(TenantModelForm):
     class Meta:

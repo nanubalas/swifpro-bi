@@ -59,7 +59,7 @@ from django.db.utils import OperationalError
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from core.auth import role_required, permission_required, ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES, ROLE_FINANCE, ROLE_READONLY
+from core.auth import role_required, permission_required, effective_groups, ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES, ROLE_FINANCE, ROLE_READONLY
 from core import permissions as permissions_mod
 
 
@@ -1579,6 +1579,100 @@ def inventory_list(request):
         .order_by("product__sku", "location__name")
     )
     return render(request, "inventory_list.html", {"tenant": tenant, "balances": balances})
+
+
+# ============================
+# Stock adjustments (damage / loss / write-off / return-to-supplier) + approval
+# ============================
+
+def _post_stock_adjustment(adj, user):
+    """Write the inventory movement for an adjustment and mark it posted."""
+    from core.models import StockAdjustment
+    apply_movement(
+        tenant=adj.tenant, product=adj.product, location=adj.location,
+        movement_type=adj.movement_type, qty_delta=adj.qty_delta,
+        ref_type="STOCK_ADJ", ref_id=str(adj.id),
+        notes=(adj.get_reason_display() + (f": {adj.notes}" if adj.notes else "")), user=user,
+    )
+    adj.status = StockAdjustment.Status.POSTED
+    adj.posted_at = timezone.now()
+    adj.approved_by = user
+    adj.save(update_fields=["status", "posted_at", "approved_by"])
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
+def adjustment_list(request):
+    from core.models import StockAdjustment
+    tenant = _get_default_tenant(request)
+    adjustments = StockAdjustment.objects.filter(tenant=tenant).select_related("product", "location", "requested_by")
+    return render(request, "inventory/adjustment_list.html", {
+        "tenant": tenant, "adjustments": adjustments,
+        "threshold": tenant.stock_adjustment_approval_threshold,
+        "can_approve": bool({ROLE_ADMIN, ROLE_PROCUREMENT} & effective_groups(request)) or request.user.is_superuser,
+    })
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
+@transaction.atomic
+def adjustment_create(request):
+    from core.models import StockAdjustment
+    from core.forms import StockAdjustmentForm
+    tenant = _get_default_tenant(request)
+    form = StockAdjustmentForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        adj = form.save(commit=False)
+        adj.tenant = tenant
+        adj.requested_by = request.user
+        adj.estimated_value = (abs(adj.qty_delta) * (adj.product.cost_price or Decimal("0.00"))).quantize(Decimal("0.01"))
+        threshold = tenant.stock_adjustment_approval_threshold or Decimal("0.00")
+        needs_approval = threshold > 0 and adj.estimated_value >= threshold
+        adj.status = StockAdjustment.Status.PENDING
+        adj.save()
+        if needs_approval:
+            log_audit(action="STOCK_ADJ_REQUESTED", request=request, user=request.user, tenant=tenant,
+                      detail=f"{adj.product.sku} {adj.qty_delta} ({adj.get_reason_display()}) - awaiting approval")
+            messages.warning(request, f"Adjustment for {adj.product.sku} needs approval (value {adj.estimated_value}). It's pending.")
+        else:
+            _post_stock_adjustment(adj, request.user)
+            log_audit(action="STOCK_ADJUSTED", request=request, user=request.user, tenant=tenant,
+                      detail=f"{adj.product.sku} {adj.qty_delta} ({adj.get_reason_display()})")
+            messages.success(request, f"Stock adjusted: {adj.product.sku} {adj.qty_delta}.")
+        return redirect("adjustment_list")
+    return render(request, "inventory/adjustment_form.html", {"tenant": tenant, "form": form})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
+@transaction.atomic
+def adjustment_approve(request, adj_id):
+    from core.models import StockAdjustment
+    tenant = _get_default_tenant(request)
+    adj = get_object_or_404(StockAdjustment, id=adj_id, tenant=tenant)
+    if request.method == "POST" and adj.status == StockAdjustment.Status.PENDING:
+        _post_stock_adjustment(adj, request.user)
+        log_audit(action="STOCK_ADJ_APPROVED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{adj.product.sku} {adj.qty_delta} ({adj.get_reason_display()})")
+        messages.success(request, f"Adjustment approved and posted: {adj.product.sku} {adj.qty_delta}.")
+    return redirect("adjustment_list")
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
+@transaction.atomic
+def adjustment_reject(request, adj_id):
+    from core.models import StockAdjustment
+    tenant = _get_default_tenant(request)
+    adj = get_object_or_404(StockAdjustment, id=adj_id, tenant=tenant)
+    if request.method == "POST" and adj.status == StockAdjustment.Status.PENDING:
+        adj.status = StockAdjustment.Status.REJECTED
+        adj.approved_by = request.user
+        adj.save(update_fields=["status", "approved_by"])
+        log_audit(action="STOCK_ADJ_REJECTED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{adj.product.sku} {adj.qty_delta}")
+        messages.info(request, f"Adjustment rejected: {adj.product.sku} {adj.qty_delta}.")
+    return redirect("adjustment_list")
 
 
 @login_required

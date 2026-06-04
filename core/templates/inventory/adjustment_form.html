@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}New stock adjustment - SwifPro BI{% endblock %}
+{% block body %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <h2 class="fw-bold mb-1">New stock adjustment</h2>
+    <div class="text-muted mb-3">Record a correction, damage, loss / write-off, or a return to supplier. A stock movement is created when it posts.</div>
+    <div class="card"><div class="card-body p-4">
+      <form method="post">
+        {% csrf_token %}
+        {% for field in form %}
+        <div class="mb-3">
+          <label class="form-label">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+          {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        {% endfor %}
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i> Submit</button>
+          <a class="btn btn-link" href="{% url 'adjustment_list' %}">Cancel</a>
+        </div>
+      </form>
+    </div></div>
+  </div>
+</div>
+<script>
+  document.querySelectorAll("form select, form input, form textarea").forEach(e => { if (e.type !== "hidden") e.classList.add("form-control"); });
+</script>
+{% endblock %}

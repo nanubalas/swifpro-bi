@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Stock Adjustments - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">Stock Adjustments</h2>
+    <div class="text-muted">Corrections, damage, loss / write-off and returns to supplier.
+      {% if threshold %}Adjustments worth {{ threshold|money:tenant.currency_code }}+ need approval.{% endif %}</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'adjustment_create' %}"><i class="bi bi-plus-lg me-1"></i> New adjustment</a>
+</div>
+
+<div class="card"><div class="card-body">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light"><tr><th>Date</th><th>Product</th><th>Location</th><th>Reason</th><th class="text-end">Qty</th><th class="text-end">Value</th><th>Requested by</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+      <tbody>
+        {% for a in adjustments %}
+        <tr>
+          <td class="text-muted small">{{ a.created_at|date:'d M Y' }}</td>
+          <td>{{ a.product.sku }} <span class="text-muted small">{{ a.product.name }}</span></td>
+          <td class="small">{{ a.location.name }}</td>
+          <td>{{ a.get_reason_display }}</td>
+          <td class="text-end {% if a.qty_delta < 0 %}text-danger{% else %}text-success{% endif %}">{{ a.qty_delta|floatformat:2 }}</td>
+          <td class="text-end">{{ a.estimated_value|money:tenant.currency_code }}</td>
+          <td class="small">{{ a.requested_by.username|default:'-' }}</td>
+          <td>{% if a.status == 'POSTED' %}<span class="badge text-bg-success">Posted</span>{% elif a.status == 'PENDING' %}<span class="badge text-bg-warning">Pending approval</span>{% else %}<span class="badge text-bg-secondary">Rejected</span>{% endif %}</td>
+          <td class="text-end">
+            {% if a.status == 'PENDING' and can_approve %}
+            <form method="post" action="{% url 'adjustment_approve' a.id %}" class="d-inline">{% csrf_token %}<button class="btn btn-sm btn-outline-success">Approve</button></form>
+            <form method="post" action="{% url 'adjustment_reject' a.id %}" class="d-inline">{% csrf_token %}<button class="btn btn-sm btn-outline-danger">Reject</button></form>
+            {% elif a.status == 'PENDING' %}<span class="text-muted small">Awaiting approval</span>{% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9" class="text-center text-muted py-5">No stock adjustments yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>
+{% endblock %}

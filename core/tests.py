@@ -2776,3 +2776,68 @@ class InventoryLedgerFoundationTests(TestCase):
         lt = dict(Location.Type.choices)
         for k in ("OFFICE", "VAN", "POPUP"):
             self.assertIn(k, lt)
+
+
+class StockAdjustmentTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, Location, InventoryMovement
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="Adj Co", stock_adjustment_approval_threshold=Decimal("100.00"))
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.product = Product.objects.create(tenant=self.tenant, sku="SKU-AJ1", name="Widget", standard_cost=Decimal("10.00"))
+        apply_movement(tenant=self.tenant, product=self.product, location=self.loc,
+                       movement_type=InventoryMovement.MovementType.RECEIVE, qty_delta=Decimal("100"),
+                       ref_type="SEED", ref_id="X", unit_cost=Decimal("10.00"))
+        self.user = User.objects.create_user("aju", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="aju", password="pw")
+
+    def _bal(self):
+        from core.models import InventoryBalance
+        return InventoryBalance.objects.get(tenant=self.tenant, product=self.product, location=self.loc).on_hand
+
+    def test_small_adjustment_auto_posts(self):
+        from core.models import StockAdjustment, InventoryMovement
+        # 3 units @ 10 = 30 < 100 threshold -> posts immediately
+        resp = self.client.post("/inventory/adjustments/new/", {
+            "product": self.product.id, "location": self.loc.id, "reason": "DAMAGE",
+            "qty_delta": "-3", "notes": "broken"})
+        self.assertEqual(resp.status_code, 302)
+        adj = StockAdjustment.objects.get(tenant=self.tenant)
+        self.assertEqual(adj.status, "POSTED")
+        self.assertEqual(self._bal(), Decimal("97.00"))
+        m = InventoryMovement.objects.filter(tenant=self.tenant, movement_type="DAMAGE").first()
+        self.assertEqual(m.user_id, self.user.id)
+
+    def test_large_adjustment_needs_approval(self):
+        from core.models import StockAdjustment
+        # 20 @ 10 = 200 >= 100 -> pending, not posted
+        self.client.post("/inventory/adjustments/new/", {
+            "product": self.product.id, "location": self.loc.id, "reason": "WRITE_OFF",
+            "qty_delta": "-20", "notes": "lost"})
+        adj = StockAdjustment.objects.get(tenant=self.tenant)
+        self.assertEqual(adj.status, "PENDING")
+        self.assertEqual(self._bal(), Decimal("100.00"))  # unchanged
+        # approve -> posts
+        self.client.post(f"/inventory/adjustments/{adj.id}/approve/")
+        adj.refresh_from_db()
+        self.assertEqual(adj.status, "POSTED")
+        self.assertEqual(adj.approved_by_id, self.user.id)
+        self.assertEqual(self._bal(), Decimal("80.00"))
+
+    def test_reject_does_not_post(self):
+        from core.models import StockAdjustment
+        self.client.post("/inventory/adjustments/new/", {
+            "product": self.product.id, "location": self.loc.id, "reason": "WRITE_OFF",
+            "qty_delta": "-50", "notes": "x"})
+        adj = StockAdjustment.objects.get(tenant=self.tenant)
+        self.client.post(f"/inventory/adjustments/{adj.id}/reject/")
+        adj.refresh_from_db()
+        self.assertEqual(adj.status, "REJECTED")
+        self.assertEqual(self._bal(), Decimal("100.00"))
+
+    def test_zero_qty_rejected(self):
+        resp = self.client.post("/inventory/adjustments/new/", {
+            "product": self.product.id, "location": self.loc.id, "reason": "ADJUSTMENT", "qty_delta": "0"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "cannot be zero")
