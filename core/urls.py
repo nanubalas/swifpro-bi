@@ -117,6 +117,13 @@ urlpatterns = [
     path("recurring-invoices/<int:template_id>/toggle/", views.recurring_toggle, name="recurring_toggle"),
     path("recurring-invoices/<int:template_id>/generate/", views.recurring_generate, name="recurring_generate"),
 
+    # Sales reports
+    path("sales/reports/", views.sales_reports_index, name="sales_reports_index"),
+    path("sales/reports/history/", views.report_sales_history, name="report_sales_history"),
+    path("sales/reports/by-product/", views.report_sales_by_product, name="report_sales_by_product"),
+    path("sales/reports/by-customer/", views.report_sales_by_customer, name="report_sales_by_customer"),
+    path("sales/reports/by-channel/", views.report_sales_by_channel, name="report_sales_by_channel"),
+
     # Sales Orders (channel/ecommerce)
     path("sales-orders/", views.sales_order_list, name="sales_order_list"),
     path("sales-orders/new/", views.sales_order_create, name="sales_order_create"),
