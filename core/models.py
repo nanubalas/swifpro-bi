@@ -181,8 +181,11 @@ class AuditLog(models.Model):
 class Location(models.Model):
     class Type(models.TextChoices):
         WAREHOUSE = "WAREHOUSE", "Warehouse"
+        SHOP = "STORE", "Shop / Store"
+        OFFICE = "OFFICE", "Office"
+        VAN = "VAN", "Van"
         THREEPL = "THREEPL", "3PL"
-        STORE = "STORE", "Store"
+        POPUP = "POPUP", "Pop-up location"
         TRANSIT = "TRANSIT", "Transit"
         RETURNS = "RETURNS", "Returns"
         QUARANTINE = "QUARANTINE", "Quarantine"
@@ -635,12 +638,15 @@ class CycleCountLine(models.Model):
 
 class InventoryMovement(models.Model):
     class MovementType(models.TextChoices):
-        RECEIVE = "RECEIVE", "Receive"
-        SALE = "SALE", "Sale"
-        TRANSFER_IN = "TRANSFER_IN", "Transfer In"
-        TRANSFER_OUT = "TRANSFER_OUT", "Transfer Out"
-        ADJUSTMENT = "ADJUSTMENT", "Adjustment"
-        RETURN = "RETURN", "Return"
+        RECEIVE = "RECEIVE", "Purchase received"
+        SALE = "SALE", "Sale fulfilled"
+        TRANSFER_IN = "TRANSFER_IN", "Transfer in"
+        TRANSFER_OUT = "TRANSFER_OUT", "Transfer out"
+        ADJUSTMENT = "ADJUSTMENT", "Manual adjustment"
+        RETURN = "RETURN", "Return from customer"
+        RETURN_SUPPLIER = "RETURN_SUPPLIER", "Return to supplier"
+        DAMAGE = "DAMAGE", "Damage"
+        WRITE_OFF = "WRITE_OFF", "Write-off"
         RESERVATION = "RESERVATION", "Reservation"
         RELEASE = "RELEASE", "Release"
 
@@ -649,6 +655,8 @@ class InventoryMovement(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
     movement_type = models.CharField(max_length=20, choices=MovementType.choices)
+    # Who triggered the movement (null for system/automatic postings).
+    user = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     qty_delta = models.DecimalField(max_digits=12, decimal_places=2)
     # Cost captured at the time of the movement (unit_cost = cost per unit;
     # value = qty_delta * unit_cost, so it carries the same sign as qty_delta).

@@ -94,7 +94,7 @@ def _post_invoice_cogs(inv, user=None):
             movement_type=InventoryMovement.MovementType.SALE,
             qty_delta=(line.qty or Decimal("0.00")) * Decimal("-1"),
             ref_type="AR_INVOICE", ref_id=inv.invoice_number,
-            notes=f"Invoice {inv.invoice_number}",
+            notes=f"Invoice {inv.invoice_number}", user=user,
         )
         cogs_total += -(movement.value or Decimal("0.00"))
 

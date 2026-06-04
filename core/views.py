@@ -1526,7 +1526,7 @@ def receive_po(request, po_id):
                         qty_delta=qty,
                         ref_type="GRN",
                         ref_id=receipt.grn_number,
-                        notes=f"Receipt against PO {po.po_number}",
+                        notes=f"Receipt against PO {po.po_number}", user=request.user,
                         lot_code=item["lot_code"], serial_number=item["serial"], expiry_date=item["expiry"],
                         unit_cost=landed_unit_cost,
                     )
@@ -1661,7 +1661,7 @@ def product_create(request):
                 apply_movement(tenant=tenant, product=obj, location=loc,
                                movement_type=InventoryMovement.MovementType.RECEIVE,
                                qty_delta=opening, ref_type="OPENING", ref_id=obj.sku,
-                               notes="Opening stock", unit_cost=(obj.standard_cost or None))
+                               notes="Opening stock", unit_cost=(obj.standard_cost or None), user=request.user)
             messages.success(request, "Product created.")
             return redirect("product_detail", product_id=obj.id)
     else:
@@ -2530,7 +2530,7 @@ def cycle_count_post(request, cc_id):
             qty_delta=Decimal(line.variance_qty),
             ref_type="CYCLE_COUNT",
             ref_id=str(cc.id),
-            notes="Cycle count variance posted",
+            notes="Cycle count variance posted", user=request.user,
             lot_code=line.lot_code,
             serial_number=line.serial_number,
             expiry_date=line.expiry_date
@@ -2613,7 +2613,7 @@ def _post_transfer(transfer: InventoryTransfer, request=None):
             qty_delta=(qty * Decimal("-1")),
             ref_type="TRANSFER",
             ref_id=transfer.transfer_number,
-            notes="Transfer out",
+            notes="Transfer out", user=request.user,
             lot_code=line.lot_code,
             serial_number=line.serial_number,
             expiry_date=line.expiry_date,
@@ -2626,7 +2626,7 @@ def _post_transfer(transfer: InventoryTransfer, request=None):
             qty_delta=qty,
             ref_type="TRANSFER",
             ref_id=transfer.transfer_number,
-            notes="Transfer in",
+            notes="Transfer in", user=request.user,
             lot_code=line.lot_code,
             serial_number=line.serial_number,
             expiry_date=line.expiry_date,
@@ -2804,7 +2804,7 @@ def _receive_rma(rma: ReturnAuthorization):
                 qty_delta=comp_qty,
                 ref_type="RMA",
                 ref_id=ref_id,
-                notes="Return received",
+                notes="Return received", user=request.user,
                 lot_code=line.lot_code,
                 serial_number=line.serial_number,
                 expiry_date=line.expiry_date,

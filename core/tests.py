@@ -2753,3 +2753,26 @@ class ProductCategorySearchTests(TestCase):
         self.assertIn(self.elec, parents)
         self.assertNotIn(sub, parents)  # subcategories can't be parents
         set_current_tenant(None)
+
+
+class InventoryLedgerFoundationTests(TestCase):
+    def test_movement_records_user_and_new_types_exist(self):
+        from core.models import InventoryMovement, Location, Product
+        from core.services.inventory import apply_movement
+        t = Tenant.objects.create(name="Ledger Co")
+        u = User.objects.create_user("ledu", password="pw")
+        loc = Location.objects.create(tenant=t, name="Van A", type=Location.Type.VAN)
+        p = Product.objects.create(tenant=t, sku="SKU-L1", name="Item")
+        m = apply_movement(tenant=t, product=p, location=loc,
+                           movement_type=InventoryMovement.MovementType.DAMAGE,
+                           qty_delta=Decimal("-2"), ref_type="ADJ", ref_id="1",
+                           notes="broken", user=u)
+        self.assertEqual(m.user_id, u.id)
+        self.assertEqual(m.movement_type, "DAMAGE")
+        # new movement types + location types are registered
+        mt = dict(InventoryMovement.MovementType.choices)
+        for k in ("DAMAGE", "WRITE_OFF", "RETURN_SUPPLIER"):
+            self.assertIn(k, mt)
+        lt = dict(Location.Type.choices)
+        for k in ("OFFICE", "VAN", "POPUP"):
+            self.assertIn(k, lt)
