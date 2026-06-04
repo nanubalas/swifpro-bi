@@ -129,6 +129,38 @@
     else el.classList.add("form-control");
   });
 
+  // ---- Supplier price prefill: fill empty unit-cost fields from last paid ----
+  let priceMap = {};
+  const supplierSelect = document.querySelector('[name="supplier"]');
+
+  function fillUnitCost(row) {
+    const prodSel = row.querySelector('select[name$="-product"]');
+    const costInput = row.querySelector('input[name$="-unit_cost"]');
+    if (!prodSel || !costInput) return;
+    const last = priceMap[prodSel.value];
+    if (last && (!costInput.value || parseFloat(costInput.value) === 0)) {
+      costInput.value = last;
+    }
+  }
+
+  function loadPrices() {
+    if (!supplierSelect || !supplierSelect.value) { priceMap = {}; return; }
+    fetch(`/po/supplier/${supplierSelect.value}/prices/`)
+      .then(r => r.ok ? r.json() : {prices: {}})
+      .then(d => { priceMap = d.prices || {}; })
+      .catch(() => { priceMap = {}; });
+  }
+
+  if (supplierSelect) {
+    loadPrices();
+    supplierSelect.addEventListener("change", loadPrices);
+  }
+  document.addEventListener("change", (e) => {
+    if (e.target.matches('select[name$="-product"]')) {
+      fillUnitCost(e.target.closest("tr"));
+    }
+  });
+
   const addBtn = document.getElementById("add-line-btn");
   const tbody = document.getElementById("lines-body");
   const template = document.getElementById("empty-form-template");

@@ -144,6 +144,10 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
     if po is not None and po.status not in ("CLOSED", "CANCELLED", "BILLED"):
         po.status = "BILLED"
         po.save(update_fields=["status"])
+
+    # Capture the actual billed unit costs into supplier price history.
+    from core.services.purchasing import record_bill_prices
+    record_bill_prices(inv)
     return je
 
 

@@ -2678,6 +2678,8 @@ class ProductDetailTests(TestCase):
         # a PO line (purchase + price history)
         po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-PD1", supplier=self.supplier)
         PurchaseOrderLine.objects.create(po=po, product=self.product, ordered_qty=Decimal("50"), unit_cost=Decimal("7.50"))
+        from core.services.purchasing import record_po_prices
+        record_po_prices(po)  # populates supplier price history
         # a sale
         inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=Customer.objects.create(tenant=self.tenant, name="C"), invoice_number="INV-PD1")
         CustomerInvoiceLine.objects.create(invoice=inv, product=self.product, qty=Decimal("5"), unit_price=Decimal("20.00"), tax_code=self.std)
@@ -3031,6 +3033,76 @@ class PurchaseRequisitionTests(TestCase):
         req = self._make_req(status=PurchaseRequisition.Status.APPROVED)
         self.assertEqual(self.client.get("/requisitions/").status_code, 200)
         self.assertEqual(self.client.get(f"/requisitions/{req.id}/").status_code, 200)
+
+
+class SupplierPriceHistoryTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Price Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Globex")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="PH1", name="Part")
+        self.user = User.objects.create_user("phu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="phu", password="pw")
+
+    def test_record_is_idempotent(self):
+        from core.services.purchasing import record_supplier_price
+        from core.models import SupplierPriceHistory
+        for _ in range(2):
+            record_supplier_price(tenant=self.tenant, supplier=self.supplier, product=self.prod,
+                                  unit_cost=Decimal("5.00"), source="PO", reference="PO-X")
+        self.assertEqual(SupplierPriceHistory.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_zero_cost_skipped(self):
+        from core.services.purchasing import record_supplier_price
+        from core.models import SupplierPriceHistory
+        record_supplier_price(tenant=self.tenant, supplier=self.supplier, product=self.prod,
+                              unit_cost=Decimal("0.00"), source="PO", reference="PO-Z")
+        self.assertEqual(SupplierPriceHistory.objects.count(), 0)
+
+    def test_po_submit_records_price(self):
+        from core.models import PurchaseOrder, PurchaseOrderLine, SupplierPriceHistory
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-PH", supplier=self.supplier,
+                                          status=PurchaseOrder.Status.DRAFT)
+        PurchaseOrderLine.objects.create(po=po, product=self.prod, ordered_qty=Decimal("10"),
+                                         unit_cost=Decimal("7.50"), tax_code=self.std)
+        self.client.post(f"/po/{po.id}/submit/")
+        rec = SupplierPriceHistory.objects.get(tenant=self.tenant, supplier=self.supplier, product=self.prod, source="PO")
+        self.assertEqual(rec.unit_cost, Decimal("7.50"))
+
+    def test_bill_posting_records_actual_price(self):
+        from core.models import (PurchaseOrder, GoodsReceipt, SupplierInvoice, SupplierInvoiceLine,
+                                 SupplierPriceHistory)
+        from core.services.gl import post_supplier_invoice
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-B", supplier=self.supplier,
+                                          status=PurchaseOrder.Status.RECEIVED)
+        grn = GoodsReceipt.objects.create(tenant=self.tenant, po=po, grn_number="GRN-B", received_to=self.loc,
+                                          status=GoodsReceipt.Status.POSTED)
+        inv = SupplierInvoice.objects.create(tenant=self.tenant, supplier=self.supplier, po=po, receipt=grn,
+                                             invoice_number="BILL-B")
+        SupplierInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal("10"),
+                                           unit_cost=Decimal("8.25"), tax_code=self.std)
+        post_supplier_invoice(inv)
+        rec = SupplierPriceHistory.objects.get(tenant=self.tenant, supplier=self.supplier, product=self.prod, source="BILL")
+        self.assertEqual(rec.unit_cost, Decimal("8.25"))
+
+    def test_last_prices_and_json_endpoint(self):
+        from core.services.purchasing import record_supplier_price, last_prices_for_supplier
+        from django.utils import timezone
+        from datetime import timedelta
+        record_supplier_price(tenant=self.tenant, supplier=self.supplier, product=self.prod,
+                              unit_cost=Decimal("5.00"), source="PO", reference="PO-1",
+                              recorded_at=timezone.localdate() - timedelta(days=10))
+        record_supplier_price(tenant=self.tenant, supplier=self.supplier, product=self.prod,
+                              unit_cost=Decimal("6.00"), source="BILL", reference="BILL-1",
+                              recorded_at=timezone.localdate())
+        last = last_prices_for_supplier(self.tenant, self.supplier)
+        self.assertEqual(last[self.prod.id], Decimal("6.00"))  # most recent
+        resp = self.client.get(f"/po/supplier/{self.supplier.id}/prices/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["prices"][str(self.prod.id)], "6.00")
 
 
 class StockAdjustmentGLTests(TestCase):

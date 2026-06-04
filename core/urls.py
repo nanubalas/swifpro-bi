@@ -53,6 +53,7 @@ urlpatterns = [
     path("po/<int:po_id>/print/", views.po_print, name="po_print"),
     path("po/<int:po_id>/pdf/", views.po_pdf, name="po_pdf"),
     path("po/backorders/", views.po_backorders, name="po_backorders"),
+    path("po/supplier/<int:supplier_id>/prices/", views.supplier_prices_json, name="supplier_prices_json"),
     path("po/<int:po_id>/receive/", views.receive_po, name="receive_po"),
 
     # Purchase Requisitions

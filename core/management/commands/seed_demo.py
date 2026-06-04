@@ -234,6 +234,8 @@ class Command(BaseCommand):
             shipment = Shipment.objects.create(tenant=tenant, po=po, from_supplier=globex, destination=wh, carrier="DHL", tracking_number="DEMO123456", status=Shipment.Status.IN_TRANSIT)
             ShipmentLine.objects.create(shipment=shipment, po_line=pol1, expected_qty=Decimal("50"))
             ShipmentLine.objects.create(shipment=shipment, po_line=pol2, expected_qty=Decimal("100"))
+            from core.services.purchasing import record_po_prices
+            record_po_prices(po)
             self.stdout.write("Created demo PO + inbound shipment.")
 
         # Purchase requisition (approved, awaiting conversion to PO)

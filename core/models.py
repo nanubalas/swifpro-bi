@@ -504,6 +504,36 @@ class PurchaseOrderLine(models.Model):
 
 
 
+class SupplierPriceHistory(models.Model):
+    """A recorded unit cost for a supplier+product at a point in time.
+
+    Captured when a PO is submitted (the agreed price) and when a supplier bill
+    is posted (the actual billed cost). Lets buyers see last/average paid and
+    powers price-prefill at PO entry."""
+    class Source(models.TextChoices):
+        PO = "PO", "Purchase Order"
+        BILL = "BILL", "Supplier Bill"
+        MANUAL = "MANUAL", "Manual"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name="price_history")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="supplier_prices")
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    currency_code = models.CharField(max_length=3, default="GBP")
+    source = models.CharField(max_length=10, choices=Source.choices, default=Source.PO)
+    reference = models.CharField(max_length=64, blank=True, null=True)  # PO / bill number
+    recorded_at = models.DateField(default=timezone.localdate)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-recorded_at", "-id"]
+        # One record per source document line (idempotent capture).
+        unique_together = ("tenant", "supplier", "product", "source", "reference")
+
+    def __str__(self):
+        return f"{self.supplier_id}/{self.product_id} {self.unit_cost} ({self.source})"
+
+
 class PurchaseRequisition(models.Model):
     """Internal purchase request that precedes a Purchase Order.
 

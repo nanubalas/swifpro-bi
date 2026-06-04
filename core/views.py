@@ -126,6 +126,18 @@ def po_pdf(request, po_id):
 
 
 @login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
+def supplier_prices_json(request, supplier_id):
+    """Last known unit cost per product for a supplier (for PO price prefill)."""
+    from django.http import JsonResponse
+    from core.services.purchasing import last_prices_for_supplier
+    tenant = _get_default_tenant(request)
+    supplier = get_object_or_404(Supplier, id=supplier_id, tenant=tenant)
+    prices = {str(pid): str(cost) for pid, cost in last_prices_for_supplier(tenant, supplier).items()}
+    return JsonResponse({"prices": prices})
+
+
+@login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])
 def po_backorders(request):
     """Outstanding PO lines: ordered but not yet fully received (backorders)."""
@@ -1299,6 +1311,10 @@ def po_submit(request, po_id):
     po.status = PurchaseOrder.Status.APPROVAL_PENDING if po.approval_required else PurchaseOrder.Status.SUBMITTED
     po.save()
 
+    # Record the agreed supplier prices for this PO's lines.
+    from core.services.purchasing import record_po_prices
+    record_po_prices(po)
+
     # Always create at least 1 shipment on submit (planned), with shipment lines (expected qty = open qty)
     dest = Location.objects.filter(tenant=tenant).order_by("id").first()
     if not dest:
@@ -2180,8 +2196,12 @@ def product_detail(request, product_id):
     po_lines = list(PurchaseOrderLine.objects.filter(po__tenant=tenant, product=p)
                     .select_related("po", "po__supplier").order_by("-po__created_at")[:20])
     qty_purchased = sum((l.ordered_qty or Decimal("0.00") for l in po_lines), Decimal("0.00"))
-    price_history = [{"date": l.po.created_at.date(), "supplier": l.po.supplier.name,
-                      "ref": l.po.po_number, "unit_cost": l.unit_cost} for l in po_lines]
+    # Recorded supplier price history (agreed on PO + actual on bill).
+    from core.models import SupplierPriceHistory
+    price_history = [{"date": r.recorded_at, "supplier": r.supplier.name, "ref": r.reference,
+                      "unit_cost": r.unit_cost, "source": r.get_source_display()}
+                     for r in (SupplierPriceHistory.objects.filter(tenant=tenant, product=p)
+                               .select_related("supplier")[:30])]
 
     supplier_names, seen = [], set()
     if p.preferred_supplier_id:
