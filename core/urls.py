@@ -88,6 +88,8 @@ urlpatterns = [
     path("inventory/adjustments/new/", views.adjustment_create, name="adjustment_create"),
     path("inventory/adjustments/<int:adj_id>/approve/", views.adjustment_approve, name="adjustment_approve"),
     path("inventory/adjustments/<int:adj_id>/reject/", views.adjustment_reject, name="adjustment_reject"),
+    path("inventory/low-stock/", views.low_stock, name="low_stock"),
+    path("inventory/movements/", views.stock_movements, name="stock_movements"),
 
     # Transfers
     path("transfers/", views.transfer_list, name="transfer_list"),

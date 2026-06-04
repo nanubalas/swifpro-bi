@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Stock Movements - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">Stock Movements</h2>
+    <div class="text-muted">The stock ledger - every inventory change with who, when and why.</div>
+  </div>
+</div>
+
+<div class="card mb-3"><div class="card-body">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3"><label class="form-label mb-1 small">Product</label>
+      <select name="product" class="form-select form-select-sm"><option value="">All</option>
+        {% for p in products %}<option value="{{ p.id }}" {% if product == p.id|stringformat:'s' %}selected{% endif %}>{{ p.sku }} - {{ p.name }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-1 small">Location</label>
+      <select name="location" class="form-select form-select-sm"><option value="">All</option>
+        {% for l in locations %}<option value="{{ l.id }}" {% if location == l.id|stringformat:'s' %}selected{% endif %}>{{ l.name }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-1 small">Type</label>
+      <select name="type" class="form-select form-select-sm"><option value="">All</option>
+        {% for val, label in type_choices %}<option value="{{ val }}" {% if type == val %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-1 small">From</label><input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <div class="col-md-2"><label class="form-label mb-1 small">To</label><input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
+    <div class="col-md-1 d-flex gap-2"><button class="btn btn-primary btn-sm"><i class="bi bi-search"></i></button>
+      {% if filtered %}<a class="btn btn-outline-secondary btn-sm" href="{% url 'stock_movements' %}">Clear</a>{% endif %}</div>
+  </form>
+</div></div>
+
+<div class="card"><div class="card-body">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light"><tr><th>Date</th><th>Product</th><th>Location</th><th>Type</th><th class="text-end">Qty</th><th>Reference</th><th>User</th><th>Notes</th></tr></thead>
+      <tbody>
+        {% for m in movements %}
+        <tr>
+          <td class="text-muted small">{{ m.created_at|date:'d M Y H:i' }}</td>
+          <td>{{ m.product.sku }}</td>
+          <td class="small">{{ m.location.name }}</td>
+          <td>{{ m.get_movement_type_display }}</td>
+          <td class="text-end {% if m.qty_delta < 0 %}text-danger{% else %}text-success{% endif %}">{{ m.qty_delta|floatformat:2 }}</td>
+          <td class="small text-muted">{{ m.ref_type }} {{ m.ref_id }}</td>
+          <td class="small">{{ m.user.username|default:'system' }}</td>
+          <td class="small text-muted">{{ m.notes|default:'' }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-center text-muted py-5">No stock movements match.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="form-text mt-2">Showing the most recent 300 movements.</div>
+</div></div>
+{% endblock %}

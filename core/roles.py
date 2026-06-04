@@ -113,6 +113,8 @@ NAV = [
     ("Inventory", [
         ("Inventory", "/inventory/", "boxes", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
         ("Stock Adjustments", "/inventory/adjustments/", "sliders", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
+        ("Stock Movements", "/inventory/movements/", "list-columns-reverse", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
+        ("Low Stock", "/inventory/low-stock/", "exclamation-triangle", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
         ("Transfers", "/transfers/", "arrow-left-right", {ADMIN, MANAGER, WAREHOUSE}),
         ("Cycle Counts", "/cycle-counts/", "clipboard-check", {ADMIN, MANAGER, WAREHOUSE}),
         ("Locations", "/locations/", "geo-alt", {ADMIN, MANAGER, WAREHOUSE}),
