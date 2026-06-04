@@ -327,13 +327,25 @@ class CustomerInvoiceForm(TenantModelForm):
     )
     class Meta:
         model = CustomerInvoice
-        fields = ["customer", "invoice_number", "invoice_date", "due_date", "notes"]
+        fields = ["customer", "invoice_number", "invoice_date", "due_date", "notes", "terms"]
+        widgets = {
+            "invoice_date": forms.DateInput(attrs={"type": "date"}),
+            "due_date": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+            "terms": forms.Textarea(attrs={"rows": 2}),
+        }
+        help_texts = {"invoice_number": "Leave blank to auto-generate (e.g. INV-0001)."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Number is auto-generated when left blank, so it isn't required.
+        self.fields["invoice_number"].required = False
 
 CustomerInvoiceLineFormSet = inlineformset_factory(
     CustomerInvoice,
     CustomerInvoiceLine,
     form=TenantModelForm,
-    fields=("product", "description", "qty", "unit_price", "tax_code"),
+    fields=("product", "description", "qty", "unit_price", "discount_pct", "tax_code"),
     extra=1,
     can_delete=True
 )

@@ -1619,3 +1619,90 @@ class VatUiAuditExportTests(TestCase):
         resp = self.client.post("/settings/tenant/", data)
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="VAT_SETTINGS_CHANGED").exists())
+
+
+class InvoiceCompletenessTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Inv Co", default_payment_terms_days=30)
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.tenant.default_tax_code = self.std
+        self.tenant.save()
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust", email="cust@example.com")
+        self.user = User.objects.create_user("invu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="invu", password="pw")
+
+    def _create(self, number="", action="save", discount="0"):
+        return self.client.post("/ar/invoices/new/", {
+            "customer": self.customer.id, "invoice_number": number,
+            "invoice_date": "2026-06-01", "action": action,
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-description": "Widget", "lines-0-qty": "2", "lines-0-unit_price": "100",
+            "lines-0-discount_pct": discount, "lines-0-tax_code": self.std.id,
+        })
+
+    def test_invoice_number_auto_generated_when_blank(self):
+        self._create(number="")
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        self.assertEqual(inv.invoice_number, "INV-0001")
+
+    def test_admin_can_override_invoice_number(self):
+        self._create(number="CUSTOM-9")
+        self.assertTrue(CustomerInvoice.objects.filter(tenant=self.tenant, invoice_number="CUSTOM-9").exists())
+
+    def test_line_discount_applied_to_totals(self):
+        self._create(discount="10")  # 2 x 100 = 200, less 10% = 180; VAT 36; total 216
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        self.assertEqual(inv.subtotal, Decimal("180.00"))
+        self.assertEqual(inv.tax_total, Decimal("36.00"))
+        self.assertEqual(inv.total, Decimal("216.00"))
+
+    def test_due_date_defaulted_from_terms(self):
+        self._create()
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        self.assertEqual(inv.due_date.isoformat(), "2026-07-01")  # +30 days
+
+    def test_send_marks_sent_and_audits(self):
+        from core.models import AuditLog
+        self._create(action="issue")
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        resp = self.client.post(f"/ar/invoices/{inv.id}/send/")
+        self.assertEqual(resp.status_code, 302)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, "SENT")
+        self.assertIsNotNone(inv.sent_at)
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="INVOICE_SENT").exists())
+
+    def test_cancel_reverses_gl(self):
+        from core.services import reports
+        from core.models import GLAccount
+        self._create(action="issue")
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        self.client.post(f"/ar/invoices/{inv.id}/cancel/")
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, "CANCELLED")
+        ar = GLAccount.objects.get(tenant=self.tenant, code="1100")
+        self.assertEqual(reports.account_balances(self.tenant)[ar]["balance"], Decimal("0.00"))
+
+    def test_partial_payment_shows_partially_paid_and_stays_in_aged(self):
+        from core.models import Payment, PaymentAllocation
+        from core.services.gl import post_payment
+        from core.services import reports
+        self._create(action="issue")  # total 240
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        p = Payment.objects.create(tenant=self.tenant, direction=Payment.Direction.RECEIPT,
+                                   customer=self.customer, amount=Decimal("100.00"), method="BANK")
+        PaymentAllocation.objects.create(payment=p, customer_invoice=inv, amount=Decimal("100.00"))
+        post_payment(p)
+        inv.refresh_from_db()
+        self.assertEqual(inv.display_status, "Partially paid")
+        self.assertEqual(reports.aged_receivables(self.tenant)["total"], Decimal("140.00"))
+
+    def test_overdue_display(self):
+        self._create(action="issue")
+        inv = CustomerInvoice.objects.get(tenant=self.tenant)
+        inv.due_date = inv.invoice_date.replace(year=2000)
+        inv.save()
+        self.assertEqual(inv.display_status, "Overdue")

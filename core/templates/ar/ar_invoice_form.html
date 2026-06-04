@@ -16,10 +16,11 @@
         <div class="card-body">
           <h5 class="fw-semibold mb-3">Header</h5>
           <div class="mb-3"><label class="form-label">Customer</label>{{ form.customer }}</div>
-          <div class="mb-3"><label class="form-label">Invoice Number</label>{{ form.invoice_number }}</div>
+          <div class="mb-3"><label class="form-label">Invoice Number</label>{{ form.invoice_number }}<div class="form-text">Leave blank to auto-generate.</div></div>
           <div class="mb-3"><label class="form-label">Invoice Date</label>{{ form.invoice_date }}</div>
           <div class="mb-3"><label class="form-label">Due Date</label>{{ form.due_date }}</div>
           <div class="mb-3"><label class="form-label">Notes</label>{{ form.notes }}</div>
+          <div class="mb-3"><label class="form-label">Terms &amp; conditions</label>{{ form.terms }}</div>
           <div class="mb-3"><label class="form-label">Action</label>{{ form.action }}</div>
         </div>
       </div>
@@ -39,12 +40,13 @@
             <table class="table table-bordered align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:30%">Product</th>
+                  <th style="width:26%">Product</th>
                   <th style="width:20%">Description</th>
-                  <th class="text-end" style="width:10%">Qty</th>
-                  <th class="text-end" style="width:15%">Unit Price</th>
-                  <th style="width:15%">Tax</th>
-                  <th class="text-center" style="width:10%">Remove</th>
+                  <th class="text-end" style="width:9%">Qty</th>
+                  <th class="text-end" style="width:14%">Unit Price</th>
+                  <th class="text-end" style="width:9%">Disc %</th>
+                  <th style="width:14%">Tax</th>
+                  <th class="text-center" style="width:8%">Remove</th>
                 </tr>
               </thead>
               <tbody id="lines-body">
@@ -54,6 +56,7 @@
                   <td>{{ f.description }}</td>
                   <td class="text-end">{{ f.qty }}</td>
                   <td class="text-end">{{ f.unit_price }}</td>
+                  <td class="text-end">{{ f.discount_pct }}</td>
                   <td>{{ f.tax_code }}</td>
                   <td class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
                 </tr>
@@ -68,6 +71,7 @@
               <td>{{ formset.empty_form.description }}</td>
               <td class="text-end">{{ formset.empty_form.qty }}</td>
               <td class="text-end">{{ formset.empty_form.unit_price }}</td>
+              <td class="text-end">{{ formset.empty_form.discount_pct }}</td>
               <td>{{ formset.empty_form.tax_code }}</td>
               <td class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
             </tr>

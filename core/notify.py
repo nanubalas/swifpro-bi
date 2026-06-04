@@ -86,6 +86,40 @@ def notify_credentials(email, name, username, temp_password, request=None):
     send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=True)
 
 
+def notify_invoice(inv, request=None, attachment=None):
+    """Email an issued invoice to the customer. Returns True if sent, False if
+    the customer has no email. `attachment` is an optional (filename, bytes,
+    mimetype) tuple (e.g. the PDF)."""
+    from django.core.mail import EmailMessage
+    email = getattr(inv.customer, "email", None)
+    if not email:
+        return False
+    tenant = inv.tenant
+    link = ""
+    if request is not None:
+        try:
+            link = request.build_absolute_uri(f"/ar/invoices/{inv.id}/")
+        except Exception:
+            link = ""
+    body = (
+        f"Dear {inv.customer.name},\n\n"
+        f"Please find invoice {inv.invoice_number} from {tenant.name}.\n\n"
+        f"Invoice date: {inv.invoice_date}\n"
+        f"Due date:     {inv.due_date or '-'}\n"
+        f"Amount due:   {inv.currency_code} {inv.total:.2f}\n\n"
+        + (f"View it online: {link}\n\n" if link else "")
+        + "Thank you for your business.\n"
+    )
+    msg = EmailMessage(
+        subject=f"Invoice {inv.invoice_number} from {tenant.name}",
+        body=body, from_email=settings.DEFAULT_FROM_EMAIL, to=[email],
+    )
+    if attachment:
+        msg.attach(*attachment)
+    msg.send(fail_silently=True)
+    return True
+
+
 def notify_applicant_rejected(req, request=None):
     if not req.email:
         return

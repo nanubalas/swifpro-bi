@@ -47,7 +47,7 @@ def vat_transactions(tenant, date_from, date_to):
     records = []
 
     sales = (CustomerInvoice.objects
-             .filter(tenant=tenant, status__in=["ISSUED", "PAID"],
+             .filter(tenant=tenant, status__in=["ISSUED", "SENT", "PAID"],
                      invoice_date__gte=date_from, invoice_date__lte=date_to)
              .select_related("customer").prefetch_related("lines", "lines__tax_code"))
     for inv in sales:

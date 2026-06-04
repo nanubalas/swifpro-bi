@@ -18,7 +18,7 @@
     <div class="table-responsive">
       <table class="table table-hover align-middle mb-0">
         <thead class="table-light">
-          <tr><th>Invoice</th><th>Customer</th><th>Status</th><th class="text-end">Date</th><th class="text-end">Total</th></tr>
+          <tr><th>Invoice</th><th>Customer</th><th>Status</th><th class="text-end">Date</th><th class="text-end">Total</th><th class="text-end">Outstanding</th></tr>
         </thead>
         <tbody>
           {% for i in invoices %}
@@ -26,15 +26,22 @@
             <td class="fw-semibold"><a class="text-decoration-none" href="/ar/invoices/{{ i.id }}/">{{ i.invoice_number }}</a></td>
             <td>{{ i.customer.name }}</td>
             <td>
-              {% if i.status == "ISSUED" %}<span class="badge text-bg-success">Issued</span>
-              {% elif i.status == "DRAFT" %}<span class="badge text-bg-secondary">Draft</span>
-              {% else %}<span class="badge text-bg-dark">{{ i.status }}</span>{% endif %}
+              {% with d=i.display_status %}
+              {% if d == "Paid" %}<span class="badge text-bg-success">{{ d }}</span>
+              {% elif d == "Overdue" %}<span class="badge text-bg-danger">{{ d }}</span>
+              {% elif d == "Partially paid" %}<span class="badge text-bg-warning">{{ d }}</span>
+              {% elif d == "Sent" %}<span class="badge text-bg-info">{{ d }}</span>
+              {% elif d == "Issued" %}<span class="badge text-bg-primary">{{ d }}</span>
+              {% elif d == "Draft" %}<span class="badge text-bg-secondary">{{ d }}</span>
+              {% else %}<span class="badge text-bg-dark">{{ d }}</span>{% endif %}
+              {% endwith %}
             </td>
             <td class="text-end text-muted">{{ i.invoice_date|date:"d M Y" }}</td>
             <td class="text-end">{{ i.total|money:i.currency_code }}</td>
+            <td class="text-end">{{ i.outstanding|money:i.currency_code }}</td>
           </tr>
           {% empty %}
-          <tr><td colspan="5" class="text-center text-muted py-5">No invoices yet.</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-5">No invoices yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>

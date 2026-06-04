@@ -143,6 +143,8 @@ path("ar/invoices/", views.ar_invoice_list, name="ar_invoice_list"),
 path("ar/invoices/new/", views.ar_invoice_create, name="ar_invoice_create"),
 path("ar/invoices/<int:invoice_id>/", views.ar_invoice_detail, name="ar_invoice_detail"),
 path("ar/invoices/<int:invoice_id>/issue/", views.ar_invoice_issue, name="ar_invoice_issue"),
+path("ar/invoices/<int:invoice_id>/send/", views.ar_invoice_send, name="ar_invoice_send"),
+path("ar/invoices/<int:invoice_id>/cancel/", views.ar_invoice_cancel, name="ar_invoice_cancel"),
 
 # General Ledger
 path("gl/accounts/", views.gl_account_list, name="gl_account_list"),

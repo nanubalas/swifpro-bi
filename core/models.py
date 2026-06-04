@@ -909,8 +909,15 @@ class CustomerInvoice(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
         ISSUED = "ISSUED", "Issued"
+        SENT = "SENT", "Sent"
         PAID = "PAID", "Paid"
-        VOID = "VOID", "Void"
+        CANCELLED = "CANCELLED", "Cancelled"
+        REFUNDED = "REFUNDED", "Refunded"
+        VOID = "VOID", "Void"  # legacy alias of cancelled
+
+    # Statuses that represent a live, GL-posted invoice (used by aged/VAT reports).
+    ISSUED_STATES = ("ISSUED", "SENT", "PAID")
+    OPEN_STATES = ("ISSUED", "SENT")  # may still have an outstanding balance
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
@@ -920,15 +927,39 @@ class CustomerInvoice(models.Model):
     currency_code = models.CharField(max_length=3, default="GBP")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     notes = models.TextField(blank=True, null=True)
+    terms = models.TextField(blank=True, null=True)  # terms & conditions shown on the invoice
 
     created_at = models.DateTimeField(default=timezone.now)
     issued_at = models.DateTimeField(blank=True, null=True)
+    sent_at = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         unique_together = ("tenant", "invoice_number")
 
     def __str__(self):
         return self.invoice_number
+
+    @property
+    def is_overdue(self):
+        from django.utils import timezone as _tz
+        return bool(self.due_date and self.status in self.OPEN_STATES
+                    and self.outstanding > Decimal("0.00") and self.due_date < _tz.localdate())
+
+    @property
+    def display_status(self):
+        """The customer-facing status, including the derived Partially paid /
+        Overdue states that aren't stored on the lifecycle field."""
+        if self.status in ("DRAFT", "CANCELLED", "VOID", "REFUNDED", "PAID"):
+            return "Cancelled" if self.status == "VOID" else self.get_status_display()
+        # ISSUED / SENT: refine by payment + due date.
+        paid = self.amount_paid + self.credit_applied
+        if self.outstanding <= Decimal("0.00"):
+            return "Paid"
+        if self.is_overdue:
+            return "Overdue"
+        if paid > Decimal("0.00"):
+            return "Partially paid"
+        return self.get_status_display()
 
     @property
     def subtotal(self):
@@ -961,14 +992,23 @@ class CustomerInvoiceLine(models.Model):
     description = models.CharField(max_length=255, blank=True, null=True)
     qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1.00"))
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"), blank=True)  # % off this line
     tax_code = models.ForeignKey(TaxCode, on_delete=models.PROTECT, blank=True, null=True)
 
     class Meta:
         unique_together = ("invoice", "product", "description")
 
     @property
-    def line_total(self):
+    def gross(self):
         return (self.qty or Decimal("0.00")) * (self.unit_price or Decimal("0.00"))
+
+    @property
+    def discount_amount(self):
+        return (self.gross * (self.discount_pct or Decimal("0.00")) / Decimal("100")).quantize(Decimal("0.01"))
+
+    @property
+    def line_total(self):
+        return self.gross - self.discount_amount
 
     @property
     def tax_amount(self):

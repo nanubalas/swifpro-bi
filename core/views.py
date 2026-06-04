@@ -2667,6 +2667,10 @@ def ar_invoice_create(request):
             inv = form.save(commit=False)
             inv.tenant = tenant
             inv.currency_code = tenant.currency_code
+            # Auto-generate the invoice number when the admin left it blank.
+            if not (inv.invoice_number or "").strip():
+                from core.numbering import next_invoice_number
+                inv.invoice_number = next_invoice_number(tenant)
             # Default due date from the company's payment terms when left blank.
             if not inv.due_date and inv.invoice_date and tenant.default_payment_terms_days:
                 inv.due_date = inv.invoice_date + timezone.timedelta(days=tenant.default_payment_terms_days)
@@ -2679,7 +2683,11 @@ def ar_invoice_create(request):
 
             return redirect("ar_invoice_detail", invoice_id=inv.id)
     else:
-        form = CustomerInvoiceForm(instance=inv)
+        from core.numbering import next_invoice_number
+        initial = {"invoice_number": next_invoice_number(tenant)}
+        if tenant.invoice_footer:
+            initial["terms"] = tenant.invoice_footer
+        form = CustomerInvoiceForm(instance=inv, initial=initial)
         # Pre-fill the first line's tax code with the company default.
         line_initial = [{"tax_code": tenant.default_tax_code}] if tenant.default_tax_code_id else None
         formset = CustomerInvoiceLineFormSet(instance=inv, initial=line_initial)
@@ -2701,6 +2709,58 @@ def ar_invoice_issue(request, invoice_id):
         post_customer_invoice(inv, user=request.user)
         return redirect("ar_invoice_detail", invoice_id=inv.id)
     return render(request, "ar/ar_invoice_issue.html", {"tenant": tenant, "inv": inv})
+
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def ar_invoice_send(request, invoice_id):
+    """Email the invoice to the customer and mark it Sent. Issues it first if
+    still a draft so a sent invoice is always on the ledger."""
+    tenant = _get_default_tenant(request)
+    inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
+    if request.method == "POST":
+        if inv.status == CustomerInvoice.Status.DRAFT:
+            post_customer_invoice(inv, user=request.user)
+        from core import notify
+        sent = notify.notify_invoice(inv, request=request)
+        inv.status = CustomerInvoice.Status.SENT
+        inv.sent_at = timezone.now()
+        inv.save(update_fields=["status", "sent_at"])
+        log_audit(action="INVOICE_SENT", request=request, user=request.user, tenant=tenant,
+                  detail=f"{inv.invoice_number} to {inv.customer.email or '(no email)'}")
+        if sent:
+            messages.success(request, f"Invoice {inv.invoice_number} emailed to {inv.customer.email}.")
+        else:
+            messages.warning(request, f"Invoice {inv.invoice_number} marked sent, but the customer has no email on file.")
+    return redirect("ar_invoice_detail", invoice_id=inv.id)
+
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def ar_invoice_cancel(request, invoice_id):
+    """Cancel an unpaid invoice (reverses its GL entry if it was posted)."""
+    tenant = _get_default_tenant(request)
+    inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
+    if request.method == "POST":
+        if inv.amount_paid > Decimal("0.00"):
+            messages.error(request, "This invoice has payments against it - raise a credit note or refund instead.")
+        else:
+            from core.models import JournalLine
+            # Reverse the original journal entry if the invoice was posted.
+            je = JournalEntry.objects.filter(tenant=tenant, ref_type="AR_INVOICE", ref_id=inv.invoice_number).order_by("-id").first()
+            if je and inv.status in CustomerInvoice.ISSUED_STATES:
+                rev = JournalEntry.objects.create(
+                    tenant=tenant, entry_date=timezone.localdate(), ref_type="AR_INVOICE_CANCEL",
+                    ref_id=inv.invoice_number, memo=f"Cancel invoice {inv.invoice_number}",
+                    posted_by=request.user, posted_at=timezone.now())
+                for l in je.lines.all():
+                    JournalLine.objects.create(entry=rev, account=l.account, description="Cancellation",
+                                               debit=l.credit, credit=l.debit)
+            inv.status = CustomerInvoice.Status.CANCELLED
+            inv.save(update_fields=["status"])
+            log_audit(action="INVOICE_CANCELLED", request=request, user=request.user, tenant=tenant, detail=inv.invoice_number)
+            messages.success(request, f"Invoice {inv.invoice_number} cancelled.")
+    return redirect("ar_invoice_detail", invoice_id=inv.id)
 
 
 # ============================

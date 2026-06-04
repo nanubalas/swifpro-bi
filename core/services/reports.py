@@ -186,7 +186,7 @@ def _aged(items, as_of):
 def aged_receivables(tenant, as_of=None):
     as_of = as_of or timezone.localdate()
     items = []
-    qs = CustomerInvoice.objects.filter(tenant=tenant, status="ISSUED").select_related("customer").prefetch_related("lines", "lines__tax_code", "payment_allocations")
+    qs = CustomerInvoice.objects.filter(tenant=tenant, status__in=("ISSUED", "SENT")).select_related("customer").prefetch_related("lines", "lines__tax_code", "payment_allocations", "credit_notes")
     for inv in qs:
         outstanding = inv.outstanding
         if outstanding <= ZERO:
