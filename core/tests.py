@@ -1945,3 +1945,58 @@ class RefundTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(Payment.objects.filter(tenant=self.tenant, direction="REFUND", amount=Decimal("50.00")).exists())
         self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="REFUND_RECORDED").exists())
+
+
+class CustomerStatementTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, Payment, PaymentAllocation
+        from core.services.gl import post_payment
+        import datetime
+        self.tenant = Tenant.objects.create(name="Stmt Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust", email="c@example.com")
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-S1",
+                                             invoice_date=datetime.date(2026, 3, 1))
+        CustomerInvoiceLine.objects.create(invoice=inv, description="Item", qty=Decimal("1"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(inv)  # 120
+        p = Payment.objects.create(tenant=self.tenant, direction=Payment.Direction.RECEIPT, customer=self.customer,
+                                   amount=Decimal("50.00"), method="BANK", payment_date=datetime.date(2026, 3, 10))
+        PaymentAllocation.objects.create(payment=p, customer_invoice=inv, amount=Decimal("50.00"))
+        post_payment(p)
+        self.user = User.objects.create_user("stmtu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="stmtu", password="pw")
+
+    def test_statement_running_balance(self):
+        import datetime
+        from core.services import statements
+        data = statements.customer_statement(self.tenant, self.customer,
+                                             datetime.date(2026, 1, 1), datetime.date(2026, 12, 31))
+        self.assertEqual(data["opening"], Decimal("0.00"))
+        self.assertEqual(len(data["rows"]), 2)            # invoice + receipt
+        self.assertEqual(data["rows"][-1]["balance"], Decimal("70.00"))  # 120 - 50
+        self.assertEqual(data["closing"], Decimal("70.00"))
+
+    def test_opening_balance_excludes_pre_period(self):
+        import datetime
+        from core.services import statements
+        # Period starting after both transactions -> they fall into opening.
+        data = statements.customer_statement(self.tenant, self.customer,
+                                             datetime.date(2026, 6, 1), datetime.date(2026, 12, 31))
+        self.assertEqual(data["opening"], Decimal("70.00"))
+        self.assertEqual(len(data["rows"]), 0)
+        self.assertEqual(data["closing"], Decimal("70.00"))
+
+    def test_statement_page_and_pdf(self):
+        self.assertEqual(self.client.get(f"/customers/{self.customer.id}/statement/").status_code, 200)
+        pdf = self.client.get(f"/customers/{self.customer.id}/statement/pdf/")
+        self.assertTrue(pdf.content[:5] == b"%PDF-")
+
+    def test_statement_email(self):
+        from django.core import mail
+        from core.models import AuditLog
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.client.post(f"/customers/{self.customer.id}/statement/email/")
+            self.assertEqual(len(mail.outbox), 1)
+            self.assertTrue(mail.outbox[0].attachments)
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="STATEMENT_SENT").exists())

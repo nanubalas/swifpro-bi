@@ -161,6 +161,9 @@ path("tax-codes/<int:tax_id>/delete/", views.taxcode_delete, name="taxcode_delet
 path("customers/", views.customer_list, name="customer_list"),
 path("customers/new/", views.customer_create, name="customer_create"),
 path("customers/<int:customer_id>/edit/", views.customer_edit, name="customer_edit"),
+path("customers/<int:customer_id>/statement/", views.customer_statement, name="customer_statement"),
+path("customers/<int:customer_id>/statement/pdf/", views.customer_statement_pdf, name="customer_statement_pdf"),
+path("customers/<int:customer_id>/statement/email/", views.customer_statement_email, name="customer_statement_email"),
 
 # Accounts Receivable
 path("ar/invoices/", views.ar_invoice_list, name="ar_invoice_list"),

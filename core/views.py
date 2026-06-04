@@ -3412,6 +3412,59 @@ def refund_create(request):
     return render(request, "payments/payment_form.html", {"tenant": tenant, "form": form, "mode": "refund"})
 
 
+def _statement_context(request, customer_id):
+    tenant = _get_default_tenant(request)
+    customer = get_object_or_404(Customer, id=customer_id, tenant=tenant)
+    from core.services import statements
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    if not date_from or not date_to:
+        date_from, date_to = statements.default_period(tenant)
+    data = statements.customer_statement(tenant, customer, date_from, date_to)
+    return tenant, customer, data
+
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+def customer_statement(request, customer_id):
+    tenant, customer, data = _statement_context(request, customer_id)
+    return render(request, "sales/statement.html", {"tenant": tenant, "customer": customer, "data": data})
+
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+def customer_statement_pdf(request, customer_id):
+    tenant, customer, data = _statement_context(request, customer_id)
+    from core.services.pdf import pdf_response
+    return pdf_response(f"statement-{customer.name}.pdf", "documents/statement_pdf.html",
+                        {"tenant": tenant, "customer": customer, "data": data,
+                         "doc_title": "STATEMENT", "number": customer.name}, download=False)
+
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+def customer_statement_email(request, customer_id):
+    from django.conf import settings
+    tenant, customer, data = _statement_context(request, customer_id)
+    if request.method == "POST":
+        if not customer.email:
+            messages.warning(request, f"{customer.name} has no email address on file.")
+        else:
+            from core.services.pdf import render_to_pdf
+            from django.core.mail import EmailMessage
+            pdf = render_to_pdf("documents/statement_pdf.html", {
+                "tenant": tenant, "customer": customer, "data": data,
+                "doc_title": "STATEMENT", "number": customer.name})
+            msg = EmailMessage(
+                subject=f"Statement of account from {tenant.name}",
+                body=(f"Dear {customer.name},\n\nPlease find your statement of account attached.\n"
+                      f"Balance due: {tenant.currency_code} {data['closing']:.2f}\n\nThank you.\n"),
+                from_email=settings.DEFAULT_FROM_EMAIL, to=[customer.email])
+            if pdf:
+                msg.attach(f"statement-{customer.name}.pdf", pdf, "application/pdf")
+            msg.send(fail_silently=True)
+            log_audit(action="STATEMENT_SENT", request=request, user=request.user, tenant=tenant, detail=customer.name)
+            messages.success(request, f"Statement emailed to {customer.email}.")
+    return redirect("customer_statement", customer_id=customer.id)
+
+
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 @transaction.atomic
 def ar_invoice_refund(request, invoice_id):

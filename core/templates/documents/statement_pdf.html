@@ -1,0 +1,39 @@
+{% extends "documents/_pdf_base.html" %}
+{% load money %}
+{% block meta %}
+  {{ data.date_from|date:'d M Y' }} - {{ data.date_to|date:'d M Y' }}
+{% endblock %}
+
+{% block content %}
+<table style="margin-bottom:14px"><tr>
+  <td style="width:55%">
+    <div class="muted small">Account</div>
+    <div><strong>{{ customer.name }}</strong></div>
+    {% if customer.billing_address %}<div class="small">{{ customer.billing_address|linebreaksbr }}</div>{% endif %}
+  </td>
+  <td class="right" style="width:45%">
+    <div class="box"><div class="muted small">Balance due</div><div style="font-size:14pt"><strong>{{ data.closing|money:tenant.currency_code }}</strong></div></div>
+  </td>
+</tr></table>
+
+<table class="lines">
+  <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th class="right">Charges</th><th class="right">Payments</th><th class="right">Balance</th></tr></thead>
+  <tbody>
+    <tr><td colspan="5"><strong>Opening balance</strong></td><td class="right"><strong>{{ data.opening|money:tenant.currency_code }}</strong></td></tr>
+    {% for r in data.rows %}
+    <tr>
+      <td>{{ r.date|date:'d M Y' }}</td>
+      <td>{{ r.type }}</td>
+      <td>{{ r.ref }}</td>
+      <td class="right">{% if r.debit %}{{ r.debit|money:tenant.currency_code }}{% endif %}</td>
+      <td class="right">{% if r.credit %}{{ r.credit|money:tenant.currency_code }}{% endif %}</td>
+      <td class="right">{{ r.balance|money:tenant.currency_code }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals" style="margin-top:10px">
+  <tr class="grand"><td class="right" style="width:80%">Closing balance due</td><td class="right">{{ data.closing|money:tenant.currency_code }}</td></tr>
+</table>
+{% endblock %}
