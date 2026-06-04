@@ -14,6 +14,39 @@
   </div>
 </div>
 
+<div class="card card-soft mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-4">
+        <label class="form-label mb-1 small">Search</label>
+        <input type="text" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Name, email, phone, VAT, contact...">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label mb-1 small">Type</label>
+        <select name="type" class="form-select form-select-sm">
+          <option value="">All</option>
+          {% for val, label in type_choices %}<option value="{{ val }}" {% if type == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label mb-1 small">Status</label>
+        <select name="status" class="form-select form-select-sm">
+          <option value="">All</option>
+          {% for val, label in status_choices %}<option value="{{ val }}" {% if status == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label mb-1 small">Tag</label>
+        <input type="text" name="tag" value="{{ tag }}" class="form-control form-control-sm" placeholder="e.g. VIP">
+      </div>
+      <div class="col-md-2 d-flex gap-2">
+        <button class="btn btn-primary btn-sm"><i class="bi bi-search me-1"></i> Filter</button>
+        {% if filtered %}<a class="btn btn-outline-secondary btn-sm" href="{% url 'customer_list' %}">Clear</a>{% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="card card-soft">
   <div class="card-body">
     <div class="table-responsive">

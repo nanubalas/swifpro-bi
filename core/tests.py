@@ -2370,3 +2370,51 @@ class CustomerProfileTests(TestCase):
         self.assertGreaterEqual(len(timeline), 3)  # invoice + payment + credit note
         dates = [e["date"] for e in timeline]
         self.assertEqual(dates, sorted(dates, reverse=True))
+
+
+class CustomerSearchDedupTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Search Co")
+        self.user = User.objects.create_user("srchu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="srchu", password="pw")
+        Customer.objects.create(tenant=self.tenant, name="Alpha Retail", email="a@alpha.example",
+                                phone="111", vat_number="GB111", customer_type="TRADE", status="ACTIVE", tags="VIP")
+        Customer.objects.create(tenant=self.tenant, name="Beta Wholesale", email="b@beta.example",
+                                phone="222", customer_type="WHOLESALE", status="INACTIVE", tags="Bulk")
+
+    def test_search_by_text(self):
+        resp = self.client.get("/customers/?q=alpha")
+        names = [c.name for c in resp.context["customers"]]
+        self.assertEqual(names, ["Alpha Retail"])
+        resp = self.client.get("/customers/?q=222")  # phone
+        self.assertEqual([c.name for c in resp.context["customers"]], ["Beta Wholesale"])
+
+    def test_filter_by_type_status_tag(self):
+        self.assertEqual([c.name for c in self.client.get("/customers/?type=TRADE").context["customers"]], ["Alpha Retail"])
+        self.assertEqual([c.name for c in self.client.get("/customers/?status=INACTIVE").context["customers"]], ["Beta Wholesale"])
+        self.assertEqual([c.name for c in self.client.get("/customers/?tag=VIP").context["customers"]], ["Alpha Retail"])
+
+    def test_duplicate_detection_blocks_then_confirms(self):
+        # New customer reusing Alpha's email -> flagged as duplicate, not saved.
+        data = {"name": "Alpha Retail North", "customer_type": "COMPANY", "status": "ACTIVE",
+                "email": "a@alpha.example", "credit_limit": "0"}
+        resp = self.client.post("/customers/new/", data)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context["duplicates"])
+        self.assertFalse(Customer.objects.filter(tenant=self.tenant, name="Alpha Retail North").exists())
+        # Confirm "save anyway".
+        data["confirm_duplicate"] = "1"
+        resp = self.client.post("/customers/new/", data)
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Customer.objects.filter(tenant=self.tenant, name="Alpha Retail North").exists())
+
+    def test_duplicate_helper_matches_multiple_fields(self):
+        from core.views import _find_customer_duplicates
+        from core.models import Customer as C
+        probe = C(tenant=self.tenant, name="X", email="a@alpha.example", phone="222")
+        dups = _find_customer_duplicates(self.tenant, probe)
+        matched = {(d["name"], d["match"]) for d in dups}
+        self.assertIn(("Alpha Retail", "email"), matched)
+        self.assertIn(("Beta Wholesale", "phone"), matched)

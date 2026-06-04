@@ -1,6 +1,7 @@
 import re
 from decimal import Decimal, InvalidOperation
 from django.db import transaction, IntegrityError
+from django.db.models import Q
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.crypto import get_random_string
@@ -2654,8 +2655,57 @@ def taxcode_delete(request, tax_id):
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 def customer_list(request):
     tenant = _get_default_tenant(request)
-    customers = Customer.objects.filter(tenant=tenant).order_by("name")
-    return render(request, "customers/customer_list.html", {"tenant": tenant, "customers": customers})
+    q = (request.GET.get("q") or "").strip()
+    ctype = request.GET.get("type") or ""
+    status = request.GET.get("status") or ""
+    tag = (request.GET.get("tag") or "").strip()
+
+    customers = Customer.objects.filter(tenant=tenant)
+    if q:
+        customers = customers.filter(
+            Q(name__icontains=q) | Q(email__icontains=q) | Q(phone__icontains=q)
+            | Q(vat_number__icontains=q) | Q(company_number__icontains=q)
+            | Q(contact_person__icontains=q))
+    if ctype:
+        customers = customers.filter(customer_type=ctype)
+    if status:
+        customers = customers.filter(status=status)
+    if tag:
+        customers = customers.filter(tags__icontains=tag)
+    customers = customers.order_by("name")
+
+    return render(request, "customers/customer_list.html", {
+        "tenant": tenant, "customers": customers,
+        "q": q, "type": ctype, "status": status, "tag": tag,
+        "type_choices": Customer.Type.choices, "status_choices": Customer.Status.choices,
+        "filtered": bool(q or ctype or status or tag),
+    })
+
+
+def _find_customer_duplicates(tenant, obj, exclude_id=None):
+    """Possible duplicate customers matching email / phone / VAT / company number
+    / name. Returns [{id, name, match}] (a different existing record per match)."""
+    checks = [
+        ("email", obj.email, "email"),
+        ("phone", obj.phone, "phone"),
+        ("vat_number", obj.vat_number, "VAT number"),
+        ("company_number", obj.company_number, "company number"),
+        ("name", obj.name, "name"),
+    ]
+    seen, out = set(), []
+    for field, value, label in checks:
+        value = (value or "").strip()
+        if not value:
+            continue
+        qs = Customer.objects.filter(tenant=tenant, **{f"{field}__iexact": value})
+        if exclude_id:
+            qs = qs.exclude(id=exclude_id)
+        for match in qs:
+            if match.id not in seen:
+                seen.add(match.id)
+                out.append({"id": match.id, "name": match.name, "match": label})
+    return out
+
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
 def customer_create(request):
@@ -2664,8 +2714,16 @@ def customer_create(request):
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
         obj.tenant = tenant
-        obj.save()
-        return redirect("customer_list")
+        dups = _find_customer_duplicates(tenant, obj)
+        if dups and request.POST.get("confirm_duplicate") != "1":
+            return render(request, "customers/customer_form.html",
+                          {"tenant": tenant, "form": form, "mode": "create", "duplicates": dups})
+        try:
+            obj.save()
+        except IntegrityError:
+            form.add_error("name", "A customer with this name already exists.")
+            return render(request, "customers/customer_form.html", {"tenant": tenant, "form": form, "mode": "create"})
+        return redirect("customer_detail", customer_id=obj.id)
     return render(request, "customers/customer_form.html", {"tenant": tenant, "form": form, "mode": "create"})
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
@@ -2674,6 +2732,11 @@ def customer_edit(request, customer_id):
     obj = get_object_or_404(Customer, id=customer_id, tenant=tenant)
     form = CustomerForm(request.POST or None, instance=obj)
     if request.method == "POST" and form.is_valid():
+        edited = form.save(commit=False)
+        dups = _find_customer_duplicates(tenant, edited, exclude_id=obj.id)
+        if dups and request.POST.get("confirm_duplicate") != "1":
+            return render(request, "customers/customer_form.html",
+                          {"tenant": tenant, "form": form, "mode": "edit", "duplicates": dups})
         form.save()
         return redirect("customer_detail", customer_id=obj.id)
     return render(request, "customers/customer_form.html", {"tenant": tenant, "form": form, "mode": "edit"})
