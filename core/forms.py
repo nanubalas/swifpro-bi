@@ -402,6 +402,15 @@ class SupplierPaymentForm(TenantModelForm):
         widgets = {"notes": forms.Textarea(attrs={"rows": 2})}
 
 
+class RefundForm(TenantModelForm):
+    """Record money refunded to a customer."""
+    class Meta:
+        model = Payment
+        fields = ["customer", "payment_date", "amount", "method", "reference", "notes"]
+        widgets = {"payment_date": forms.DateInput(attrs={"type": "date"}),
+                   "notes": forms.Textarea(attrs={"rows": 2})}
+
+
 class ExpenseForm(TenantModelForm):
     """Record a business cost. 'Category' is restricted to expense accounts so
     business users pick a plain category rather than dealing with the ledger."""

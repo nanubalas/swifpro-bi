@@ -42,7 +42,7 @@ from core.forms import (
     ReturnAuthorizationForm, ReturnLineFormSet,
     TaxCodeForm, CustomerForm,
     CustomerInvoiceForm, CustomerInvoiceLineFormSet,
-    GLAccountForm, ReceiptForm, SupplierPaymentForm, AccessRequestForm,
+    GLAccountForm, ReceiptForm, SupplierPaymentForm, RefundForm, AccessRequestForm,
     NewOrganisationForm, InviteUserForm, ExpenseForm,
     CreditNoteForm, CreditNoteLineFormSet, BankTransactionForm,
     SalesQuoteForm, SalesQuoteLineFormSet, CustomerOrderForm, CustomerOrderLineFormSet,
@@ -3390,6 +3390,51 @@ def supplier_payment_create(request):
         messages.success(request, f"Payment of {payment.amount} recorded and allocated.")
         return redirect("payment_detail", payment_id=payment.id)
     return render(request, "payments/payment_form.html", {"tenant": tenant, "form": form, "mode": "payment"})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def refund_create(request):
+    """Record money refunded to a customer (cash out)."""
+    tenant = _get_default_tenant(request)
+    form = RefundForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        payment = form.save(commit=False)
+        payment.tenant = tenant
+        payment.direction = Payment.Direction.REFUND
+        payment.currency_code = tenant.currency_code
+        payment.save()
+        post_payment(payment, user=request.user)
+        log_audit(action="REFUND_RECORDED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{payment.amount} to {payment.party_name}")
+        messages.success(request, f"Refund of {payment.amount} to {payment.party_name} recorded.")
+        return redirect("payment_detail", payment_id=payment.id)
+    return render(request, "payments/payment_form.html", {"tenant": tenant, "form": form, "mode": "refund"})
+
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def ar_invoice_refund(request, invoice_id):
+    """Refund a paid invoice: record a customer refund for the amount paid and
+    mark the invoice Refunded."""
+    tenant = _get_default_tenant(request)
+    inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
+    if request.method == "POST":
+        amount = inv.amount_paid
+        if amount <= Decimal("0.00"):
+            messages.error(request, "There is nothing paid on this invoice to refund.")
+        else:
+            payment = Payment.objects.create(
+                tenant=tenant, direction=Payment.Direction.REFUND, customer=inv.customer,
+                amount=amount, method=Payment.Method.BANK, currency_code=tenant.currency_code,
+                reference=f"Refund {inv.invoice_number}")
+            post_payment(payment, user=request.user)
+            inv.status = CustomerInvoice.Status.REFUNDED
+            inv.save(update_fields=["status"])
+            log_audit(action="REFUND_RECORDED", request=request, user=request.user, tenant=tenant,
+                      detail=f"{amount} for invoice {inv.invoice_number}")
+            messages.success(request, f"Refunded {amount} for invoice {inv.invoice_number}.")
+    return redirect("ar_invoice_detail", invoice_id=inv.id)
 
 
 # ============================

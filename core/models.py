@@ -1229,6 +1229,7 @@ class Payment(models.Model):
     class Direction(models.TextChoices):
         RECEIPT = "RECEIPT", "Customer receipt"   # money in
         PAYMENT = "PAYMENT", "Supplier payment"   # money out
+        REFUND = "REFUND", "Customer refund"      # money out (back to a customer)
 
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"

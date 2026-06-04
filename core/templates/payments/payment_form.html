@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{% if mode == 'receipt' %}Record Receipt{% else %}Pay Supplier{% endif %} - SwifPro BI{% endblock %}
+{% block title %}{% if mode == 'receipt' %}Record Receipt{% elif mode == 'refund' %}Refund Customer{% else %}Pay Supplier{% endif %} - SwifPro BI{% endblock %}
 
 {% block body %}
 <div class="row justify-content-center">
@@ -7,13 +7,17 @@
     <div class="d-flex align-items-center gap-2 mb-3">
       <a href="{% url 'payment_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
       <h2 class="fw-bold mb-0">
-        {% if mode == 'receipt' %}Record Customer Receipt{% else %}Record Supplier Payment{% endif %}
+        {% if mode == 'receipt' %}Record Customer Receipt{% elif mode == 'refund' %}Refund a Customer{% else %}Record Supplier Payment{% endif %}
       </h2>
     </div>
 
     <div class="alert alert-info d-flex align-items-center">
       <i class="bi bi-info-circle me-2"></i>
+      {% if mode == 'refund' %}
+      <div>Records cash paid back to the customer (money out) and posts it to the ledger.</div>
+      {% else %}
       <div>The amount is automatically allocated to the {% if mode == 'receipt' %}customer's{% else %}supplier's{% endif %} oldest open invoices first, then posted to the ledger.</div>
+      {% endif %}
     </div>
 
     <div class="card-soft p-4">

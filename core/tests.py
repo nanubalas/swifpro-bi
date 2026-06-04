@@ -1899,3 +1899,49 @@ class RecurringInvoiceTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         t = RecurringInvoice.objects.get(tenant=self.tenant, name="Weekly")
         self.assertEqual(t.next_run_date.isoformat(), "2026-02-01")  # defaulted from start
+
+
+class RefundTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Refund Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer, invoice_number="INV-R1")
+        CustomerInvoiceLine.objects.create(invoice=self.inv, description="Item", qty=Decimal("2"), unit_price=Decimal("100.00"), tax_code=self.std)
+        post_customer_invoice(self.inv)  # total 240
+        from core.models import Payment, PaymentAllocation
+        from core.services.gl import post_payment
+        p = Payment.objects.create(tenant=self.tenant, direction=Payment.Direction.RECEIPT,
+                                   customer=self.customer, amount=Decimal("240.00"), method="BANK")
+        PaymentAllocation.objects.create(payment=p, customer_invoice=self.inv, amount=Decimal("240.00"))
+        post_payment(p)
+        self.user = User.objects.create_user("refu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="refu", password="pw")
+
+    def test_invoice_refund_sets_status_and_reverses_cash(self):
+        from core.models import Payment, GLAccount
+        from core.services import reports
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.status, "PAID")
+        resp = self.client.post(f"/ar/invoices/{self.inv.id}/refund/")
+        self.assertEqual(resp.status_code, 302)
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.status, "REFUNDED")
+        self.assertEqual(self.inv.display_status, "Refunded")
+        refund = Payment.objects.get(tenant=self.tenant, direction="REFUND")
+        self.assertEqual(refund.amount, Decimal("240.00"))
+        # Bank nets to zero: +240 receipt then -240 refund.
+        bank = GLAccount.objects.get(tenant=self.tenant, code="1050")
+        self.assertEqual(reports.account_balances(self.tenant)[bank]["balance"], Decimal("0.00"))
+
+    def test_standalone_refund_records_and_audits(self):
+        from core.models import AuditLog, Payment
+        resp = self.client.post("/payments/refunds/new/", {
+            "customer": self.customer.id, "payment_date": "2026-06-01",
+            "amount": "50.00", "method": "BANK", "reference": "RFD-1",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Payment.objects.filter(tenant=self.tenant, direction="REFUND", amount=Decimal("50.00")).exists())
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="REFUND_RECORDED").exists())
