@@ -344,9 +344,92 @@ def select_org(request):
     return render(request, "select_org.html", {"memberships": memberships})
 
 
+def _dashboard_kpis(tenant, role_code):
+    """Role-relevant headline metrics for the dashboard. Each card is
+    {label, value, is_money, icon, url, tone, sub}."""
+    from django.db.models import Sum
+    from core.models import (JournalLine, CustomerInvoice, PurchaseOrder, PurchaseRequisition,
+                             SalesQuote, CustomerOrder, StockAdjustment)
+    from core.services import reports as rpt
+    today = timezone.localdate()
+
+    def gl_balance(code, normal="debit"):
+        agg = JournalLine.objects.filter(entry__tenant=tenant, account__code=code).aggregate(d=Sum("debit"), c=Sum("credit"))
+        d = agg["d"] or Decimal("0.00"); c = agg["c"] or Decimal("0.00")
+        return (d - c) if normal == "debit" else (c - d)
+
+    def sales_mtd():
+        first = today.replace(day=1)
+        agg = (JournalLine.objects
+               .filter(entry__tenant=tenant, account__code="4000", entry__entry_date__gte=first)
+               .aggregate(d=Sum("debit"), c=Sum("credit")))
+        return (agg["c"] or Decimal("0.00")) - (agg["d"] or Decimal("0.00"))
+
+    def overdue_invoices():
+        return CustomerInvoice.objects.filter(
+            tenant=tenant, status__in=CustomerInvoice.OPEN_STATES, due_date__lt=today).count()
+
+    def low_stock_count():
+        n = 0
+        for p in Product.objects.filter(tenant=tenant, reorder_level__gt=0, is_active=True):
+            if p.on_hand_total < p.reorder_level:
+                n += 1
+        return n
+
+    def open_pos():
+        return PurchaseOrder.objects.filter(
+            tenant=tenant, is_current=True,
+            status__in=[PurchaseOrder.Status.SUBMITTED, PurchaseOrder.Status.APPROVAL_PENDING,
+                        PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.SENT,
+                        PurchaseOrder.Status.IN_TRANSIT, PurchaseOrder.Status.PARTIALLY_RECEIVED]).count()
+
+    # --- card builders (computed lazily, only what each role needs) ---
+    def c_sales():   return {"label": "Sales (this month)", "value": sales_mtd(), "is_money": True, "icon": "graph-up-arrow", "url": "/sales/reports/", "tone": "success"}
+    def c_ar():      return {"label": "Receivables outstanding", "value": rpt.aged_receivables(tenant)["total"], "is_money": True, "icon": "cash-coin", "url": "/reports/aged-receivables/", "tone": "primary"}
+    def c_ap():      return {"label": "Payables outstanding", "value": rpt.aged_payables(tenant)["total"], "is_money": True, "icon": "credit-card", "url": "/reports/aged-payables/", "tone": "primary"}
+    def c_bank():    return {"label": "Bank balance", "value": gl_balance("1050"), "is_money": True, "icon": "bank2", "url": "/reports/balance-sheet/", "tone": "success"}
+    def c_overdue(): n = overdue_invoices(); return {"label": "Overdue invoices", "value": n, "is_money": False, "icon": "exclamation-octagon", "url": "/ar/invoices/", "tone": "danger" if n else "muted"}
+    def c_lowstock():n = low_stock_count(); return {"label": "Low-stock items", "value": n, "is_money": False, "icon": "exclamation-triangle", "url": "/inventory/low-stock/", "tone": "warning" if n else "muted"}
+    def c_stockval():return {"label": "Stock value", "value": rpt.stock_valuation(tenant)["total"], "is_money": True, "icon": "box-seam", "url": "/reports/stock-valuation/", "tone": "primary"}
+    def c_openpo():  return {"label": "Open purchase orders", "value": open_pos(), "is_money": False, "icon": "file-earmark-text", "url": "/po/", "tone": "primary"}
+    def c_req():     n = PurchaseRequisition.objects.filter(tenant=tenant, status=PurchaseRequisition.Status.SUBMITTED).count(); return {"label": "Requisitions to approve", "value": n, "is_money": False, "icon": "card-checklist", "url": "/requisitions/", "tone": "warning" if n else "muted"}
+    def c_backorder():
+        n = sum(1 for l in PurchaseOrderLine.objects.filter(po__tenant=tenant, po__is_current=True)
+                .exclude(po__status__in=[PurchaseOrder.Status.CANCELLED, PurchaseOrder.Status.CLOSED, PurchaseOrder.Status.DRAFT])
+                if l.open_qty and l.open_qty > 0)
+        return {"label": "Backorder lines", "value": n, "is_money": False, "icon": "hourglass-split", "url": "/po/backorders/", "tone": "warning" if n else "muted"}
+    def c_pendadj(): n = StockAdjustment.objects.filter(tenant=tenant, status=StockAdjustment.Status.PENDING).count(); return {"label": "Adjustments to approve", "value": n, "is_money": False, "icon": "sliders", "url": "/inventory/adjustments/", "tone": "warning" if n else "muted"}
+    def c_quotes():  n = SalesQuote.objects.filter(tenant=tenant, status__in=[SalesQuote.Status.DRAFT, SalesQuote.Status.SENT]).count(); return {"label": "Open quotes", "value": n, "is_money": False, "icon": "file-text", "url": "/quotes/", "tone": "primary"}
+    def c_orders():  n = CustomerOrder.objects.filter(tenant=tenant, status=CustomerOrder.Status.CONFIRMED).count(); return {"label": "Orders to invoice", "value": n, "is_money": False, "icon": "bag-check", "url": "/customer-orders/", "tone": "primary"}
+    def c_torecv():
+        n = PurchaseOrder.objects.filter(tenant=tenant, is_current=True,
+            status__in=[PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.SENT,
+                        PurchaseOrder.Status.IN_TRANSIT, PurchaseOrder.Status.PARTIALLY_RECEIVED]).count()
+        return {"label": "POs to receive", "value": n, "is_money": False, "icon": "truck", "url": "/po/", "tone": "primary"}
+
+    layout = {
+        roles_mod.ACCOUNTANT: [c_ar, c_ap, c_overdue, c_bank],
+        roles_mod.FINANCE:    [c_ar, c_ap, c_overdue, c_bank],
+        roles_mod.SALES:      [c_sales, c_quotes, c_orders, c_overdue],
+        roles_mod.WAREHOUSE:  [c_lowstock, c_pendadj, c_torecv, c_stockval],
+        roles_mod.PURCHASING: [c_openpo, c_req, c_backorder, c_lowstock],
+        roles_mod.READONLY:   [c_sales, c_ar, c_stockval],
+        roles_mod.MANAGER:    [c_sales, c_openpo, c_lowstock, c_ar],
+        roles_mod.ADMIN:      [c_sales, c_ar, c_lowstock, c_openpo],
+    }
+    builders = layout.get(role_code, [])
+    cards = []
+    for b in builders:
+        try:
+            cards.append(b())
+        except Exception:
+            continue  # never let a KPI break the dashboard
+    return cards
+
+
 def _render_dashboard(request, role_code):
-    """Role-based home: a clean navigation launcher of the modules/reports the
-    role can access (no business data/KPIs/charts at this stage)."""
+    """Role-based home: headline KPIs for the role plus a navigation launcher of
+    the modules/reports the role can access."""
     tenant = _get_default_tenant(request)
     if not tenant:
         return render(request, "landing.html", {"tenant": None, "needs_setup": True})
@@ -359,6 +442,7 @@ def _render_dashboard(request, role_code):
         "role_label": roles_mod.ROLE_LABELS.get(role_code, role_code),
         "title": roles_mod.DASHBOARD_TITLE.get(role_code, "Dashboard"),
         "sections": sections,
+        "kpis": _dashboard_kpis(tenant, role_code),
         "onboarding_complete": tenant.onboarding_complete,
     })
 

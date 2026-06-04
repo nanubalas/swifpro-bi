@@ -252,6 +252,35 @@ class RoleDashboardTests(TestCase):
         self.assertEqual(resp.url, "/reports/")
 
 
+class DashboardKpiTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="KPI Co")
+        self.admin = User.objects.create_user("kpiadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+
+    def test_each_role_dashboard_has_kpis(self):
+        self.client.login(username="kpiadmin", password="pw")
+        for path in ["admin", "finance", "sales", "warehouse", "purchasing", "accountant", "read-only"]:
+            resp = self.client.get(f"/dashboard/{path}")
+            self.assertEqual(resp.status_code, 200, path)
+            self.assertTrue(len(resp.context["kpis"]) >= 3, f"{path} has too few KPIs")
+
+    def test_kpis_reflect_data(self):
+        from core.models import Product, InventoryBalance, Location, PurchaseOrder, PurchaseOrderLine, Supplier
+        sup = Supplier.objects.create(tenant=self.tenant, name="S")
+        loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        p = Product.objects.create(tenant=self.tenant, sku="K1", name="P", reorder_level=Decimal("10"), is_active=True)
+        InventoryBalance.objects.create(tenant=self.tenant, product=p, location=loc, on_hand=Decimal("2"))
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-K", supplier=sup,
+                                          status=PurchaseOrder.Status.SENT)
+        PurchaseOrderLine.objects.create(po=po, product=p, ordered_qty=Decimal("5"), unit_cost=Decimal("1"))
+        self.client.login(username="kpiadmin", password="pw")
+        kpis = {k["label"]: k["value"] for k in self.client.get("/dashboard/purchasing").context["kpis"]}
+        self.assertEqual(kpis["Open purchase orders"], 1)
+        self.assertEqual(kpis["Low-stock items"], 1)
+
+
 class CompanyProfileTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership
