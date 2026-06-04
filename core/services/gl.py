@@ -127,9 +127,18 @@ def post_payment(payment, user=None) -> JournalEntry:
     if payment.direction == Payment.Direction.RECEIPT:
         JournalLine.objects.create(entry=je, account=_acc(tenant, "bank"), description="Bank", debit=amount, credit=Decimal("0.00"))
         JournalLine.objects.create(entry=je, account=_acc(tenant, "ar"), description="Accounts Receivable", debit=Decimal("0.00"), credit=amount)
+    elif payment.direction == Payment.Direction.REFUND:
+        # Customer refund: cash out, reversing the customer's credit/overpayment.
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "ar"), description="Accounts Receivable", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "bank"), description="Bank", debit=Decimal("0.00"), credit=amount)
     else:
         JournalLine.objects.create(entry=je, account=_acc(tenant, "ap"), description="Accounts Payable", debit=amount, credit=Decimal("0.00"))
         JournalLine.objects.create(entry=je, account=_acc(tenant, "bank"), description="Bank", debit=Decimal("0.00"), credit=amount)
+
+    if payment.direction == Payment.Direction.REFUND:
+        payment.status = Payment.Status.POSTED
+        payment.save(update_fields=["status"])
+        return je
 
     # Mark fully-settled invoices as paid.
     for alloc in payment.allocations.select_related("customer_invoice", "supplier_invoice").all():

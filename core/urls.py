@@ -170,6 +170,7 @@ path("ar/invoices/<int:invoice_id>/issue/", views.ar_invoice_issue, name="ar_inv
 path("ar/invoices/<int:invoice_id>/pdf/", views.ar_invoice_pdf, name="ar_invoice_pdf"),
 path("ar/invoices/<int:invoice_id>/send/", views.ar_invoice_send, name="ar_invoice_send"),
 path("ar/invoices/<int:invoice_id>/cancel/", views.ar_invoice_cancel, name="ar_invoice_cancel"),
+path("ar/invoices/<int:invoice_id>/refund/", views.ar_invoice_refund, name="ar_invoice_refund"),
 
 # General Ledger
 path("gl/accounts/", views.gl_account_list, name="gl_account_list"),
@@ -194,6 +195,7 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("payments/", views.payment_list, name="payment_list"),
     path("payments/receipts/new/", views.receipt_create, name="receipt_create"),
     path("payments/payments/new/", views.supplier_payment_create, name="supplier_payment_create"),
+    path("payments/refunds/new/", views.refund_create, name="refund_create"),
     path("payments/<int:payment_id>/", views.payment_detail, name="payment_detail"),
     path("bank/transactions/", views.bank_transactions_list, name="bank_transactions_list"),
     path("bank/transactions/new/", views.bank_transaction_add, name="bank_transaction_add"),

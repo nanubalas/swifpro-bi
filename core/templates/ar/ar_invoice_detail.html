@@ -36,6 +36,11 @@
         <button class="btn btn-outline-danger"><i class="bi bi-x-lg me-1"></i> Cancel</button>
       </form>
     {% endif %}
+    {% if inv.amount_paid > 0 and inv.status != "REFUNDED" %}
+      <form method="post" action="{% url 'ar_invoice_refund' inv.id %}" onsubmit="return confirm('Refund {{ inv.amount_paid }} for {{ inv.invoice_number }}?');">{% csrf_token %}
+        <button class="btn btn-outline-danger"><i class="bi bi-arrow-counterclockwise me-1"></i> Refund</button>
+      </form>
+    {% endif %}
   </div>
 </div>
 

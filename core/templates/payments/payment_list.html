@@ -12,6 +12,7 @@
     <a class="btn btn-outline-primary" href="{% url 'bank_reconciliation' %}"><i class="bi bi-check2-square me-1"></i> Bank Reconcile</a>
     {% include "_export_menu.html" with export_kind="payments" %}
     <a class="btn btn-outline-secondary" href="{% url 'supplier_payment_create' %}"><i class="bi bi-arrow-up-right me-1"></i> Pay Supplier</a>
+    <a class="btn btn-outline-secondary" href="{% url 'refund_create' %}"><i class="bi bi-arrow-counterclockwise me-1"></i> Refund Customer</a>
     <a class="btn btn-primary" href="{% url 'receipt_create' %}"><i class="bi bi-arrow-down-left me-1"></i> Record Receipt</a>
   </div>
 </div>
