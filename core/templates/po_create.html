@@ -31,6 +31,11 @@
           </div>
 
           <div class="mb-3">
+            <label class="form-label">Delivery address (optional)</label>
+            {{ form.delivery_address }}
+          </div>
+
+          <div class="mb-3">
             <label class="form-label">Notes (optional)</label>
             {{ form.notes }}
           </div>
@@ -60,9 +65,10 @@
             <table class="table table-bordered align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:45%">Product</th>
-                  <th class="text-end" style="width:15%">Qty</th>
-                  <th class="text-end" style="width:20%">Unit Cost</th>
+                  <th style="width:36%">Product</th>
+                  <th class="text-end" style="width:12%">Qty</th>
+                  <th class="text-end" style="width:18%">Unit Cost</th>
+                  <th style="width:18%">VAT</th>
                   <th class="text-center" style="width:10%">Remove</th>
                 </tr>
               </thead>
@@ -70,9 +76,11 @@
               <tbody id="lines-body">
                 {% for f in formset %}
                 <tr class="line-row">
+                  {{ f.id }}
                   <td>{{ f.product }}</td>
                   <td class="text-end">{{ f.ordered_qty }}</td>
                   <td class="text-end">{{ f.unit_cost }}</td>
+                  <td>{{ f.tax_code }}</td>
                   <td class="text-center">
                     <div class="form-check d-inline-block">
                       {{ f.DELETE }}
@@ -87,9 +95,11 @@
           <!-- Empty form template (hidden) -->
           <template id="empty-form-template">
             <tr class="line-row">
+              {{ formset.empty_form.id }}
               <td>{{ formset.empty_form.product }}</td>
               <td class="text-end">{{ formset.empty_form.ordered_qty }}</td>
               <td class="text-end">{{ formset.empty_form.unit_cost }}</td>
+              <td>{{ formset.empty_form.tax_code }}</td>
               <td class="text-center">
                 <div class="form-check d-inline-block">
                   {{ formset.empty_form.DELETE }}

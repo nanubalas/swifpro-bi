@@ -2880,3 +2880,63 @@ class LowStockAndLedgerTests(TestCase):
         self.assertEqual(len(resp.context["movements"]), 2)
         # the ledger shows the user who made the movement
         self.assertContains(self.client.get("/inventory/movements/"), "lsu")
+
+
+class POCompletenessTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, Supplier, Location, GoodsReceipt, SupplierInvoice, SupplierInvoiceLine
+        self.tenant = Tenant.objects.create(name="POC Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Globex", email="g@globex.example", address="Globex House")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="SKU-PO1", name="Part")
+        self.user = User.objects.create_user("pocu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="pocu", password="pw")
+
+    def test_po_line_vat_and_totals(self):
+        from core.models import PurchaseOrder, PurchaseOrderLine
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-1", supplier=self.supplier, delivery_address="Dock 4")
+        PurchaseOrderLine.objects.create(po=po, product=self.prod, ordered_qty=Decimal("10"), unit_cost=Decimal("5.00"), tax_code=self.std)
+        self.assertEqual(po.subtotal, Decimal("50.00"))
+        self.assertEqual(po.tax_total, Decimal("10.00"))
+        self.assertEqual(po.total, Decimal("60.00"))
+
+    def test_po_pdf_renders(self):
+        from core.models import PurchaseOrder, PurchaseOrderLine
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-2", supplier=self.supplier)
+        PurchaseOrderLine.objects.create(po=po, product=self.prod, ordered_qty=Decimal("3"), unit_cost=Decimal("5.00"), tax_code=self.std)
+        resp = self.client.get(f"/po/{po.id}/pdf/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.content[:5] == b"%PDF-")
+
+    def test_bill_posting_sets_po_billed(self):
+        from core.models import PurchaseOrder, GoodsReceipt, SupplierInvoice, SupplierInvoiceLine
+        from core.services.gl import post_supplier_invoice
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-3", supplier=self.supplier, status=PurchaseOrder.Status.RECEIVED)
+        grn = GoodsReceipt.objects.create(tenant=self.tenant, po=po, grn_number="GRN-3", received_to=self.loc, status=GoodsReceipt.Status.POSTED)
+        inv = SupplierInvoice.objects.create(tenant=self.tenant, supplier=self.supplier, po=po, receipt=grn, invoice_number="BILL-3")
+        SupplierInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal("10"), unit_cost=Decimal("5.00"), tax_code=self.std)
+        post_supplier_invoice(inv)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "BILLED")
+
+    def test_po_email_attaches_pdf(self):
+        from django.core import mail
+        from core.models import PurchaseOrder, PurchaseOrderLine
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-4", supplier=self.supplier, status=PurchaseOrder.Status.APPROVED)
+        PurchaseOrderLine.objects.create(po=po, product=self.prod, ordered_qty=Decimal("2"), unit_cost=Decimal("5.00"), tax_code=self.std)
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.client.post(f"/po/{po.id}/send/")
+            self.assertEqual(len(mail.outbox), 1)
+            self.assertTrue(mail.outbox[0].attachments)
+            self.assertEqual(mail.outbox[0].attachments[0][2], "application/pdf")
+
+    def test_backorders_view(self):
+        from core.models import PurchaseOrder, PurchaseOrderLine
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-5", supplier=self.supplier, status=PurchaseOrder.Status.PARTIALLY_RECEIVED)
+        PurchaseOrderLine.objects.create(po=po, product=self.prod, ordered_qty=Decimal("10"), received_qty=Decimal("4"), unit_cost=Decimal("5.00"))
+        resp = self.client.get("/po/backorders/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context["rows"]), 1)
+        self.assertEqual(resp.context["rows"][0]["open_qty"], Decimal("6.00"))

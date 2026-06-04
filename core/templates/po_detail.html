@@ -28,6 +28,7 @@
     <a class="btn btn-outline-success" href="/po/{{ po.id }}/receive/?shipment_id={{ po.shipments.first.id }}">Receive</a>
   {% endif %}
   <a class="btn btn-outline-secondary" href="/po/{{ po.id }}/print/">Print</a>
+  <a class="btn btn-outline-secondary" href="{% url 'po_pdf' po.id %}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i> PDF</a>
 </div>
 
 <!-- Amend Modal -->

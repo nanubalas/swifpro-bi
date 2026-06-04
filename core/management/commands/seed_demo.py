@@ -223,11 +223,13 @@ class Command(BaseCommand):
             defaults={"supplier": globex, "currency_code": "GBP",
                       "status": PurchaseOrder.Status.SUBMITTED,
                       "expected_date": (timezone.now() + timezone.timedelta(days=10)).date(),
+                      "delivery_address": "Main Warehouse\nUnit 4, Innovation Park\nManchester M1 2AB",
                       "notes": "Demo purchase order."},
         )
         if po_created:
-            pol1 = PurchaseOrderLine.objects.create(po=po, product=p1, ordered_qty=Decimal("50"), unit_cost=Decimal("12.50"))
-            pol2 = PurchaseOrderLine.objects.create(po=po, product=p2, ordered_qty=Decimal("100"), unit_cost=Decimal("8.00"))
+            std_tx = TaxCode.objects.filter(tenant=tenant, code="STD").first()
+            pol1 = PurchaseOrderLine.objects.create(po=po, product=p1, ordered_qty=Decimal("50"), unit_cost=Decimal("12.50"), tax_code=std_tx)
+            pol2 = PurchaseOrderLine.objects.create(po=po, product=p2, ordered_qty=Decimal("100"), unit_cost=Decimal("8.00"), tax_code=std_tx)
             shipment = Shipment.objects.create(tenant=tenant, po=po, from_supplier=globex, destination=wh, carrier="DHL", tracking_number="DEMO123456", status=Shipment.Status.IN_TRANSIT)
             ShipmentLine.objects.create(shipment=shipment, po_line=pol1, expected_qty=Decimal("50"))
             ShipmentLine.objects.create(shipment=shipment, po_line=pol2, expected_qty=Decimal("100"))

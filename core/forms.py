@@ -48,13 +48,18 @@ class PurchaseOrderForm(TenantModelForm):
 
     class Meta:
         model = PurchaseOrder
-        fields = ["supplier", "expected_date", "notes"]
+        fields = ["supplier", "expected_date", "delivery_address", "notes"]
+        widgets = {
+            "expected_date": forms.DateInput(attrs={"type": "date"}),
+            "delivery_address": forms.Textarea(attrs={"rows": 2}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
 
 PurchaseOrderLineFormSet = inlineformset_factory(
     PurchaseOrder,
     PurchaseOrderLine,
     form=TenantModelForm,
-    fields=("product", "ordered_qty", "unit_cost"),
+    fields=("product", "ordered_qty", "unit_cost", "tax_code"),
     extra=1,
     can_delete=True
 )

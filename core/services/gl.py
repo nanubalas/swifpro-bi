@@ -137,6 +137,12 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
 
     inv.status = "POSTED"
     inv.save()
+
+    # Mark the source PO as Billed (unless it's already closed/cancelled).
+    po = getattr(inv, "po", None)
+    if po is not None and po.status not in ("CLOSED", "CANCELLED", "BILLED"):
+        po.status = "BILLED"
+        po.save(update_fields=["status"])
     return je
 
 

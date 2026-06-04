@@ -112,6 +112,34 @@ def po_print(request, po_id):
     })
 
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
+def po_pdf(request, po_id):
+    tenant = _get_default_tenant(request)
+    po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
+    from core.services.pdf import pdf_response
+    return pdf_response(f"purchase-order-{po.po_number}.pdf", "documents/po_pdf.html",
+                        {"tenant": tenant, "po": po, "doc_title": "PURCHASE ORDER",
+                         "number": po.po_number, "notes": po.notes}, download=False)
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])
+def po_backorders(request):
+    """Outstanding PO lines: ordered but not yet fully received (backorders)."""
+    tenant = _get_default_tenant(request)
+    rows = []
+    lines = (PurchaseOrderLine.objects
+             .filter(po__tenant=tenant, po__is_current=True)
+             .exclude(po__status__in=[PurchaseOrder.Status.CANCELLED, PurchaseOrder.Status.CLOSED, PurchaseOrder.Status.DRAFT])
+             .select_related("po", "po__supplier", "product"))
+    for l in lines:
+        if l.open_qty and l.open_qty > 0:
+            rows.append({"line": l, "po": l.po, "open_qty": l.open_qty})
+    rows.sort(key=lambda r: (r["po"].expected_date or timezone.localdate(), r["po"].po_number))
+    return render(request, "po/backorders.html", {"tenant": tenant, "rows": rows})
+
+
 
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT], [ROLE_ADMIN, ROLE_PROCUREMENT])
@@ -132,10 +160,16 @@ def po_send(request, po_id):
         return redirect("po_detail", po_id=po.id)
 
     subject = f"Purchase Order {po.po_number}"
-    # Lightweight: send HTML (print page) as email body. PDF export can be added later.
     html_body = render_to_string("po_email.html", {"tenant": tenant, "po": po})
     msg = EmailMessage(subject=subject, body=html_body, to=[supplier_email])
     msg.content_subtype = "html"
+    # Attach the PO as a PDF.
+    from core.services.pdf import render_to_pdf
+    pdf = render_to_pdf("documents/po_pdf.html", {
+        "tenant": tenant, "po": po, "doc_title": "PURCHASE ORDER",
+        "number": po.po_number, "notes": po.notes})
+    if pdf:
+        msg.attach(f"purchase-order-{po.po_number}.pdf", pdf, "application/pdf")
     try:
         msg.send(fail_silently=False)
     except Exception as e:

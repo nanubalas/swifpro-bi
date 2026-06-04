@@ -106,6 +106,7 @@ NAV = [
     ]),
     ("Procurement", [
         ("Purchase Orders", "/po/", "file-earmark-text", {ADMIN, MANAGER, PURCHASING}),
+        ("Backorders", "/po/backorders/", "hourglass-split", {ADMIN, MANAGER, PURCHASING}),
         ("Suppliers", "/suppliers/", "shop", {ADMIN, MANAGER, PURCHASING, ACCOUNTANT, FINANCE}),
         ("Shipments", "/shipments/", "truck", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Supplier Invoices", "/invoices/", "receipt-cutoff", {ADMIN, ACCOUNTANT, FINANCE}),

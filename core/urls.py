@@ -51,6 +51,8 @@ urlpatterns = [
     path("po/<int:po_id>/amend/", views.po_amend, name="po_amend"),
     path("po/<int:po_id>/cancel/", views.po_cancel, name="po_cancel"),
     path("po/<int:po_id>/print/", views.po_print, name="po_print"),
+    path("po/<int:po_id>/pdf/", views.po_pdf, name="po_pdf"),
+    path("po/backorders/", views.po_backorders, name="po_backorders"),
     path("po/<int:po_id>/receive/", views.receive_po, name="receive_po"),
 
     # Shipments

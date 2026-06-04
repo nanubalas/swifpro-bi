@@ -429,13 +429,15 @@ class PurchaseOrder(models.Model):
         SENT = "SENT", "Sent"
         IN_TRANSIT = "IN_TRANSIT", "In Transit"
         PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED", "Partially Received"
-        RECEIVED = "RECEIVED", "Received"
+        RECEIVED = "RECEIVED", "Fully Received"
+        BILLED = "BILLED", "Billed"
         CLOSED = "CLOSED", "Closed"
         CANCELLED = "CANCELLED", "Cancelled"
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     po_number = models.CharField(max_length=40)
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
+    delivery_address = models.TextField(blank=True, null=True)  # where goods should be delivered
     currency_code = models.CharField(max_length=3, default="GBP")  # defaults from supplier/tenant
     version = models.PositiveIntegerField(default=1)
     supersedes = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="amended_by")
@@ -458,6 +460,23 @@ class PurchaseOrder(models.Model):
     def __str__(self):
         return self.po_number
 
+    @property
+    def subtotal(self):
+        return sum((l.line_total for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def tax_total(self):
+        return sum((l.tax_amount for l in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def total(self):
+        return self.subtotal + self.tax_total
+
+    @property
+    def is_fully_received(self):
+        lines = list(self.lines.all())
+        return bool(lines) and all(l.open_qty <= 0 for l in lines)
+
 
 class PurchaseOrderLine(models.Model):
     po = models.ForeignKey(PurchaseOrder, related_name="lines", on_delete=models.CASCADE)
@@ -465,6 +484,7 @@ class PurchaseOrderLine(models.Model):
     ordered_qty = models.DecimalField(max_digits=12, decimal_places=2)
     received_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    tax_code = models.ForeignKey("TaxCode", on_delete=models.SET_NULL, null=True, blank=True, related_name="po_lines")
 
     class Meta:
         unique_together = ("po", "product")
@@ -476,6 +496,11 @@ class PurchaseOrderLine(models.Model):
     @property
     def line_total(self):
         return self.ordered_qty * self.unit_cost
+
+    @property
+    def tax_amount(self):
+        rate = self.tax_code.rate if self.tax_code else Decimal("0.00")
+        return self.line_total * rate
 
 
 
