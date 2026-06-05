@@ -26,6 +26,10 @@
           {{ form.type }}
           {% if form.type.errors %}<div class="text-danger small">{{ form.type.errors }}</div>{% endif %}
         </div>
+        <div class="col-md-4">
+          <label class="form-label">Site (optional)</label>
+          {{ form.site }}
+        </div>
         <div class="col-12">
           <label class="form-label">Address</label>
           {{ form.address }}

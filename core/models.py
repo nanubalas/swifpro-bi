@@ -234,6 +234,26 @@ class AuditLog(models.Model):
         return ""
 
 
+class Site(models.Model):
+    """A site / plant: an operational tier between the company and its
+    warehouses. A company can run several sites, each holding many locations.
+    Mirrors Epicor's Company -> Site -> Warehouse."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="sites")
+    name = models.CharField(max_length=200)
+    code = models.CharField(max_length=20, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    contact_person = models.CharField(max_length=200, blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ("tenant", "name")
+
+    def __str__(self):
+        return self.name
+
+
 class Location(models.Model):
     class Type(models.TextChoices):
         WAREHOUSE = "WAREHOUSE", "Warehouse"
@@ -248,6 +268,7 @@ class Location(models.Model):
         QUARANTINE = "QUARANTINE", "Quarantine"
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    site = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name="locations")
     name = models.CharField(max_length=200)
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.WAREHOUSE)
     address = models.TextField(blank=True, null=True)

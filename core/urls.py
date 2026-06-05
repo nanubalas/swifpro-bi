@@ -91,6 +91,10 @@ urlpatterns = [
     path("suppliers/<int:supplier_id>/edit/", views.supplier_edit, name="supplier_edit"),
     path("suppliers/<int:supplier_id>/delete/", views.supplier_delete, name="supplier_delete"),
 
+    path("sites/", views.site_list, name="site_list"),
+    path("sites/new/", views.site_create, name="site_create"),
+    path("sites/<int:site_id>/edit/", views.site_edit, name="site_edit"),
+    path("sites/<int:site_id>/delete/", views.site_delete, name="site_delete"),
     path("locations/", views.location_list, name="location_list"),
     path("locations/access/", views.location_access, name="location_access"),
     path("locations/new/", views.location_create, name="location_create"),
