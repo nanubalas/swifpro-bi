@@ -74,6 +74,7 @@ urlpatterns = [
 
     # Settings
     path("settings/tenant/", views.settings_tenant, name="settings_tenant"),
+    path("settings/group/", views.settings_group, name="settings_group"),
 
     # Master Data
     path("products/", views.product_list, name="product_list"),

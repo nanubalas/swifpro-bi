@@ -13,6 +13,16 @@ class SoftDeleteManager(models.Manager):
         return super().get_queryset().filter(is_deleted=False)
 
 
+class CompanyGroup(models.Model):
+    """A parent group that owns several companies (Tenants), enabling a group
+    switcher and consolidated (combined) reporting across its companies."""
+    name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return self.name
+
+
 class Tenant(models.Model):
     class BusinessType(models.TextChoices):
         LTD = "LTD", "Limited company"
@@ -20,6 +30,9 @@ class Tenant(models.Model):
         PARTNERSHIP = "PARTNERSHIP", "Partnership"
         CHARITY = "CHARITY", "Charity"
         FRANCHISE = "FRANCHISE", "Franchise"
+
+    # --- Group / parent (multi-company) ---
+    group = models.ForeignKey(CompanyGroup, on_delete=models.SET_NULL, null=True, blank=True, related_name="companies")
 
     # --- Identity ---
     name = models.CharField(max_length=255)                       # display / organisation name

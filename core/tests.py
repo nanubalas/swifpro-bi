@@ -194,6 +194,40 @@ class LocationProfileTests(TestCase):
         self.assertEqual(names, {"Live WH"})
 
 
+class CompanyGroupTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, CompanyGroup
+        self.grp = CompanyGroup.objects.create(name="Acme Holdings")
+        self.t1 = Tenant.objects.create(name="Acme UK", group=self.grp)
+        self.t2 = Tenant.objects.create(name="Acme EU", group=self.grp)
+        self.t3 = Tenant.objects.create(name="Other Co")  # no group
+        self.user = User.objects.create_user("grpu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t1, role="ADMIN", is_default=True)
+        OrgMembership.objects.create(user=self.user, tenant=self.t2, role="ADMIN")
+
+    def test_group_companies_limited_to_membership(self):
+        from core.access import group_companies
+        from core.models import Tenant
+        Tenant.objects.create(name="Acme US", group=self.grp)  # user not a member -> excluded
+        names = {t.name for t in group_companies(self.user, self.t1)}
+        self.assertEqual(names, {"Acme UK", "Acme EU"})
+
+    def test_no_group_returns_self(self):
+        from core.access import group_companies
+        self.assertEqual([t.name for t in group_companies(self.user, self.t3)], ["Other Co"])
+
+    def test_create_group_via_view(self):
+        self.client.login(username="grpu", password="pw")
+        resp = self.client.post("/settings/group/", {"op": "create", "name": "NewGroup"})
+        self.assertEqual(resp.status_code, 302)
+        self.t1.refresh_from_db()
+        self.assertEqual(self.t1.group.name, "NewGroup")
+
+    def test_group_page_renders(self):
+        self.client.login(username="grpu", password="pw")
+        self.assertEqual(self.client.get("/settings/group/").status_code, 200)
+
+
 class LocationAccessTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership, Location, InventoryBalance, Product

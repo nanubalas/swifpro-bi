@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Company Group - SwifPro BI{% endblock %}
+{% block body %}
+<div class="mb-4">
+  <h2 class="fw-bold mb-1">Company Group</h2>
+  <div class="text-muted">Link several companies under one group for a group switcher and consolidated reporting.</div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h5 class="fw-bold mb-3">Current group</h5>
+      {% if tenant.group %}
+        <p><strong>{{ tenant.name }}</strong> belongs to group <span class="badge text-bg-primary">{{ tenant.group.name }}</span></p>
+        <h6 class="fw-semibold mt-3">Companies you can see in this group</h6>
+        <ul class="mb-3">
+          {% for c in siblings %}<li>{{ c.name }}{% if c.id == tenant.id %} <span class="text-muted small">(current)</span>{% endif %}</li>{% endfor %}
+        </ul>
+        <form method="post" class="d-inline">{% csrf_token %}<input type="hidden" name="op" value="leave">
+          <button class="btn btn-outline-danger btn-sm" onclick="return confirm('Remove {{ tenant.name }} from its group?');">Leave group</button>
+        </form>
+      {% else %}
+        <p class="text-muted">{{ tenant.name }} is not part of a group yet.</p>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h5 class="fw-bold mb-3">{% if tenant.group %}Move to another group{% else %}Create or join a group{% endif %}</h5>
+      <form method="post" class="mb-4">{% csrf_token %}<input type="hidden" name="op" value="create">
+        <label class="form-label">New group name</label>
+        <div class="input-group">
+          <input class="form-control" name="name" placeholder="e.g. Acme Holdings">
+          <button class="btn btn-primary" type="submit">Create &amp; join</button>
+        </div>
+      </form>
+      {% if joinable %}
+      <form method="post">{% csrf_token %}<input type="hidden" name="op" value="join">
+        <label class="form-label">Join an existing group</label>
+        <div class="input-group">
+          <select class="form-select" name="group_id">
+            {% for g in joinable %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+          </select>
+          <button class="btn btn-outline-primary" type="submit">Join</button>
+        </div>
+      </form>
+      {% endif %}
+    </div></div>
+  </div>
+</div>
+{% endblock %}

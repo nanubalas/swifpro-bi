@@ -2936,6 +2936,57 @@ def settings_tenant(request):
         "form": form
     })
 
+
+@login_required
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+@transaction.atomic
+def settings_group(request):
+    """Manage the company group: create a group for this company, join an
+    existing group the admin already belongs to, or leave the group."""
+    from core.models import CompanyGroup, OrgMembership
+    from core.access import group_companies
+    tenant = _get_default_tenant(request)
+    if request.method == "POST":
+        op = request.POST.get("op")
+        if op == "create":
+            name = (request.POST.get("name") or "").strip()
+            if not name:
+                messages.error(request, "Enter a group name.")
+            else:
+                grp = CompanyGroup.objects.create(name=name)
+                tenant.group = grp
+                tenant.save(update_fields=["group"])
+                log_audit(action="GROUP_CHANGED", request=request, user=request.user, tenant=tenant,
+                          detail=f"Created group '{name}' and joined")
+                messages.success(request, f"Group '{name}' created and {tenant.name} joined.")
+        elif op == "join":
+            gid = request.POST.get("group_id")
+            grp = CompanyGroup.objects.filter(id=gid).first()
+            if grp:
+                tenant.group = grp
+                tenant.save(update_fields=["group"])
+                log_audit(action="GROUP_CHANGED", request=request, user=request.user, tenant=tenant,
+                          detail=f"Joined group '{grp.name}'")
+                messages.success(request, f"{tenant.name} joined group '{grp.name}'.")
+        elif op == "leave":
+            tenant.group = None
+            tenant.save(update_fields=["group"])
+            log_audit(action="GROUP_CHANGED", request=request, user=request.user, tenant=tenant, detail="Left group")
+            messages.success(request, f"{tenant.name} left its group.")
+        return redirect("settings_group")
+
+    # Existing groups the admin can join: groups containing a company they belong to.
+    my_tenant_ids = set(OrgMembership.objects.filter(user=request.user).values_list("tenant_id", flat=True))
+    from core.models import Tenant as _T
+    joinable = (CompanyGroup.objects
+                .filter(companies__id__in=my_tenant_ids).distinct().order_by("name"))
+    siblings = group_companies(request.user, tenant) if tenant.group_id else []
+    return render(request, "settings/company_group.html", {
+        "tenant": tenant, "joinable": [g for g in joinable if g.id != tenant.group_id],
+        "siblings": siblings,
+    })
+
+
 @login_required
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def uom_list(request):

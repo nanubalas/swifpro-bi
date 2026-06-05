@@ -96,6 +96,25 @@ def default_landing_url(tenant, role):
         return reverse(roles.DASHBOARD_ROUTE.get(role, "dashboard_admin"))
 
 
+def group_companies(user, tenant):
+    """Companies (Tenants) in the same group that this user is a member of,
+    including the current one. Used for the group switcher and consolidated
+    reporting. If the company has no group, just returns [tenant]."""
+    from core.models import Tenant, OrgMembership
+    if tenant is None:
+        return []
+    if not getattr(tenant, "group_id", None):
+        return [tenant]
+    member_ids = set(OrgMembership.objects.filter(user=user).values_list("tenant_id", flat=True))
+    if getattr(user, "is_superuser", False):
+        member_ids = None  # superuser sees all companies in the group
+    qs = Tenant.objects.filter(group_id=tenant.group_id).order_by("name")
+    companies = [t for t in qs if (member_ids is None or t.id in member_ids)]
+    if tenant not in companies:
+        companies.append(tenant)
+    return companies
+
+
 def accessible_location_ids(user, tenant):
     """The location IDs a user may see/use in a tenant, or None for 'all'.
 

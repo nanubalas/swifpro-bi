@@ -151,6 +151,7 @@ NAV = [
     ("Administration", [
         ("Setup & Onboarding", "/onboarding/", "rocket-takeoff", {ADMIN}),
         ("Company Profile", "/settings/tenant/", "building-gear", {ADMIN}),
+        ("Company Group", "/settings/group/", "diagram-2", {ADMIN}),
         ("Users & Roles", "/users/", "people-fill", {ADMIN}),
         ("Roles & Permissions", "/team/permissions/", "shield-check", {ADMIN}),
         ("Access Requests", "/access-requests/", "person-plus", {ADMIN}),
