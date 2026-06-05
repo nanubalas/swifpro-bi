@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Inter-company - SwifPro BI{% endblock %}
+{% block body %}
+<div class="mb-3">
+  <h2 class="fw-bold mb-1">Inter-company trading</h2>
+  <div class="text-muted">Sell from {{ tenant.name }} to another company in the group. Posts AR + revenue here and AP + cost there; eliminated on consolidation.</div>
+</div>
+
+{% if not group %}
+<div class="alert alert-info">This company isn't part of a group. <a href="{% url 'settings_group' %}">Set up a company group</a> to trade between companies.</div>
+{% elif not targets %}
+<div class="alert alert-info">No other companies you can access in this group yet.</div>
+{% else %}
+<div class="card mb-4"><div class="card-body">
+  <h5 class="fw-bold mb-3">New inter-company sale</h5>
+  <form method="post" class="row g-2 align-items-end">
+    {% csrf_token %}
+    <div class="col-md-4">
+      <label class="form-label mb-1">Sell to (company)</label>
+      <select class="form-select" name="to_tenant">
+        {% for c in targets %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3"><label class="form-label mb-1">Amount (net)</label><input class="form-control" name="amount" type="number" step="0.01" min="0"></div>
+    <div class="col-md-3"><label class="form-label mb-1">Description</label><input class="form-control" name="description" placeholder="e.g. management fee"></div>
+    <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Post sale</button></div>
+  </form>
+</div></div>
+{% endif %}
+
+<div class="card"><div class="card-body p-0">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr><th>Date</th><th>From</th><th>To</th><th>Description</th><th class="text-end">Amount</th><th>Invoice</th><th>Buyer bill</th></tr></thead>
+    <tbody>
+      {% for t in txns %}
+      <tr>
+        <td class="text-muted small">{{ t.created_at|date:'d M Y' }}</td>
+        <td>{{ t.from_tenant.name }}</td>
+        <td>{{ t.to_tenant.name }}</td>
+        <td class="small">{{ t.description|default:'' }}</td>
+        <td class="text-end fw-semibold">{{ t.amount|money:tenant.currency_code }}</td>
+        <td class="small">{% if t.customer_invoice %}{{ t.customer_invoice.invoice_number }}{% endif %}</td>
+        <td class="small text-muted">{% if t.expense %}expense #{{ t.expense.id }}{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="text-center text-muted py-5">No inter-company sales yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

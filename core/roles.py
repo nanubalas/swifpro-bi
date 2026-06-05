@@ -150,6 +150,7 @@ NAV = [
         ("Aged Creditors", "/reports/aged-payables/", "credit-card", {ADMIN, ACCOUNTANT, FINANCE, READONLY}),
         ("Profitability", "/sales/reports/profitability/", "percent", {ADMIN, ACCOUNTANT, MANAGER, FINANCE, READONLY}),
         ("Consolidated (Group)", "/reports/consolidated/", "diagram-2", {ADMIN, ACCOUNTANT, FINANCE, READONLY}),
+        ("Inter-company", "/intercompany/", "arrow-left-right", {ADMIN, ACCOUNTANT, FINANCE}),
     ]),
     ("Administration", [
         ("Setup & Onboarding", "/onboarding/", "rocket-takeoff", {ADMIN}),
