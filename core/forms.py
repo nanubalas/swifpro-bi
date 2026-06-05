@@ -8,7 +8,7 @@ from core.models import (
     CycleCount, CycleCountLine, InventoryLotBalance, InventoryReservation,
     PurchaseOrder, PurchaseOrderLine, Shipment,
     PurchaseRequisition, PurchaseRequisitionLine,
-    Product, Supplier, Location, Site, ChannelConnection,
+    Product, Supplier, Location, Site, Bin, ChannelConnection,
     SalesOrder, SalesOrderLine, Tenant,
     UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine, ProductBarcode, ProductCategory,
     StockAdjustment,
@@ -155,15 +155,19 @@ class ProductForm(TenantModelForm):
 class StockAdjustmentForm(TenantModelForm):
     class Meta:
         model = StockAdjustment
-        fields = ["product", "location", "reason", "supplier", "qty_delta", "notes"]
+        fields = ["product", "location", "bin", "reason", "supplier", "qty_delta", "notes"]
         help_texts = {
             "qty_delta": "Negative to remove stock (damage / loss / return to supplier); positive to add found stock.",
             "supplier": "For 'Return to supplier' only — raises a purchase credit note that reduces Accounts Payable.",
+            "bin": "Optional bin (must belong to the chosen location).",
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._limit_stock_locations("location")
+        self.fields["bin"].required = False
+        if "bin" in self.fields:
+            self.fields["bin"].queryset = self.fields["bin"].queryset.filter(is_active=True)
 
     def clean_qty_delta(self):
         qty = self.cleaned_data.get("qty_delta")
@@ -176,11 +180,15 @@ class StockAdjustmentForm(TenantModelForm):
         reason = cleaned.get("reason")
         supplier = cleaned.get("supplier")
         qty = cleaned.get("qty_delta")
+        bin_ = cleaned.get("bin")
+        location = cleaned.get("location")
         if reason == StockAdjustment.Reason.RETURN_SUPPLIER:
             if not supplier:
                 self.add_error("supplier", "Choose the supplier the goods are returned to.")
             if qty is not None and qty > 0:
                 self.add_error("qty_delta", "A return to supplier must remove stock (negative quantity).")
+        if bin_ and location and bin_.location_id != location.id:
+            self.add_error("bin", "Bin must belong to the chosen location.")
         return cleaned
 
 
@@ -221,6 +229,16 @@ class SiteForm(TenantModelForm):
         model = Site
         fields = ["name", "code", "address", "contact_person", "phone", "email", "is_active"]
         widgets = {"address": forms.Textarea(attrs={"rows": 2})}
+
+
+class BinForm(TenantModelForm):
+    class Meta:
+        model = Bin
+        fields = ["location", "code", "description", "is_active"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._limit_stock_locations("location")
 
 
 class LocationForm(TenantModelForm):

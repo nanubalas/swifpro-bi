@@ -41,7 +41,7 @@ def _consume_fifo_layers(tenant, product, qty, fallback_cost):
 @transaction.atomic
 def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_type, ref_id,
                    notes=None, lot_code=None, serial_number=None, expiry_date=None, unit_cost=None,
-                   user=None):
+                   user=None, bin=None):
     """Apply an inventory movement and maintain valuation.
 
     Inbound (qty_delta > 0) with a unit_cost updates the product's moving
@@ -120,6 +120,7 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
         tenant=tenant,
         product=product,
         location=location,
+        bin=bin,
         movement_type=movement_type,
         user=user,
         qty_delta=qty_delta,
