@@ -249,6 +249,51 @@ class CompanyGroupTests(TestCase):
         self.assertEqual(resp.context["company_count"], 2)
 
 
+class InterCompanyTradingTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, CompanyGroup
+        self.grp = CompanyGroup.objects.create(name="Holdings")
+        self.a = Tenant.objects.create(name="Company A", group=self.grp)
+        self.b = Tenant.objects.create(name="Company B", group=self.grp)
+        self.user = User.objects.create_user("icu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.a, role="ADMIN", is_default=True)
+        OrgMembership.objects.create(user=self.user, tenant=self.b, role="ADMIN")
+
+    def _bal(self, tenant, code):
+        from core.models import GLAccount, JournalLine
+        from django.db.models import Sum
+        acc = GLAccount.objects.get(tenant=tenant, code=code)
+        agg = JournalLine.objects.filter(account=acc).aggregate(d=Sum("debit"), c=Sum("credit"))
+        return (agg["d"] or Decimal("0")) - (agg["c"] or Decimal("0"))
+
+    def test_sale_posts_ar_in_seller_and_ap_in_buyer(self):
+        from core.services.intercompany import create_intercompany_sale
+        ict = create_intercompany_sale(self.a, self.b, Decimal("500"), "Mgmt fee", user=self.user)
+        self.assertEqual(self._bal(self.a, "1100"), Decimal("500.00"))   # AR in A
+        self.assertEqual(self._bal(self.a, "4000"), Decimal("-500.00"))  # sales in A
+        self.assertTrue(ict.customer_invoice.is_intercompany)
+        self.assertEqual(self._bal(self.b, "6000"), Decimal("500.00"))   # expense in B
+        self.assertEqual(self._bal(self.b, "2000"), Decimal("-500.00"))  # AP in B
+        self.assertTrue(ict.expense.is_intercompany)
+
+    def test_consolidation_eliminates_intragroup(self):
+        from core.services.intercompany import create_intercompany_sale
+        from core.services import reports
+        create_intercompany_sale(self.a, self.b, Decimal("500"), "fee", user=self.user)
+        data = reports.consolidated([self.a, self.b])
+        self.assertEqual(data["totals"]["eliminations"], Decimal("500.00"))
+        self.assertEqual(data["totals"]["revenue"] - data["totals"]["net_revenue"], Decimal("500.00"))
+
+    def test_create_via_view_and_validation(self):
+        from core.models import InterCompanyTransaction
+        self.client.login(username="icu", password="pw")
+        resp = self.client.post("/intercompany/", {"to_tenant": self.b.id, "amount": "250", "description": "svc"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(InterCompanyTransaction.objects.filter(from_tenant=self.a, to_tenant=self.b).count(), 1)
+        self.client.post("/intercompany/", {"to_tenant": self.b.id, "amount": "0"})  # rejected
+        self.assertEqual(InterCompanyTransaction.objects.count(), 1)
+
+
 class SiteTierTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership

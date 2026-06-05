@@ -399,4 +399,15 @@ def consolidated(companies, date_from=None, date_to=None, as_of=None):
         rows.append(row)
         for k in tot:
             tot[k] += row[k]
+
+    # Inter-company eliminations: sales/purchases purely between the companies in
+    # scope are intra-group and shouldn't inflate consolidated figures.
+    from core.models import InterCompanyTransaction
+    ids = [t.id for t in companies]
+    elim = (InterCompanyTransaction.objects
+            .filter(from_tenant_id__in=ids, to_tenant_id__in=ids)
+            .aggregate(s=Sum("amount"))["s"] or ZERO)
+    tot["eliminations"] = elim
+    tot["net_revenue"] = tot["revenue"] - elim
+    tot["net_expenses"] = tot["expenses"] - elim
     return {"rows": rows, "totals": tot}

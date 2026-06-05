@@ -4826,6 +4826,47 @@ def consolidated_reports(request):
     })
 
 
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def intercompany_list(request):
+    """List and raise inter-company sales between companies in the group."""
+    from core.access import group_companies
+    from core.models import InterCompanyTransaction
+    from core.services.intercompany import create_intercompany_sale
+    tenant = _get_default_tenant(request)
+    companies = group_companies(request.user, tenant)
+    targets = [c for c in companies if c.id != tenant.id]
+
+    if request.method == "POST":
+        if not tenant.group_id:
+            messages.error(request, "Set up a company group first.")
+            return redirect("intercompany_list")
+        to_id = request.POST.get("to_tenant")
+        target = next((c for c in targets if str(c.id) == str(to_id)), None)
+        amount = request.POST.get("amount") or "0"
+        desc = (request.POST.get("description") or "").strip()
+        try:
+            from decimal import Decimal as _D
+            if target is None:
+                raise ValueError("Choose a company in your group to sell to.")
+            ict = create_intercompany_sale(tenant, target, _D(amount), desc, user=request.user)
+            log_audit(action="INTERCOMPANY_SALE", request=request, user=request.user, tenant=tenant,
+                      entity_type="InterCompanyTransaction", entity_id=ict.id,
+                      detail=f"{tenant.name} -> {target.name} {ict.amount}")
+            messages.success(request, f"Inter-company sale to {target.name} posted ({ict.amount}).")
+        except (ValueError, InvalidOperation) as e:
+            messages.error(request, str(e) or "Invalid amount.")
+        return redirect("intercompany_list")
+
+    company_ids = [c.id for c in companies]
+    txns = (InterCompanyTransaction.objects
+            .filter(from_tenant_id__in=company_ids)
+            .select_related("from_tenant", "to_tenant", "customer_invoice", "expense")
+            .order_by("-created_at")[:100])
+    return render(request, "reports/intercompany.html", {
+        "tenant": tenant, "targets": targets, "txns": txns, "group": getattr(tenant, "group", None)})
+
+
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def report_cash_flow(request):
     tenant = _get_default_tenant(request)

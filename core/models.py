@@ -23,6 +23,24 @@ class CompanyGroup(models.Model):
         return self.name
 
 
+class InterCompanyTransaction(models.Model):
+    """A sale from one group company to another: posts AR + revenue in the seller
+    and AP + cost in the buyer, linked so consolidation can eliminate the
+    intra-group amounts."""
+    group = models.ForeignKey(CompanyGroup, on_delete=models.CASCADE, related_name="ic_transactions")
+    from_tenant = models.ForeignKey("Tenant", on_delete=models.CASCADE, related_name="ic_sales")
+    to_tenant = models.ForeignKey("Tenant", on_delete=models.CASCADE, related_name="ic_purchases")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    description = models.CharField(max_length=255, blank=True, null=True)
+    customer_invoice = models.ForeignKey("CustomerInvoice", on_delete=models.SET_NULL, null=True, blank=True, related_name="ic_links")
+    expense = models.ForeignKey("Expense", on_delete=models.SET_NULL, null=True, blank=True, related_name="ic_links")
+    created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"{self.from_tenant} -> {self.to_tenant} {self.amount}"
+
+
 class Tenant(models.Model):
     class BusinessType(models.TextChoices):
         LTD = "LTD", "Limited company"
@@ -1546,6 +1564,8 @@ class CustomerInvoice(models.Model):
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(blank=True, null=True)
     deleted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="deleted_invoices")
+    # Set for sales to another company in the same group (eliminated on consolidation).
+    is_intercompany = models.BooleanField(default=False)
 
     objects = SoftDeleteManager()
     all_objects = models.Manager()
@@ -1796,6 +1816,8 @@ class Expense(models.Model):
     reference = models.CharField(max_length=100, blank=True, null=True)
     receipt = models.FileField(upload_to=expense_receipt_path, blank=True, null=True)  # image/PDF
     currency_code = models.CharField(max_length=3, default="GBP")
+    # Set for purchases from another company in the same group (eliminated on consolidation).
+    is_intercompany = models.BooleanField(default=False)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     created_at = models.DateTimeField(default=timezone.now)
     submitted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="submitted_expenses")

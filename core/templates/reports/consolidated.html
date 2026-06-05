@@ -28,14 +28,33 @@
         </tr>
         {% endfor %}
       </tbody>
-      <tfoot class="table-light"><tr class="fw-bold">
-        <td>Group total</td>
-        <td class="text-end">{{ data.totals.revenue|money:tenant.currency_code }}</td>
-        <td class="text-end">{{ data.totals.cogs|money:tenant.currency_code }}</td>
-        <td class="text-end">{{ data.totals.gross|money:tenant.currency_code }}</td>
-        <td class="text-end">{{ data.totals.expenses|money:tenant.currency_code }}</td>
-        <td class="text-end {% if data.totals.net < 0 %}text-danger{% endif %}">{{ data.totals.net|money:tenant.currency_code }}</td>
-      </tr></tfoot>
+      <tfoot class="table-light">
+        <tr class="fw-bold">
+          <td>Group total (gross)</td>
+          <td class="text-end">{{ data.totals.revenue|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ data.totals.cogs|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ data.totals.gross|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ data.totals.expenses|money:tenant.currency_code }}</td>
+          <td class="text-end {% if data.totals.net < 0 %}text-danger{% endif %}">{{ data.totals.net|money:tenant.currency_code }}</td>
+        </tr>
+        {% if data.totals.eliminations %}
+        <tr class="text-muted">
+          <td>Less inter-company eliminations</td>
+          <td class="text-end">({{ data.totals.eliminations|money:tenant.currency_code }})</td>
+          <td></td><td></td>
+          <td class="text-end">({{ data.totals.eliminations|money:tenant.currency_code }})</td>
+          <td></td>
+        </tr>
+        <tr class="fw-bold">
+          <td>Consolidated (net of intra-group)</td>
+          <td class="text-end">{{ data.totals.net_revenue|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ data.totals.cogs|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ data.totals.gross|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ data.totals.net_expenses|money:tenant.currency_code }}</td>
+          <td class="text-end {% if data.totals.net < 0 %}text-danger{% endif %}">{{ data.totals.net|money:tenant.currency_code }}</td>
+        </tr>
+        {% endif %}
+      </tfoot>
     </table>
   </div>
 </div></div>

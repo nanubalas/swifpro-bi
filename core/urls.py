@@ -291,4 +291,5 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("reports/stock-valuation/", views.report_stock_valuation, name="report_stock_valuation"),
     path("reports/inventory-analytics/", views.report_inventory_analytics, name="report_inventory_analytics"),
     path("reports/consolidated/", views.consolidated_reports, name="consolidated_reports"),
+    path("intercompany/", views.intercompany_list, name="intercompany_list"),
 ]
