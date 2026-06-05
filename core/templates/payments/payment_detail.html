@@ -7,7 +7,20 @@
   <h2 class="fw-bold mb-0">{{ payment.get_direction_display }}</h2>
   <span class="badge text-bg-secondary">{{ payment.get_status_display }}</span>
   {% if payment.is_reconciled %}<span class="badge text-bg-info">Cleared</span>{% endif %}
+  {% if perms_can_delete %}
+  <button class="btn btn-outline-danger btn-sm ms-auto" data-bs-toggle="modal" data-bs-target="#delPayModal"><i class="bi bi-trash me-1"></i> Delete</button>
+  {% endif %}
 </div>
+
+{% if perms_can_delete %}
+<div class="modal fade" id="delPayModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form method="post" action="{% url 'payment_delete' payment.id %}">{% csrf_token %}
+    <div class="modal-header"><h5 class="modal-title">Delete payment</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">This reverses the payment's ledger entry and re-opens any invoices it settled. The record is kept (soft-deleted) for the audit trail. Continue?</div>
+    <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-danger" type="submit">Delete payment</button></div>
+  </form>
+</div></div></div>
+{% endif %}
 
 <div class="row g-4">
   <div class="col-lg-5">

@@ -391,6 +391,28 @@ def post_stock_adjustment(adj, value, user=None, entry_date=None):
 
 
 @transaction.atomic
+def reverse_payment(payment, user=None):
+    """Post a reversing journal entry for a payment (used when a payment is
+    deleted). Mirrors the original PAYMENT entry with debit/credit swapped, so
+    the bank/AR/AP effect is backed out and the ledger stays balanced."""
+    orig = (JournalEntry.objects
+            .filter(tenant=payment.tenant, ref_type="PAYMENT", ref_id=str(payment.id))
+            .order_by("-id").first())
+    if orig is None:
+        return None
+    je = JournalEntry.objects.create(
+        tenant=payment.tenant, entry_date=timezone.now().date(),
+        ref_type="PAYMENT_REVERSAL", ref_id=str(payment.id),
+        memo=f"Reversal of payment {payment.id}", posted_by=user, posted_at=timezone.now(),
+    )
+    for l in orig.lines.all():
+        JournalLine.objects.create(entry=je, account=l.account,
+                                   description=f"Reversal: {l.description or ''}".strip(),
+                                   debit=l.credit, credit=l.debit)
+    return je
+
+
+@transaction.atomic
 def post_cogs(tenant, value, ref_id, user=None, entry_date=None):
     """Expense cost of goods sold: DR COGS / CR Inventory."""
     value = Decimal(value)

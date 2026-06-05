@@ -5,6 +5,14 @@ from decimal import Decimal
 from core.roles import ROLE_CHOICES
 
 
+class SoftDeleteManager(models.Manager):
+    """Default manager that hides soft-deleted rows. Sensitive records are never
+    hard-deleted; they are flagged is_deleted=True (and stay queryable via
+    `all_objects`) so the audit trail and ledger remain intact."""
+    def get_queryset(self):
+        return super().get_queryset().filter(is_deleted=False)
+
+
 class Tenant(models.Model):
     class BusinessType(models.TextChoices):
         LTD = "LTD", "Limited company"
@@ -1459,6 +1467,13 @@ class CustomerInvoice(models.Model):
     # Conversion traceability (set when generated from a quote / order).
     source_quote = models.ForeignKey("SalesQuote", on_delete=models.SET_NULL, null=True, blank=True, related_name="invoices")
     source_order = models.ForeignKey("CustomerOrder", on_delete=models.SET_NULL, null=True, blank=True, related_name="invoices")
+    # Soft delete (sensitive record): flagged rather than removed.
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(blank=True, null=True)
+    deleted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="deleted_invoices")
+
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
 
     class Meta:
         unique_together = ("tenant", "invoice_number")
@@ -1633,6 +1648,13 @@ class Payment(models.Model):
     reconciled_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(default=timezone.now)
+    # Soft delete (sensitive record): flagged rather than removed.
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(blank=True, null=True)
+    deleted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="deleted_payments")
+
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
 
     def __str__(self):
         party = self.customer or self.supplier

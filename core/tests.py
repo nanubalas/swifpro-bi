@@ -435,6 +435,79 @@ class AuditTrailPhase3Tests(TestCase):
         self.assertTrue(self.client.login(username="auadmin", password="Str0ng-Pass-99"))
 
 
+class AuditSoftDeleteTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, GLAccount
+        self.tenant = Tenant.objects.create(name="SoftDel Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.admin = User.objects.create_user("sdadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="sdadmin", password="pw")
+
+    def _issued_invoice(self, number, net="200"):
+        from core.models import CustomerInvoice, CustomerInvoiceLine, Customer
+        from core.services.gl import post_customer_invoice
+        cust = Customer.objects.create(tenant=self.tenant, name=f"C-{number}")
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=cust, invoice_number=number)
+        CustomerInvoiceLine.objects.create(invoice=inv, description="X", qty=Decimal("1"),
+                                           unit_price=Decimal(net), tax_code=self.std)
+        post_customer_invoice(inv)
+        return inv
+
+    def test_product_cost_change_audited(self):
+        from core.models import Product, AuditLog
+        p = Product.objects.create(tenant=self.tenant, sku="PC1", name="W", standard_cost=Decimal("5.00"))
+        resp = self.client.post(f"/products/{p.id}/edit/", {
+            "sku": "PC1", "name": "W", "product_type": "STOCK", "uom": "each",
+            "cost_method": "AVERAGE", "standard_cost": "8.50", "sales_price": "0", "reorder_level": "0",
+        })
+        self.assertEqual(resp.status_code, 302)
+        log = AuditLog.objects.get(action="PRODUCT_COST_CHANGED")
+        self.assertEqual(log.entity_id, "PC1")
+        self.assertEqual(log.old_value, "5.00")
+        self.assertEqual(log.new_value, "8.50")
+
+    def test_draft_invoice_soft_delete(self):
+        from core.models import CustomerInvoice, Customer, AuditLog
+        cust = Customer.objects.create(tenant=self.tenant, name="Draft Co")
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=cust, invoice_number="INV-D1")
+        resp = self.client.post(f"/ar/invoices/{inv.id}/delete/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(CustomerInvoice.objects.filter(id=inv.id).exists())          # hidden
+        self.assertTrue(CustomerInvoice.all_objects.filter(id=inv.id, is_deleted=True).exists())  # kept
+        self.assertTrue(AuditLog.objects.filter(action="INVOICE_DELETED").exists())
+
+    def test_posted_invoice_cannot_be_deleted(self):
+        from core.models import CustomerInvoice
+        inv = self._issued_invoice("INV-P1")
+        self.client.post(f"/ar/invoices/{inv.id}/delete/")
+        self.assertTrue(CustomerInvoice.objects.filter(id=inv.id).exists())  # still there, not deleted
+
+    def test_payment_soft_delete_reverses_gl_and_reopens_invoice(self):
+        from core.models import CustomerInvoice, Payment, PaymentAllocation, JournalEntry, AuditLog
+        from core.services.gl import post_payment
+        inv = self._issued_invoice("INV-PAY")  # total 240
+        pay = Payment.objects.create(tenant=self.tenant, customer=inv.customer,
+                                     direction=Payment.Direction.RECEIPT, amount=Decimal("240"),
+                                     payment_date="2026-06-01")
+        PaymentAllocation.objects.create(payment=pay, customer_invoice=inv, amount=Decimal("240"))
+        post_payment(pay)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, CustomerInvoice.Status.PAID)
+
+        resp = self.client.post(f"/payments/{pay.id}/delete/")
+        self.assertEqual(resp.status_code, 302)
+        # payment hidden but retained
+        self.assertFalse(Payment.objects.filter(id=pay.id).exists())
+        self.assertTrue(Payment.all_objects.filter(id=pay.id, is_deleted=True).exists())
+        # reversing JE posted + invoice re-opened with full outstanding
+        self.assertTrue(JournalEntry.objects.filter(tenant=self.tenant, ref_type="PAYMENT_REVERSAL", ref_id=str(pay.id)).exists())
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, CustomerInvoice.Status.SENT)
+        self.assertEqual(inv.outstanding, Decimal("240.00"))
+        self.assertTrue(AuditLog.objects.filter(action="PAYMENT_DELETED").exists())
+
+
 class AuditLogStructuredTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership
