@@ -74,6 +74,18 @@ def _get_default_tenant(request=None):
     return get_active_tenant(request)
 
 
+def _scope_location_fields(form, request, tenant, *field_names):
+    """Narrow a form's location dropdown(s) to the locations this user may use."""
+    from core.access import accessible_location_ids
+    allowed = accessible_location_ids(getattr(request, "user", None), tenant)
+    if allowed is None:
+        return
+    for name in field_names:
+        field = form.fields.get(name)
+        if field is not None and getattr(field, "queryset", None) is not None:
+            field.queryset = field.queryset.filter(id__in=allowed)
+
+
 def _generate_po_number():
     return "PO-" + timezone.now().strftime("%Y%m%d-%H%M%S-%f")
 
@@ -1925,6 +1937,7 @@ def receive_po(request, po_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_PROCUREMENT, ROLE_FINANCE, ROLE_READONLY])
 def inventory_list(request):
+    from core.access import accessible_location_ids
     tenant = _get_default_tenant(request)
     balances = (
         InventoryBalance.objects
@@ -1932,7 +1945,20 @@ def inventory_list(request):
         .select_related("product", "location")
         .order_by("product__sku", "location__name")
     )
-    return render(request, "inventory_list.html", {"tenant": tenant, "balances": balances})
+    # Restrict to the locations this user may see.
+    allowed = accessible_location_ids(request.user, tenant)
+    if allowed is not None:
+        balances = balances.filter(location_id__in=allowed)
+    # Optional location filter.
+    loc_id = request.GET.get("location") or ""
+    if loc_id:
+        balances = balances.filter(location_id=loc_id)
+    locations = Location.objects.filter(tenant=tenant)
+    if allowed is not None:
+        locations = locations.filter(id__in=allowed)
+    return render(request, "inventory_list.html", {
+        "tenant": tenant, "balances": balances,
+        "locations": locations.order_by("name"), "location": loc_id})
 
 
 # ============================
@@ -1992,6 +2018,7 @@ def adjustment_create(request):
     from core.forms import StockAdjustmentForm
     tenant = _get_default_tenant(request)
     form = StockAdjustmentForm(request.POST or None)
+    _scope_location_fields(form, request, tenant, "location")
     if request.method == "POST" and form.is_valid():
         adj = form.save(commit=False)
         adj.tenant = tenant
@@ -2145,7 +2172,12 @@ def stock_movements(request):
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
 
+    from core.access import accessible_location_ids
+    allowed = accessible_location_ids(request.user, tenant)
+
     qs = InventoryMovement.objects.filter(tenant=tenant).select_related("product", "location", "user")
+    if allowed is not None:
+        qs = qs.filter(location_id__in=allowed)
     if product_id:
         qs = qs.filter(product_id=product_id)
     if location_id:
@@ -2158,12 +2190,16 @@ def stock_movements(request):
         qs = qs.filter(created_at__date__lte=date_to)
     movements = qs.order_by("-created_at", "-id")[:300]
 
+    loc_choices = Location.objects.filter(tenant=tenant)
+    if allowed is not None:
+        loc_choices = loc_choices.filter(id__in=allowed)
+
     return render(request, "inventory/stock_movements.html", {
         "tenant": tenant, "movements": movements,
         "product": product_id, "location": location_id, "type": mtype,
         "date_from": date_from, "date_to": date_to,
         "products": Product.objects.filter(tenant=tenant).order_by("sku"),
-        "locations": Location.objects.filter(tenant=tenant).order_by("name"),
+        "locations": loc_choices.order_by("name"),
         "type_choices": InventoryMovement.MovementType.choices,
         "filtered": bool(product_id or location_id or mtype or date_from or date_to),
     })
@@ -2622,6 +2658,45 @@ def location_delete(request, location_id):
         return redirect("location_list")
     return render(request, "locations/location_delete.html", {"tenant": tenant, "location": obj})
 
+
+@login_required
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+@transaction.atomic
+def location_access(request):
+    """Admin matrix to grant users access to specific locations. A user with no
+    ticks sees all locations (open by default); ticking any narrows them."""
+    from core.models import OrgMembership, UserLocationAccess
+    tenant = _get_default_tenant(request)
+    members = list(OrgMembership.objects.filter(tenant=tenant).select_related("user").order_by("user__username"))
+    locations = list(Location.objects.filter(tenant=tenant).order_by("name"))
+
+    if request.method == "POST":
+        UserLocationAccess.objects.filter(tenant=tenant).delete()
+        bulk = []
+        for m in members:
+            for loc in locations:
+                if request.POST.get(f"grant_{m.user_id}_{loc.id}"):
+                    bulk.append(UserLocationAccess(tenant=tenant, user=m.user, location=loc))
+        if bulk:
+            UserLocationAccess.objects.bulk_create(bulk)
+        log_audit(action="LOCATION_ACCESS_CHANGED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{len(bulk)} grant(s) across {len(members)} user(s)")
+        messages.success(request, "Location access updated.")
+        return redirect("location_access")
+
+    granted = set(UserLocationAccess.objects.filter(tenant=tenant).values_list("user_id", "location_id"))
+    rows = []
+    for m in members:
+        is_admin = (m.role == roles_mod.ADMIN)
+        rows.append({
+            "user": m.user, "role": m.role, "is_admin": is_admin,
+            "cells": [{"loc": loc, "checked": (m.user_id, loc.id) in granted} for loc in locations],
+            "unrestricted": is_admin or not any((m.user_id, loc.id) in granted for loc in locations),
+        })
+    return render(request, "locations/location_access.html", {
+        "tenant": tenant, "rows": rows, "locations": locations})
+
+
 @login_required
 @role_required([ROLE_ADMIN, ROLE_FINANCE])
 
@@ -3056,6 +3131,7 @@ def cycle_count_create(request):
         form = CycleCountForm(instance=cc)
         formset = CycleCountLineFormSet(instance=cc)
 
+    _scope_location_fields(form, request, tenant, "location")
     return render(request, "inventory/cycle_count_form.html", {
         "tenant": tenant, "form": form, "formset": formset
     })
@@ -3178,6 +3254,7 @@ def transfer_create(request):
         form = InventoryTransferForm(instance=transfer)
         formset = InventoryTransferLineFormSet(instance=transfer)
 
+    _scope_location_fields(form, request, tenant, "from_location", "to_location")
     return render(request, "transfers/transfer_form.html", {
         "tenant": tenant, "form": form, "formset": formset, "mode": "create"
     })
@@ -4589,17 +4666,21 @@ def report_aged_receivables(request):
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_PROCUREMENT, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def report_stock_valuation(request):
+    from core.access import accessible_location_ids
     tenant = _get_default_tenant(request)
-    data = reports_service.stock_valuation(tenant)
+    allowed = accessible_location_ids(request.user, tenant)
+    data = reports_service.stock_valuation(tenant, location_ids=allowed)
     return render(request, "reports/stock_valuation.html", {"tenant": tenant, "data": data})
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_PROCUREMENT, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def report_inventory_analytics(request):
     """Inventory valuation depth (per location / lot) + turnover KPIs."""
+    from core.access import accessible_location_ids
     tenant = _get_default_tenant(request)
     date_from, date_to = _sales_period(request, tenant)
-    data = reports_service.inventory_analytics(tenant, date_from, date_to)
+    allowed = accessible_location_ids(request.user, tenant)
+    data = reports_service.inventory_analytics(tenant, date_from, date_to, location_ids=allowed)
     return render(request, "reports/inventory_analytics.html", {
         "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to})
 

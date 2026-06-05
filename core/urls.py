@@ -91,6 +91,7 @@ urlpatterns = [
     path("suppliers/<int:supplier_id>/delete/", views.supplier_delete, name="supplier_delete"),
 
     path("locations/", views.location_list, name="location_list"),
+    path("locations/access/", views.location_access, name="location_access"),
     path("locations/new/", views.location_create, name="location_create"),
     path("locations/<int:location_id>/edit/", views.location_edit, name="location_edit"),
     path("locations/<int:location_id>/delete/", views.location_delete, name="location_delete"),

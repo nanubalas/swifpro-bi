@@ -1,18 +1,36 @@
 {% extends "base.html" %}
+{% block title %}Inventory Balances - SwifPro BI{% endblock %}
 {% block body %}
-<h2>Inventory Balances</h2>
-<table class="table table-hover bg-white">
-  <tr><th>SKU</th><th>Product</th><th>Location</th><th>On hand</th><th>Reserved</th></tr>
-  {% for b in balances %}
-    <tr>
-      <td>{{ b.product.sku }}</td>
-      <td>{{ b.product.name }}</td>
-      <td>{{ b.location.name }}</td>
-      <td>{{ b.on_hand }}</td>
-      <td>{{ b.reserved }}</td>
-    </tr>
-  {% empty %}
-    <tr><td colspan="5">No inventory yet. Receive a PO or sync a channel.</td></tr>
-  {% endfor %}
-</table>
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h2 class="fw-bold mb-0">Inventory Balances</h2>
+  <form method="get" class="d-flex align-items-end gap-2">
+    <div>
+      <label class="form-label mb-1 small">Location</label>
+      <select name="location" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All locations</option>
+        {% for l in locations %}<option value="{{ l.id }}" {% if location == l.id|stringformat:'s' %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <noscript><button class="btn btn-primary btn-sm">Filter</button></noscript>
+  </form>
+</div>
+
+<div class="card"><div class="card-body p-0">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr><th>SKU</th><th>Product</th><th>Location</th><th class="text-end">On hand</th><th class="text-end">Reserved</th></tr></thead>
+    <tbody>
+      {% for b in balances %}
+        <tr>
+          <td>{{ b.product.sku }}</td>
+          <td>{{ b.product.name }}</td>
+          <td>{{ b.location.name }}</td>
+          <td class="text-end">{{ b.on_hand }}</td>
+          <td class="text-end">{{ b.reserved }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-center text-muted py-4">No inventory for the selected location.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
 {% endblock %}

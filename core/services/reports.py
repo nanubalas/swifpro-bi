@@ -201,12 +201,17 @@ def aged_receivables(tenant, as_of=None):
     return _aged(items, as_of)
 
 
-def stock_valuation(tenant):
-    """On-hand quantity x moving-average cost, per product, with a grand total."""
+def stock_valuation(tenant, location_ids=None):
+    """On-hand quantity x moving-average cost, per product, with a grand total.
+
+    When `location_ids` is given, only those locations are valued (used to scope
+    the report to the locations a user may access)."""
     rows = []
     total = ZERO
     balances = (InventoryBalance.objects.filter(tenant=tenant)
                 .select_related("product").order_by("product__sku"))
+    if location_ids is not None:
+        balances = balances.filter(location_id__in=location_ids)
     by_product = {}
     for b in balances:
         p = b.product
@@ -232,7 +237,7 @@ def stock_valuation(tenant):
     return {"rows": rows, "total": total}
 
 
-def inventory_analytics(tenant, date_from, date_to):
+def inventory_analytics(tenant, date_from, date_to, location_ids=None):
     """Inventory valuation depth + turnover KPIs for the period.
 
     - current_value: total stock value (per stock_valuation).
@@ -241,14 +246,19 @@ def inventory_analytics(tenant, date_from, date_to):
     - cogs: cost of goods sold posted in the period (GL account 5000).
     - turnover: annualised COGS / current stock value.
     - days_inventory: days to deplete current stock at the period's COGS run-rate.
-    """
+
+    `location_ids` scopes valuation/lot detail to the given locations (used to
+    honour a user's per-location access)."""
     from core.models import InventoryLotBalance
-    val = stock_valuation(tenant)
+    val = stock_valuation(tenant, location_ids=location_ids)
     current_value = val["total"]
 
     # Value on hand per location (at moving-average / standard cost).
     loc_map = {}
-    for b in (InventoryBalance.objects.filter(tenant=tenant).select_related("product", "location")):
+    bal_qs = InventoryBalance.objects.filter(tenant=tenant).select_related("product", "location")
+    if location_ids is not None:
+        bal_qs = bal_qs.filter(location_id__in=location_ids)
+    for b in bal_qs:
         if not b.on_hand:
             continue
         cost = b.product.average_cost or b.product.standard_cost or ZERO
@@ -261,8 +271,11 @@ def inventory_analytics(tenant, date_from, date_to):
 
     # Lot / serial / expiry detail.
     lots = []
-    for lb in (InventoryLotBalance.objects.filter(tenant=tenant, on_hand__gt=0)
-               .select_related("product", "location").order_by("expiry_date", "product__sku")):
+    lot_qs = (InventoryLotBalance.objects.filter(tenant=tenant, on_hand__gt=0)
+              .select_related("product", "location").order_by("expiry_date", "product__sku"))
+    if location_ids is not None:
+        lot_qs = lot_qs.filter(location_id__in=location_ids)
+    for lb in lot_qs:
         cost = lb.product.average_cost or lb.product.standard_cost or ZERO
         lots.append({
             "product": lb.product, "location": lb.location, "lot": lb.lot_code,

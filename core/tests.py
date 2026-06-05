@@ -194,6 +194,57 @@ class LocationProfileTests(TestCase):
         self.assertEqual(names, {"Live WH"})
 
 
+class LocationAccessTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, Location, InventoryBalance, Product
+        self.tenant = Tenant.objects.create(name="Acc Co")
+        self.wh1 = Location.objects.create(tenant=self.tenant, name="WH1", type="WAREHOUSE")
+        self.wh2 = Location.objects.create(tenant=self.tenant, name="WH2", type="WAREHOUSE")
+        self.p = Product.objects.create(tenant=self.tenant, sku="A1", name="P")
+        InventoryBalance.objects.create(tenant=self.tenant, product=self.p, location=self.wh1, on_hand=Decimal("10"))
+        InventoryBalance.objects.create(tenant=self.tenant, product=self.p, location=self.wh2, on_hand=Decimal("5"))
+        self.admin = User.objects.create_user("accadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.wh = User.objects.create_user("accwh", password="pw")
+        OrgMembership.objects.create(user=self.wh, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+
+    def test_unrestricted_by_default(self):
+        from core.access import accessible_location_ids
+        self.assertIsNone(accessible_location_ids(self.wh, self.tenant))  # no grants -> all
+
+    def test_admin_always_unrestricted(self):
+        from core.access import accessible_location_ids
+        from core.models import UserLocationAccess
+        UserLocationAccess.objects.create(tenant=self.tenant, user=self.admin, location=self.wh1)
+        self.assertIsNone(accessible_location_ids(self.admin, self.tenant))  # admin -> all despite a grant
+
+    def test_grant_restricts_inventory_and_reports(self):
+        from core.models import UserLocationAccess
+        from core.services import reports
+        from core.access import accessible_location_ids
+        UserLocationAccess.objects.create(tenant=self.tenant, user=self.wh, location=self.wh1)
+        self.client.login(username="accwh", password="pw")
+        resp = self.client.get("/inventory/")
+        self.assertEqual(resp.status_code, 200)
+        locs = {b.location.name for b in resp.context["balances"]}
+        self.assertEqual(locs, {"WH1"})
+        allowed = accessible_location_ids(self.wh, self.tenant)
+        data = reports.stock_valuation(self.tenant, location_ids=allowed)
+        qty = sum(r["qty"] for r in data["rows"])
+        self.assertEqual(qty, Decimal("10"))
+
+    def test_access_matrix_admin_only_and_saves(self):
+        from core.models import UserLocationAccess
+        self.client.login(username="accwh", password="pw")
+        self.assertEqual(self.client.get("/locations/access/").status_code, 403)
+        self.client.login(username="accadmin", password="pw")
+        self.assertEqual(self.client.get("/locations/access/").status_code, 200)
+        resp = self.client.post("/locations/access/", {f"grant_{self.wh.id}_{self.wh1.id}": "on"})
+        self.assertEqual(resp.status_code, 302)
+        grants = set(UserLocationAccess.objects.filter(tenant=self.tenant, user=self.wh).values_list("location_id", flat=True))
+        self.assertEqual(grants, {self.wh1.id})
+
+
 class GLBalanceTests(TestCase):
     def test_supplier_invoice_journal_balances_with_vat(self):
         from core.models import (

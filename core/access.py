@@ -94,3 +94,31 @@ def default_landing_url(tenant, role):
         return reverse(name)
     except NoReverseMatch:
         return reverse(roles.DASHBOARD_ROUTE.get(role, "dashboard_admin"))
+
+
+def accessible_location_ids(user, tenant):
+    """The location IDs a user may see/use in a tenant, or None for 'all'.
+
+    Admins, superusers, and users with no explicit grants are unrestricted
+    (returns None). Otherwise returns the set of granted location IDs."""
+    from core.models import OrgMembership, UserLocationAccess
+    if tenant is None or user is None or not getattr(user, "is_authenticated", False):
+        return None
+    if getattr(user, "is_superuser", False):
+        return None
+    m = OrgMembership.objects.filter(user=user, tenant=tenant).first()
+    if m and m.role == roles.ADMIN:
+        return None
+    grants = set(UserLocationAccess.objects.filter(tenant=tenant, user=user)
+                 .values_list("location_id", flat=True))
+    return grants or None  # no grants -> unrestricted
+
+
+def accessible_locations(user, tenant):
+    """Location queryset the user may access (all active locations if unrestricted)."""
+    from core.models import Location
+    qs = Location.objects.filter(tenant=tenant)
+    ids = accessible_location_ids(user, tenant)
+    if ids is not None:
+        qs = qs.filter(id__in=ids)
+    return qs

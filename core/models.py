@@ -254,6 +254,17 @@ class Location(models.Model):
         return f"{self.tenant.name} - {self.name}"
 
 
+class UserLocationAccess(models.Model):
+    """Restricts a user to specific locations within a tenant. A user with NO
+    rows (or an Admin) sees all locations; adding rows narrows them to that set."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="location_grants")
+    user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="location_grants")
+    location = models.ForeignKey(Location, on_delete=models.CASCADE, related_name="user_grants")
+
+    class Meta:
+        unique_together = ("tenant", "user", "location")
+
+
 class Supplier(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
