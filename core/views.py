@@ -2267,9 +2267,17 @@ def product_edit(request, product_id):
     obj = get_object_or_404(Product, id=product_id, tenant=tenant)
 
     if request.method == "POST":
+        old_cost = obj.standard_cost
         form = ProductForm(request.POST, request.FILES, instance=obj)
         if form.is_valid():
-            form.save()
+            obj = form.save()
+            # Audit a change to the product's standard (cost) price.
+            new_cost = obj.standard_cost
+            if old_cost != new_cost:
+                log_audit(action="PRODUCT_COST_CHANGED", request=request, user=request.user, tenant=tenant,
+                          entity_type="Product", entity_id=obj.sku,
+                          old_value=old_cost, new_value=new_cost,
+                          detail=f"{obj.sku} standard cost {old_cost} -> {new_cost}")
             barcode = form.cleaned_data.get("barcode")
             if barcode:
                 ProductBarcode.objects.update_or_create(
@@ -3666,7 +3674,33 @@ def ar_invoice_create(request):
 def ar_invoice_detail(request, invoice_id):
     tenant = _get_default_tenant(request)
     inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
-    return render(request, "ar/ar_invoice_detail.html", {"tenant": tenant, "inv": inv})
+    can_delete = (inv.status == CustomerInvoice.Status.DRAFT and
+                  (bool({ROLE_FINANCE, ROLE_ADMIN} & effective_groups(request)) or request.user.is_superuser))
+    return render(request, "ar/ar_invoice_detail.html", {"tenant": tenant, "inv": inv, "perms_can_delete": can_delete})
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def ar_invoice_delete(request, invoice_id):
+    """Soft-delete a DRAFT customer invoice (sensitive record). Posted invoices
+    must be cancelled instead (they have a ledger entry), so deletion is blocked
+    for them. The row is flagged, not removed, and the action is audited."""
+    tenant = _get_default_tenant(request)
+    inv = get_object_or_404(CustomerInvoice, id=invoice_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("ar_invoice_detail", invoice_id=inv.id)
+    if inv.status != CustomerInvoice.Status.DRAFT:
+        messages.error(request, "Only draft invoices can be deleted. Cancel a posted invoice instead.")
+        return redirect("ar_invoice_detail", invoice_id=inv.id)
+    inv.is_deleted = True
+    inv.deleted_at = timezone.now()
+    inv.deleted_by = request.user
+    inv.save(update_fields=["is_deleted", "deleted_at", "deleted_by"])
+    log_audit(action="INVOICE_DELETED", request=request, user=request.user, tenant=tenant,
+              entity_type="CustomerInvoice", entity_id=inv.invoice_number,
+              detail=f"Draft invoice {inv.invoice_number} ({inv.customer.name})")
+    messages.success(request, f"Draft invoice {inv.invoice_number} deleted.")
+    return redirect("ar_invoice_list")
 
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
@@ -4957,9 +4991,46 @@ def payment_detail(request, payment_id):
     tenant = _get_default_tenant(request)
     payment = get_object_or_404(Payment, id=payment_id, tenant=tenant)
     allocations = payment.allocations.select_related("customer_invoice", "supplier_invoice").all()
+    can_delete = bool({ROLE_FINANCE, ROLE_ADMIN} & effective_groups(request)) or request.user.is_superuser
     return render(request, "payments/payment_detail.html", {
         "tenant": tenant, "payment": payment, "allocations": allocations,
+        "perms_can_delete": can_delete,
     })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@transaction.atomic
+def payment_delete(request, payment_id):
+    """Soft-delete a payment (sensitive record): reverse its ledger entry, free
+    the invoices it settled, flag it deleted, and audit it. The row survives for
+    the audit trail (visible via all_objects)."""
+    tenant = _get_default_tenant(request)
+    payment = get_object_or_404(Payment, id=payment_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("payment_detail", payment_id=payment.id)
+
+    # Re-open any customer invoices this payment had fully settled, then drop the
+    # allocations so their outstanding balances recompute.
+    for alloc in payment.allocations.select_related("customer_invoice").all():
+        inv = alloc.customer_invoice
+        if inv and inv.status == CustomerInvoice.Status.PAID:
+            inv.status = CustomerInvoice.Status.SENT
+            inv.save(update_fields=["status"])
+    payment.allocations.all().delete()
+
+    if payment.status == Payment.Status.POSTED:
+        from core.services.gl import reverse_payment
+        reverse_payment(payment, user=request.user)
+
+    payment.is_deleted = True
+    payment.deleted_at = timezone.now()
+    payment.deleted_by = request.user
+    payment.save(update_fields=["is_deleted", "deleted_at", "deleted_by"])
+    log_audit(action="PAYMENT_DELETED", request=request, user=request.user, tenant=tenant,
+              entity_type="Payment", entity_id=payment.id, old_value=payment.amount,
+              detail=f"{payment.get_direction_display()} {payment.amount} ({payment.party_name})")
+    messages.success(request, "Payment deleted and its ledger entry reversed.")
+    return redirect("payment_list")
 
 
 # ============================
