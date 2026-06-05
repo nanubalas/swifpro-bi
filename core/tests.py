@@ -227,6 +227,27 @@ class CompanyGroupTests(TestCase):
         self.client.login(username="grpu", password="pw")
         self.assertEqual(self.client.get("/settings/group/").status_code, 200)
 
+    def test_consolidated_sums_across_companies(self):
+        from core.services import reports
+        from core.services.gl import post_customer_invoice
+        from core.models import Customer, CustomerInvoice, CustomerInvoiceLine, TaxCode
+        for t, net in [(self.t1, "200"), (self.t2, "300")]:
+            std = TaxCode.objects.get(tenant=t, code="STD")
+            c = Customer.objects.create(tenant=t, name=f"C-{t.id}")
+            inv = CustomerInvoice.objects.create(tenant=t, customer=c, invoice_number=f"INV-{t.id}")
+            CustomerInvoiceLine.objects.create(invoice=inv, description="X", qty=Decimal("1"),
+                                               unit_price=Decimal(net), tax_code=std)
+            post_customer_invoice(inv)
+        data = reports.consolidated([self.t1, self.t2])
+        self.assertEqual(len(data["rows"]), 2)
+        self.assertEqual(data["totals"]["revenue"], Decimal("500.00"))
+
+    def test_consolidated_page_renders(self):
+        self.client.login(username="grpu", password="pw")
+        resp = self.client.get("/reports/consolidated/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["company_count"], 2)
+
 
 class LocationAccessTests(TestCase):
     def setUp(self):
