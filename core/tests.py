@@ -1415,6 +1415,87 @@ class ExpenseEntryCompletenessTests(TestCase):
         self.assertTrue(any(t["kind"] == "Expense" for t in resp.context["timeline"]))
 
 
+class ExpenseApprovalWorkflowTests(TestCase):
+    def setUp(self):
+        from core.models import GLAccount, OrgMembership
+        self.tenant = Tenant.objects.create(name="ExpW Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.rent = GLAccount.objects.get(tenant=self.tenant, code="6100")
+        self.staff = User.objects.create_user("staff", password="pw")
+        OrgMembership.objects.create(user=self.staff, tenant=self.tenant, role="SALES", is_default=True)
+        self.fin = User.objects.create_user("fin", password="pw")
+        OrgMembership.objects.create(user=self.fin, tenant=self.tenant, role="FINANCE", is_default=True)
+
+    def _data(self, **o):
+        d = {"expense_date": "2026-06-01", "payee": "Cafe", "category": self.rent.id,
+             "net_amount": "100.00", "tax_code": self.std.id, "method": "CARD", "action": "submit"}
+        d.update(o)
+        return d
+
+    def test_staff_submits_for_approval(self):
+        from core.models import Expense, JournalEntry
+        self.client.login(username="staff", password="pw")
+        resp = self.client.post("/expenses/new/", self._data())
+        self.assertEqual(resp.status_code, 302)
+        e = Expense.objects.get(tenant=self.tenant)
+        self.assertEqual(e.status, Expense.Status.SUBMITTED)
+        self.assertEqual(e.submitted_by, self.staff)
+        self.assertFalse(JournalEntry.objects.filter(tenant=self.tenant, ref_type="EXPENSE").exists())
+
+    def test_staff_cannot_approve(self):
+        from core.models import Expense
+        e = Expense.objects.create(tenant=self.tenant, expense_date="2026-06-01", payee="X",
+                                   category=self.rent, net_amount=Decimal("100"),
+                                   status=Expense.Status.SUBMITTED, submitted_by=self.staff)
+        self.client.login(username="staff", password="pw")
+        resp = self.client.post(f"/expenses/{e.id}/approve/")
+        self.assertEqual(resp.status_code, 403)
+        e.refresh_from_db()
+        self.assertEqual(e.status, Expense.Status.SUBMITTED)
+
+    def test_finance_approves_and_posts(self):
+        from core.models import Expense, JournalEntry
+        e = Expense.objects.create(tenant=self.tenant, expense_date="2026-06-01", payee="X",
+                                   category=self.rent, net_amount=Decimal("100"), tax_code=self.std,
+                                   status=Expense.Status.SUBMITTED, submitted_by=self.staff)
+        self.client.login(username="fin", password="pw")
+        resp = self.client.post(f"/expenses/{e.id}/approve/")
+        self.assertEqual(resp.status_code, 302)
+        e.refresh_from_db()
+        self.assertEqual(e.status, Expense.Status.POSTED)
+        self.assertEqual(e.approved_by, self.fin)
+        self.assertIsNotNone(e.approved_at)
+        self.assertTrue(JournalEntry.objects.filter(tenant=self.tenant, ref_type="EXPENSE", ref_id=str(e.id)).exists())
+
+    def test_finance_rejects(self):
+        from core.models import Expense, JournalEntry
+        e = Expense.objects.create(tenant=self.tenant, expense_date="2026-06-01", payee="X",
+                                   category=self.rent, net_amount=Decimal("100"),
+                                   status=Expense.Status.SUBMITTED, submitted_by=self.staff)
+        self.client.login(username="fin", password="pw")
+        self.client.post(f"/expenses/{e.id}/reject/", {"reason": "No receipt"})
+        e.refresh_from_db()
+        self.assertEqual(e.status, Expense.Status.REJECTED)
+        self.assertEqual(e.rejected_reason, "No receipt")
+        self.assertFalse(JournalEntry.objects.filter(tenant=self.tenant, ref_type="EXPENSE").exists())
+
+    def test_finance_direct_post_below_threshold(self):
+        from core.models import Expense
+        self.client.login(username="fin", password="pw")
+        self.client.post("/expenses/new/", self._data(action="post"))
+        e = Expense.objects.get(tenant=self.tenant)
+        self.assertEqual(e.status, Expense.Status.POSTED)
+
+    def test_threshold_forces_approval_even_for_finance(self):
+        from core.models import Expense
+        self.tenant.expense_approval_threshold = Decimal("50.00")
+        self.tenant.save()
+        self.client.login(username="fin", password="pw")
+        self.client.post("/expenses/new/", self._data(action="post", net_amount="100.00"))
+        e = Expense.objects.get(tenant=self.tenant)
+        self.assertEqual(e.status, Expense.Status.SUBMITTED)  # 120 total >= 50 -> needs approval
+
+
 class BankTransactionTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Bank Co")

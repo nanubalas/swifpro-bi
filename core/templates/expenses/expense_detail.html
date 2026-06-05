@@ -7,18 +7,47 @@
     <div>
       <h2 class="fw-bold mb-0">{{ expense.payee }}</h2>
       <div class="text-muted">{{ expense.expense_date|date:'d M Y' }} -
-        {% if expense.status == 'POSTED' %}<span class="badge text-bg-success">Posted</span>{% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
+        {% if expense.status == 'POSTED' %}<span class="badge text-bg-success">Posted</span>
+        {% elif expense.status == 'SUBMITTED' %}<span class="badge text-bg-warning">Pending approval</span>
+        {% elif expense.status == 'REJECTED' %}<span class="badge text-bg-danger">Rejected</span>
+        {% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
         {% if not expense.paid %}<span class="badge text-bg-warning">Owed (Accounts Payable)</span>{% endif %}
         {% if expense.reimbursable %}<span class="badge text-bg-info">Reimbursable</span>{% endif %}
       </div>
     </div>
   </div>
-  {% if expense.status != 'POSTED' %}
-  <form method="post" action="{% url 'expense_post' expense.id %}">{% csrf_token %}
-    <button class="btn btn-primary"><i class="bi bi-check-lg me-1"></i> Post to ledger</button>
-  </form>
-  {% endif %}
+  <div class="d-flex gap-2">
+    {% if expense.status == 'DRAFT' %}
+      <form method="post" action="{% url 'expense_submit' expense.id %}">{% csrf_token %}
+        <button class="btn btn-outline-primary"><i class="bi bi-send me-1"></i> Submit for approval</button>
+      </form>
+      {% if can_approve %}
+      <form method="post" action="{% url 'expense_post' expense.id %}">{% csrf_token %}
+        <button class="btn btn-primary"><i class="bi bi-check-lg me-1"></i> Post to ledger</button>
+      </form>
+      {% endif %}
+    {% elif expense.status == 'SUBMITTED' and can_approve %}
+      <form method="post" action="{% url 'expense_approve' expense.id %}">{% csrf_token %}
+        <button class="btn btn-success"><i class="bi bi-check-lg me-1"></i> Approve &amp; post</button>
+      </form>
+      <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectModal">Reject</button>
+    {% endif %}
+  </div>
 </div>
+
+{% if expense.status == 'SUBMITTED' and can_approve %}
+<div class="modal fade" id="rejectModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form method="post" action="{% url 'expense_reject' expense.id %}">{% csrf_token %}
+    <div class="modal-header"><h5 class="modal-title">Reject expense</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body"><label class="form-label">Reason</label><input class="form-control" name="reason" placeholder="Why is this rejected?"></div>
+    <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button><button class="btn btn-danger" type="submit">Reject</button></div>
+  </form>
+</div></div></div>
+{% endif %}
+
+{% if expense.status == 'REJECTED' and expense.rejected_reason %}
+<div class="alert alert-danger py-2"><i class="bi bi-x-circle me-1"></i> Rejected: {{ expense.rejected_reason }}</div>
+{% endif %}
 
 <div class="row g-4">
   <div class="col-lg-6">
@@ -32,6 +61,8 @@
         <dt class="col-5 text-muted fw-normal">Reference</dt><dd class="col-7">{{ expense.reference|default:'-' }}</dd>
         <dt class="col-5 text-muted fw-normal">Reimbursable</dt><dd class="col-7">{% if expense.reimbursable %}Yes{% else %}No{% endif %}</dd>
         <dt class="col-5 text-muted fw-normal">Receipt</dt><dd class="col-7">{% if expense.receipt %}<a href="{{ expense.receipt.url }}" target="_blank"><i class="bi bi-paperclip me-1"></i>View receipt</a>{% else %}-{% endif %}</dd>
+        {% if expense.submitted_by %}<dt class="col-5 text-muted fw-normal">Submitted by</dt><dd class="col-7">{{ expense.submitted_by.get_full_name|default:expense.submitted_by.username }}</dd>{% endif %}
+        {% if expense.approved_by %}<dt class="col-5 text-muted fw-normal">{% if expense.status == 'REJECTED' %}Rejected by{% else %}Approved by{% endif %}</dt><dd class="col-7">{{ expense.approved_by.get_full_name|default:expense.approved_by.username }}{% if expense.approved_at %} · {{ expense.approved_at|date:'d M Y' }}{% endif %}</dd>{% endif %}
       </dl>
     </div></div>
   </div>

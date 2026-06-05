@@ -250,6 +250,9 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("expenses/new/", views.expense_create, name="expense_create"),
     path("expenses/<int:expense_id>/", views.expense_detail, name="expense_detail"),
     path("expenses/<int:expense_id>/post/", views.expense_post, name="expense_post"),
+    path("expenses/<int:expense_id>/submit/", views.expense_submit, name="expense_submit"),
+    path("expenses/<int:expense_id>/approve/", views.expense_approve, name="expense_approve"),
+    path("expenses/<int:expense_id>/reject/", views.expense_reject, name="expense_reject"),
 
     # Credit notes
     path("credit-notes/", views.credit_note_list, name="credit_note_list"),
