@@ -1637,6 +1637,12 @@ class PaymentAllocation(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2)
 
 
+def expense_receipt_path(instance, filename):
+    """Tenant-scoped path for uploaded receipts (keeps one tenant's files out of
+    another's directory)."""
+    return f"expense_receipts/{instance.tenant_id or 'unknown'}/{filename}"
+
+
 class Expense(models.Model):
     """A business cost the owner records directly (rent, fuel, software, ...),
     without a formal supplier bill. Posting it creates the double-entry:
@@ -1661,8 +1667,10 @@ class Expense(models.Model):
     net_amount = models.DecimalField(max_digits=12, decimal_places=2)
     tax_code = models.ForeignKey(TaxCode, on_delete=models.PROTECT, null=True, blank=True)
     paid = models.BooleanField(default=True)  # paid from bank now vs owed (AP)
+    reimbursable = models.BooleanField(default=False)  # paid personally, owed back to an employee
     method = models.CharField(max_length=10, choices=Method.choices, default=Method.BANK)
     reference = models.CharField(max_length=100, blank=True, null=True)
+    receipt = models.FileField(upload_to=expense_receipt_path, blank=True, null=True)  # image/PDF
     currency_code = models.CharField(max_length=3, default="GBP")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     created_at = models.DateTimeField(default=timezone.now)

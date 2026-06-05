@@ -24,7 +24,7 @@
           {% for e in expenses %}
           <tr onclick="window.location='{% url 'expense_detail' e.id %}'" style="cursor:pointer;">
             <td class="text-muted small">{{ e.expense_date|date:'d M Y' }}</td>
-            <td class="fw-semibold">{{ e.payee }}{% if e.description %}<div class="text-muted small fw-normal">{{ e.description|truncatechars:60 }}</div>{% endif %}</td>
+            <td class="fw-semibold">{{ e.payee }}{% if e.receipt %} <i class="bi bi-paperclip text-muted" title="Receipt attached"></i>{% endif %}{% if e.reimbursable %} <span class="badge text-bg-info">Reimbursable</span>{% endif %}{% if e.description %}<div class="text-muted small fw-normal">{{ e.description|truncatechars:60 }}</div>{% endif %}</td>
             <td class="small">{{ e.category.name }}</td>
             <td class="text-end">{{ e.net_amount }}</td>
             <td class="text-end text-muted">{{ e.tax_amount|floatformat:2 }}</td>

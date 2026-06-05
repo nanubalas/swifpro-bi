@@ -15,11 +15,11 @@
 
     <div class="card">
       <div class="card-body p-4">
-        <form method="post">
+        <form method="post" enctype="multipart/form-data">
           {% csrf_token %}
           {% for field in form %}
-            <div class="mb-3 {% if field.name == 'paid' %}form-check{% endif %}">
-              <label class="{% if field.name == 'paid' %}form-check-label{% else %}form-label{% endif %}">{{ field.label }}</label>
+            <div class="mb-3 {% if field.name == 'paid' or field.name == 'reimbursable' %}form-check{% endif %}">
+              <label class="{% if field.name == 'paid' or field.name == 'reimbursable' %}form-check-label{% else %}form-label{% endif %}">{{ field.label }}</label>
               {{ field }}
               {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
               {% for err in field.errors %}<div class="text-danger small">{{ err }}</div>{% endfor %}
