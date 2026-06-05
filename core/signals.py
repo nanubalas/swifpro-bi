@@ -30,9 +30,12 @@ DEFAULT_ACCOUNTS = [
     # Operating expense accounts (used by the Expenses module).
     ("6000", "General Expenses", "EXPENSE"),
     ("6100", "Rent & Rates", "EXPENSE"),
+    ("6150", "Repairs & Maintenance", "EXPENSE"),
     ("6200", "Utilities", "EXPENSE"),
+    ("6250", "Insurance", "EXPENSE"),
     ("6300", "Office & Admin", "EXPENSE"),
     ("6400", "Travel & Subsistence", "EXPENSE"),
+    ("6450", "Meals & Entertainment", "EXPENSE"),
     ("6500", "Marketing", "EXPENSE"),
     ("6600", "Professional Fees", "EXPENSE"),
     ("6700", "Software & Subscriptions", "EXPENSE"),

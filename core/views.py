@@ -603,10 +603,12 @@ def _finance_export_data(tenant, kind, date_from, date_to, as_of):
         return "general-ledger.csv", cols, rows
 
     if kind == "expenses":
-        cols = ["Date", "Payee", "Category", "Description", "Net", "VAT", "Total", "Paid", "Status"]
-        rows = [[e.expense_date, e.payee, e.category.name, e.description or "", money(e.net_amount),
-                 money(e.tax_amount), money(e.total), "Yes" if e.paid else "No", e.status]
-                for e in Expense.objects.filter(tenant=tenant).select_related("category").order_by("-expense_date")]
+        cols = ["Date", "Payee", "Supplier", "Category", "Description", "Method", "Net", "VAT", "Total",
+                "Paid", "Reimbursable", "Status"]
+        rows = [[e.expense_date, e.payee, (e.supplier.name if e.supplier_id else ""), e.category.name,
+                 e.description or "", e.get_method_display(), money(e.net_amount), money(e.tax_amount),
+                 money(e.total), "Yes" if e.paid else "No", "Yes" if e.reimbursable else "No", e.status]
+                for e in Expense.objects.filter(tenant=tenant).select_related("category", "supplier", "tax_code").order_by("-expense_date")]
         return "expenses.csv", cols, rows
 
     if kind == "payments":
@@ -2482,6 +2484,7 @@ def supplier_detail(request, supplier_id):
                  .prefetch_related("lines", "lines__tax_code", "payment_allocations", "credit_notes")
                  .order_by("-invoice_date", "-id"))
     payments = list(Payment.objects.filter(tenant=tenant, supplier=s).order_by("-payment_date", "-id"))
+    expenses = list(Expense.objects.filter(tenant=tenant, supplier=s).select_related("category").order_by("-expense_date", "-id"))
     credit_notes = list(CreditNote.objects.filter(tenant=tenant, supplier=s, kind=CreditNote.Kind.PURCHASE)
                         .order_by("-credit_note_date", "-id"))
 
@@ -2519,6 +2522,10 @@ def supplier_detail(request, supplier_id):
     for cn in credit_notes:
         timeline.append({"date": cn.credit_note_date, "icon": "arrow-return-left", "kind": "Credit note",
                          "text": f"Credit note {cn.credit_note_number} - {cn.total}", "url": f"/credit-notes/{cn.id}/"})
+    for ex in expenses:
+        timeline.append({"date": ex.expense_date, "icon": "receipt", "kind": "Expense",
+                         "text": f"Expense {ex.category.name} - {ex.total} ({ex.get_status_display()})",
+                         "url": f"/expenses/{ex.id}/"})
     timeline.sort(key=lambda e: e["date"], reverse=True)
 
     purchases_total = sum((b.total for b in bills if b.status == "POSTED"), Decimal("0.00"))
@@ -2526,6 +2533,7 @@ def supplier_detail(request, supplier_id):
     return render(request, "suppliers/supplier_detail.html", {
         "tenant": tenant, "s": s,
         "pos": pos[:10], "bills": bills[:10], "payments": payments[:10],
+        "expenses": expenses[:10],
         "products_supplied": products_supplied, "price_history": price_history[:30],
         "timeline": timeline[:40], "purchases_total": purchases_total,
         "po_count": len(pos),
@@ -4739,7 +4747,7 @@ def expense_create(request):
     initial = {}
     if tenant.default_tax_code_id:
         initial["tax_code"] = tenant.default_tax_code
-    form = ExpenseForm(request.POST or None, initial=initial)
+    form = ExpenseForm(request.POST or None, request.FILES or None, initial=initial)
     if request.method == "POST" and form.is_valid():
         expense = form.save(commit=False)
         expense.tenant = tenant

@@ -9,6 +9,7 @@
       <div class="text-muted">{{ expense.expense_date|date:'d M Y' }} -
         {% if expense.status == 'POSTED' %}<span class="badge text-bg-success">Posted</span>{% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
         {% if not expense.paid %}<span class="badge text-bg-warning">Owed (Accounts Payable)</span>{% endif %}
+        {% if expense.reimbursable %}<span class="badge text-bg-info">Reimbursable</span>{% endif %}
       </div>
     </div>
   </div>
@@ -29,6 +30,8 @@
         <dt class="col-5 text-muted fw-normal">Description</dt><dd class="col-7">{{ expense.description|default:'-' }}</dd>
         <dt class="col-5 text-muted fw-normal">Method</dt><dd class="col-7">{{ expense.get_method_display }}</dd>
         <dt class="col-5 text-muted fw-normal">Reference</dt><dd class="col-7">{{ expense.reference|default:'-' }}</dd>
+        <dt class="col-5 text-muted fw-normal">Reimbursable</dt><dd class="col-7">{% if expense.reimbursable %}Yes{% else %}No{% endif %}</dd>
+        <dt class="col-5 text-muted fw-normal">Receipt</dt><dd class="col-7">{% if expense.receipt %}<a href="{{ expense.receipt.url }}" target="_blank"><i class="bi bi-paperclip me-1"></i>View receipt</a>{% else %}-{% endif %}</dd>
       </dl>
     </div></div>
   </div>

@@ -1354,6 +1354,67 @@ class ExpenseTests(TestCase):
         self.assertNotIn("4000", codes)  # sales income is not an expense category
 
 
+class ExpenseEntryCompletenessTests(TestCase):
+    def setUp(self):
+        from core.models import GLAccount, OrgMembership
+        self.tenant = Tenant.objects.create(name="ExpC Co")
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.rent = GLAccount.objects.get(tenant=self.tenant, code="6100")
+        self.user = User.objects.create_user("expc", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="FINANCE", is_default=True)
+        self.client.login(username="expc", password="pw")
+
+    def _data(self, **overrides):
+        data = {
+            "expense_date": "2026-06-01", "payee": "X", "category": self.rent.id,
+            "net_amount": "100.00", "tax_code": self.std.id, "method": "CARD",
+            "action": "save",
+        }
+        data.update(overrides)
+        return data
+
+    def test_new_categories_seeded(self):
+        from core.models import GLAccount
+        for code, name in [("6150", "Repairs & Maintenance"), ("6250", "Insurance"), ("6450", "Meals & Entertainment")]:
+            acc = GLAccount.objects.get(tenant=self.tenant, code=code)
+            self.assertEqual(acc.name, name)
+            self.assertEqual(acc.type, "EXPENSE")
+
+    def test_reimbursable_flag_saved(self):
+        from core.models import Expense
+        self.client.post("/expenses/new/", self._data(reimbursable="on"))
+        e = Expense.objects.get(tenant=self.tenant)
+        self.assertTrue(e.reimbursable)
+
+    def test_receipt_upload_stored_tenant_scoped(self):
+        from core.models import Expense
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        pdf = SimpleUploadedFile("receipt.pdf", b"%PDF-1.4 test", content_type="application/pdf")
+        self.client.post("/expenses/new/", self._data(receipt=pdf))
+        e = Expense.objects.get(tenant=self.tenant)
+        self.assertTrue(e.receipt)
+        self.assertIn(f"expense_receipts/{self.tenant.id}/", e.receipt.name)
+
+    def test_receipt_rejects_bad_type(self):
+        from core.models import Expense
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        bad = SimpleUploadedFile("malware.exe", b"MZ", content_type="application/octet-stream")
+        resp = self.client.post("/expenses/new/", self._data(receipt=bad))
+        self.assertEqual(resp.status_code, 200)  # re-render with error
+        self.assertContains(resp, "Receipt must be a PDF or an image")
+        self.assertEqual(Expense.objects.filter(tenant=self.tenant).count(), 0)
+
+    def test_supplier_history_shows_expense(self):
+        from core.models import Expense, Supplier
+        sup = Supplier.objects.create(tenant=self.tenant, name="Acme")
+        Expense.objects.create(tenant=self.tenant, expense_date="2026-06-01", payee="Acme",
+                               supplier=sup, category=self.rent, net_amount=Decimal("50"))
+        resp = self.client.get(f"/suppliers/{sup.id}/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context["expenses"]), 1)
+        self.assertTrue(any(t["kind"] == "Expense" for t in resp.context["timeline"]))
+
+
 class BankTransactionTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Bank Co")

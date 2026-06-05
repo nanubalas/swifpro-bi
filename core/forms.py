@@ -560,12 +560,15 @@ class ExpenseForm(TenantModelForm):
     class Meta:
         model = Expense
         fields = ["expense_date", "payee", "supplier", "category", "description",
-                  "net_amount", "tax_code", "paid", "method", "reference"]
+                  "net_amount", "tax_code", "paid", "reimbursable", "method", "reference", "receipt"]
         widgets = {
             "description": forms.Textarea(attrs={"rows": 2}),
             "expense_date": forms.DateInput(attrs={"type": "date"}),
         }
-        labels = {"net_amount": "Net amount (before VAT)", "paid": "Already paid"}
+        labels = {"net_amount": "Net amount (before VAT)", "paid": "Already paid",
+                  "reimbursable": "Reimbursable (paid personally)",
+                  "receipt": "Receipt (image or PDF)"}
+        help_texts = {"receipt": "Attach a photo or PDF of the receipt (optional)."}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -576,6 +579,15 @@ class ExpenseForm(TenantModelForm):
             ).order_by("code")
         self.fields["supplier"].required = False
         self.fields["tax_code"].required = False
+        self.fields["receipt"].required = False
+
+    def clean_receipt(self):
+        f = self.cleaned_data.get("receipt")
+        if f and getattr(f, "name", None):
+            allowed = (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic")
+            if not f.name.lower().endswith(allowed):
+                raise forms.ValidationError("Receipt must be a PDF or an image (PNG/JPG/GIF/WEBP/HEIC).")
+        return f
 
 
 class CreditNoteForm(TenantModelForm):
