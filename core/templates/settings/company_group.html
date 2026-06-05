@@ -16,6 +16,7 @@
         <ul class="mb-3">
           {% for c in siblings %}<li>{{ c.name }}{% if c.id == tenant.id %} <span class="text-muted small">(current)</span>{% endif %}</li>{% endfor %}
         </ul>
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'consolidated_reports' %}">View consolidated reports</a>
         <form method="post" class="d-inline">{% csrf_token %}<input type="hidden" name="op" value="leave">
           <button class="btn btn-outline-danger btn-sm" onclick="return confirm('Remove {{ tenant.name }} from its group?');">Leave group</button>
         </form>

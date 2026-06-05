@@ -4688,6 +4688,20 @@ def report_balance_sheet(request):
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def consolidated_reports(request):
+    """Group-level consolidated P&L / balance sheet / stock across the companies
+    in this tenant's group that the user belongs to."""
+    from core.access import group_companies
+    tenant = _get_default_tenant(request)
+    companies = group_companies(request.user, tenant)
+    data = reports_service.consolidated(companies)
+    return render(request, "reports/consolidated.html", {
+        "tenant": tenant, "data": data,
+        "group": getattr(tenant, "group", None), "company_count": len(companies),
+    })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def report_cash_flow(request):
     tenant = _get_default_tenant(request)
     date_from = _parse_date(request.GET.get("from"))

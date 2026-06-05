@@ -371,3 +371,32 @@ def aged_payables(tenant, as_of=None):
             "amount": outstanding,
         })
     return _aged(items, as_of)
+
+
+def consolidated(companies, date_from=None, date_to=None, as_of=None):
+    """Combine P&L, balance sheet and stock value across several companies.
+
+    `companies` is an iterable of Tenant. Returns per-company rows plus a group
+    total for each statement, so a group can see combined performance. (Pure
+    aggregation; inter-company eliminations are applied separately.)"""
+    rows = []
+    tot = {"revenue": ZERO, "cogs": ZERO, "gross": ZERO, "expenses": ZERO, "net": ZERO,
+           "assets": ZERO, "liabilities": ZERO, "equity": ZERO, "stock": ZERO}
+    for t in companies:
+        pnl = profit_and_loss(t, date_from=date_from, date_to=date_to)
+        bs = balance_sheet(t, as_of=as_of)
+        stock = stock_valuation(t)["total"]
+        row = {
+            "company": t,
+            "revenue": pnl["income_total"], "cogs": pnl["cogs_total"],
+            "gross": pnl["gross_profit"], "expenses": pnl["expense_total"],
+            "net": pnl["net_profit"],
+            "assets": bs["asset_total"],
+            "liabilities": bs["liability_total"],
+            "equity": bs["equity_total_with_earnings"],
+            "stock": stock,
+        }
+        rows.append(row)
+        for k in tot:
+            tot[k] += row[k]
+    return {"rows": rows, "totals": tot}

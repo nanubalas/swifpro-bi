@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Consolidated Reports - SwifPro BI{% endblock %}
+{% block body %}
+<div class="mb-3">
+  <h2 class="fw-bold mb-1">Consolidated Reports{% if group %} — {{ group.name }}{% endif %}</h2>
+  <div class="text-muted">Combined performance across {{ company_count }} compan{{ company_count|pluralize:"y,ies" }} you can access in this group.</div>
+</div>
+
+{% if not group %}
+<div class="alert alert-info">This company isn't part of a group yet. <a href="{% url 'settings_group' %}">Set up a company group</a> to consolidate across companies. Showing this company only.</div>
+{% endif %}
+
+<div class="card mb-4"><div class="card-body">
+  <h5 class="fw-bold mb-3">Profit &amp; Loss</h5>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr><th>Company</th><th class="text-end">Revenue</th><th class="text-end">COGS</th><th class="text-end">Gross profit</th><th class="text-end">Expenses</th><th class="text-end">Net profit</th></tr></thead>
+      <tbody>
+        {% for r in data.rows %}
+        <tr>
+          <td class="fw-semibold">{{ r.company.name }}</td>
+          <td class="text-end">{{ r.revenue|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ r.cogs|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ r.gross|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ r.expenses|money:tenant.currency_code }}</td>
+          <td class="text-end fw-semibold {% if r.net < 0 %}text-danger{% endif %}">{{ r.net|money:tenant.currency_code }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light"><tr class="fw-bold">
+        <td>Group total</td>
+        <td class="text-end">{{ data.totals.revenue|money:tenant.currency_code }}</td>
+        <td class="text-end">{{ data.totals.cogs|money:tenant.currency_code }}</td>
+        <td class="text-end">{{ data.totals.gross|money:tenant.currency_code }}</td>
+        <td class="text-end">{{ data.totals.expenses|money:tenant.currency_code }}</td>
+        <td class="text-end {% if data.totals.net < 0 %}text-danger{% endif %}">{{ data.totals.net|money:tenant.currency_code }}</td>
+      </tr></tfoot>
+    </table>
+  </div>
+</div></div>
+
+<div class="card"><div class="card-body">
+  <h5 class="fw-bold mb-3">Balance sheet &amp; stock</h5>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr><th>Company</th><th class="text-end">Assets</th><th class="text-end">Liabilities</th><th class="text-end">Equity</th><th class="text-end">Stock value</th></tr></thead>
+      <tbody>
+        {% for r in data.rows %}
+        <tr>
+          <td class="fw-semibold">{{ r.company.name }}</td>
+          <td class="text-end">{{ r.assets|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ r.liabilities|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ r.equity|money:tenant.currency_code }}</td>
+          <td class="text-end">{{ r.stock|money:tenant.currency_code }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light"><tr class="fw-bold">
+        <td>Group total</td>
+        <td class="text-end">{{ data.totals.assets|money:tenant.currency_code }}</td>
+        <td class="text-end">{{ data.totals.liabilities|money:tenant.currency_code }}</td>
+        <td class="text-end">{{ data.totals.equity|money:tenant.currency_code }}</td>
+        <td class="text-end">{{ data.totals.stock|money:tenant.currency_code }}</td>
+      </tr></tfoot>
+    </table>
+  </div>
+  <div class="text-muted small mt-2">Figures are summed across companies. Amounts shown in {{ tenant.currency_code }}; per-company currencies are not FX-converted.</div>
+</div></div>
+{% endblock %}
