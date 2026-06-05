@@ -29,7 +29,10 @@
             <td class="text-end">{{ e.net_amount }}</td>
             <td class="text-end text-muted">{{ e.tax_amount|floatformat:2 }}</td>
             <td class="text-end fw-semibold">{{ e.total|floatformat:2 }}</td>
-            <td>{% if e.status == 'POSTED' %}<span class="badge text-bg-success">Posted</span>{% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
+            <td>{% if e.status == 'POSTED' %}<span class="badge text-bg-success">Posted</span>
+                {% elif e.status == 'SUBMITTED' %}<span class="badge text-bg-warning">Pending approval</span>
+                {% elif e.status == 'REJECTED' %}<span class="badge text-bg-danger">Rejected</span>
+                {% else %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
                 {% if not e.paid %}<span class="badge text-bg-warning ms-1">Owed</span>{% endif %}</td>
           </tr>
           {% empty %}

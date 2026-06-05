@@ -4732,15 +4732,27 @@ def ar_invoice_refund(request, invoice_id):
 # Expenses
 # ============================
 
-@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+# Staff who may record/submit expenses (everyone but read-only); approving and
+# direct posting stay with Finance/Admin.
+EXPENSE_STAFF = [ROLE_ADMIN, ROLE_FINANCE, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES]
+EXPENSE_APPROVERS = [ROLE_FINANCE, ROLE_ADMIN]
+
+
+def _can_approve_expenses(request):
+    return bool(set(EXPENSE_APPROVERS) & effective_groups(request)) or request.user.is_superuser
+
+
+@role_required(EXPENSE_STAFF + [ROLE_READONLY], write_groups=EXPENSE_STAFF)
 def expense_list(request):
     tenant = _get_default_tenant(request)
     expenses = Expense.objects.filter(tenant=tenant).select_related("category", "supplier", "tax_code").order_by("-expense_date", "-id")
     total = sum((e.total for e in expenses), Decimal("0.00"))
-    return render(request, "expenses/expense_list.html", {"tenant": tenant, "expenses": expenses, "total": total})
+    return render(request, "expenses/expense_list.html", {
+        "tenant": tenant, "expenses": expenses, "total": total,
+        "can_approve": _can_approve_expenses(request)})
 
 
-@role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@role_required(EXPENSE_STAFF, write_groups=EXPENSE_STAFF)
 @transaction.atomic
 def expense_create(request):
     tenant = _get_default_tenant(request)
@@ -4748,27 +4760,99 @@ def expense_create(request):
     if tenant.default_tax_code_id:
         initial["tax_code"] = tenant.default_tax_code
     form = ExpenseForm(request.POST or None, request.FILES or None, initial=initial)
+    is_approver = _can_approve_expenses(request)
     if request.method == "POST" and form.is_valid():
         expense = form.save(commit=False)
         expense.tenant = tenant
         expense.currency_code = tenant.currency_code
         expense.save()
         action = request.POST.get("action") or "save"
-        if action == "post":
+        threshold = tenant.expense_approval_threshold or Decimal("0.00")
+        needs_approval = bool(threshold and threshold > 0 and expense.total >= threshold)
+        if action == "post" and is_approver and not needs_approval:
             post_expense(expense, user=request.user)
             messages.success(request, f"Expense recorded and posted ({expense.total}).")
+        elif action in ("post", "submit"):
+            expense.status = Expense.Status.SUBMITTED
+            expense.submitted_by = request.user
+            expense.save(update_fields=["status", "submitted_by"])
+            log_audit(action="expense_submit", request=request, user=request.user, tenant=tenant,
+                      detail=f"{expense.payee} {expense.total}")
+            if action == "post" and is_approver and needs_approval:
+                messages.warning(request, f"Expense submitted — approval required (total {expense.total} ≥ threshold {threshold}).")
+            else:
+                messages.success(request, "Expense submitted for approval.")
         else:
             messages.success(request, "Expense saved as draft.")
         return redirect("expense_detail", expense_id=expense.id)
-    return render(request, "expenses/expense_form.html", {"tenant": tenant, "form": form})
+    return render(request, "expenses/expense_form.html", {
+        "tenant": tenant, "form": form, "can_approve": is_approver})
 
 
-@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+@role_required(EXPENSE_STAFF + [ROLE_READONLY], write_groups=EXPENSE_STAFF)
 def expense_detail(request, expense_id):
     tenant = _get_default_tenant(request)
     expense = get_object_or_404(Expense, id=expense_id, tenant=tenant)
     je = JournalEntry.objects.filter(tenant=tenant, ref_type="EXPENSE", ref_id=str(expense.id)).prefetch_related("lines", "lines__account").order_by("-id").first()
-    return render(request, "expenses/expense_detail.html", {"tenant": tenant, "expense": expense, "je": je})
+    return render(request, "expenses/expense_detail.html", {
+        "tenant": tenant, "expense": expense, "je": je,
+        "can_approve": _can_approve_expenses(request)})
+
+
+@role_required(EXPENSE_STAFF, write_groups=EXPENSE_STAFF)
+@transaction.atomic
+def expense_submit(request, expense_id):
+    tenant = _get_default_tenant(request)
+    expense = get_object_or_404(Expense, id=expense_id, tenant=tenant)
+    if request.method == "POST" and expense.status == Expense.Status.DRAFT:
+        expense.status = Expense.Status.SUBMITTED
+        expense.submitted_by = request.user
+        expense.save(update_fields=["status", "submitted_by"])
+        log_audit(action="expense_submit", request=request, user=request.user, tenant=tenant,
+                  detail=f"{expense.payee} {expense.total}")
+        messages.success(request, "Expense submitted for approval.")
+    return redirect("expense_detail", expense_id=expense.id)
+
+
+@role_required(EXPENSE_APPROVERS, write_groups=EXPENSE_APPROVERS)
+@transaction.atomic
+def expense_approve(request, expense_id):
+    tenant = _get_default_tenant(request)
+    expense = get_object_or_404(Expense, id=expense_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("expense_detail", expense_id=expense.id)
+    if expense.status != Expense.Status.SUBMITTED:
+        messages.info(request, "Only submitted expenses can be approved.")
+        return redirect("expense_detail", expense_id=expense.id)
+    post_expense(expense, user=request.user)  # sets POSTED + posts the GL entry
+    expense.approved_by = request.user
+    expense.approved_at = timezone.now()
+    expense.save(update_fields=["approved_by", "approved_at"])
+    log_audit(action="expense_approve", request=request, user=request.user, tenant=tenant,
+              detail=f"{expense.payee} {expense.total}")
+    messages.success(request, f"Expense approved and posted ({expense.total}).")
+    return redirect("expense_detail", expense_id=expense.id)
+
+
+@role_required(EXPENSE_APPROVERS, write_groups=EXPENSE_APPROVERS)
+@transaction.atomic
+def expense_reject(request, expense_id):
+    tenant = _get_default_tenant(request)
+    expense = get_object_or_404(Expense, id=expense_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("expense_detail", expense_id=expense.id)
+    if expense.status != Expense.Status.SUBMITTED:
+        messages.info(request, "Only submitted expenses can be rejected.")
+        return redirect("expense_detail", expense_id=expense.id)
+    expense.status = Expense.Status.REJECTED
+    expense.rejected_reason = (request.POST.get("reason") or "").strip() or None
+    expense.approved_by = request.user
+    expense.approved_at = timezone.now()
+    expense.save(update_fields=["status", "rejected_reason", "approved_by", "approved_at"])
+    log_audit(action="expense_reject", request=request, user=request.user, tenant=tenant,
+              detail=f"{expense.payee}: {expense.rejected_reason or ''}")
+    messages.success(request, "Expense rejected.")
+    return redirect("expense_detail", expense_id=expense.id)
 
 
 @role_required([ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_FINANCE, ROLE_ADMIN])

@@ -127,7 +127,7 @@ NAV = [
     ]),
     ("Finance", [
         ("Payments", "/payments/", "cash-stack", {ADMIN, ACCOUNTANT, FINANCE}),
-        ("Expenses", "/expenses/", "wallet2", {ADMIN, ACCOUNTANT, FINANCE}),
+        ("Expenses", "/expenses/", "wallet2", {ADMIN, ACCOUNTANT, FINANCE, MANAGER, SALES, WAREHOUSE, PURCHASING}),
         ("Credit Notes", "/credit-notes/", "receipt", {ADMIN, ACCOUNTANT, FINANCE}),
         ("Bank Transactions", "/bank/transactions/", "bank", {ADMIN, ACCOUNTANT, FINANCE}),
         ("Bank Reconciliation", "/bank/reconcile/", "check2-square", {ADMIN, ACCOUNTANT, FINANCE}),

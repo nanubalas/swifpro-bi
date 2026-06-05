@@ -26,7 +26,10 @@
             </div>
           {% endfor %}
           <div class="d-flex gap-2">
+            {% if can_approve %}
             <button class="btn btn-primary" type="submit" name="action" value="post"><i class="bi bi-check-lg me-1"></i> Record &amp; Post</button>
+            {% endif %}
+            <button class="btn btn-{% if can_approve %}outline-primary{% else %}primary{% endif %}" type="submit" name="action" value="submit">Submit for approval</button>
             <button class="btn btn-outline-secondary" type="submit" name="action" value="save">Save draft</button>
             <a class="btn btn-link" href="{% url 'expense_list' %}">Cancel</a>
           </div>

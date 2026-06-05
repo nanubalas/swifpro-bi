@@ -248,12 +248,21 @@ class TenantSettingsForm(TenantModelForm):
         # Optional credit-control fields: fall back to current/default on save.
         if "dunning_interval_days" in self.fields:
             self.fields["dunning_interval_days"].required = False
+        if "expense_approval_threshold" in self.fields:
+            self.fields["expense_approval_threshold"].required = False
 
     def clean_dunning_interval_days(self):
         val = self.cleaned_data.get("dunning_interval_days")
         if val:
             return val
         return getattr(self.instance, "dunning_interval_days", None) or 7
+
+    def clean_expense_approval_threshold(self):
+        val = self.cleaned_data.get("expense_approval_threshold")
+        if val is not None:
+            return val
+        from decimal import Decimal as _D
+        return getattr(self.instance, "expense_approval_threshold", None) or _D("0.00")
 
     class Meta:
         model = Tenant
@@ -273,6 +282,7 @@ class TenantSettingsForm(TenantModelForm):
             # Defaults & locale
             "currency_code", "country", "timezone", "financial_year_start_month",
             "default_tax_code", "default_payment_terms_days", "po_approval_threshold",
+            "expense_approval_threshold",
             # Credit control / dunning
             "dunning_enabled", "dunning_interval_days",
         ]

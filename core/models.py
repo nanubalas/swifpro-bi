@@ -85,6 +85,10 @@ class Tenant(models.Model):
     dunning_enabled = models.BooleanField(default=True)
     dunning_interval_days = models.PositiveSmallIntegerField(default=7)
 
+    # Expenses whose total is at/above this require approval before posting
+    # (0 = no threshold; a posted-direct expense skips the approval step).
+    expense_approval_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
     def __str__(self):
         return self.name
 
@@ -1650,6 +1654,8 @@ class Expense(models.Model):
     CR Accounts Payable when it is still owed."""
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Pending approval"
+        REJECTED = "REJECTED", "Rejected"
         POSTED = "POSTED", "Posted"
 
     class Method(models.TextChoices):
@@ -1674,6 +1680,10 @@ class Expense(models.Model):
     currency_code = models.CharField(max_length=3, default="GBP")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     created_at = models.DateTimeField(default=timezone.now)
+    submitted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="submitted_expenses")
+    approved_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="approved_expenses")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_reason = models.CharField(max_length=255, blank=True, null=True)
     posted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     posted_at = models.DateTimeField(null=True, blank=True)
 
