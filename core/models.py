@@ -288,6 +288,24 @@ class Location(models.Model):
         return f"{self.tenant.name} - {self.name}"
 
 
+class Bin(models.Model):
+    """A bin: a physical sub-location inside a warehouse/location (aisle/shelf).
+    Completes Epicor's Site -> Warehouse -> Bin hierarchy. Costing stays at the
+    location level; bins record where stock physically sits."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    location = models.ForeignKey(Location, on_delete=models.CASCADE, related_name="bins")
+    code = models.CharField(max_length=40)
+    description = models.CharField(max_length=120, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ("location", "code")
+        ordering = ["location__name", "code"]
+
+    def __str__(self):
+        return f"{self.location.name} / {self.code}"
+
+
 class UserLocationAccess(models.Model):
     """Restricts a user to specific locations within a tenant. A user with NO
     rows (or an Admin) sees all locations; adding rows narrows them to that set."""
@@ -858,6 +876,7 @@ class InventoryMovement(models.Model):
 
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
+    bin = models.ForeignKey("Bin", on_delete=models.SET_NULL, null=True, blank=True, related_name="movements")
     movement_type = models.CharField(max_length=20, choices=MovementType.choices)
     # Who triggered the movement (null for system/automatic postings).
     user = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
@@ -900,6 +919,7 @@ class StockAdjustment(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="stock_adjustments")
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
+    bin = models.ForeignKey("Bin", on_delete=models.SET_NULL, null=True, blank=True, related_name="stock_adjustments")
     reason = models.CharField(max_length=20, choices=Reason.choices, default=Reason.ADJUSTMENT)
     # For RETURN_SUPPLIER: who the goods go back to (drives a purchase credit note).
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name="stock_returns")

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Bins - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Bins</h2>
+    <div class="text-muted">Physical sub-locations (aisle/shelf) inside a warehouse.</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'bin_create' %}"><i class="bi bi-plus-lg me-1"></i> Create Bin</a>
+</div>
+
+<div class="card"><div class="card-body p-0">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr><th>Location</th><th>Bin code</th><th>Description</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+    <tbody>
+      {% for b in bins %}
+      <tr {% if not b.is_active %}class="text-muted"{% endif %}>
+        <td>{{ b.location.name }}</td>
+        <td class="fw-semibold">{{ b.code }}</td>
+        <td class="small">{{ b.description|default:'' }}</td>
+        <td>{% if b.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+        <td class="text-end"><div class="btn-group">
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'bin_edit' b.id %}">Edit</a>
+          <a class="btn btn-sm btn-outline-danger" href="{% url 'bin_delete' b.id %}">Delete</a>
+        </div></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="5" class="text-center text-muted py-5">No bins yet. Create a bin inside one of your warehouses.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

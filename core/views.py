@@ -1977,6 +1977,7 @@ def _post_stock_adjustment(adj, user):
         movement_type=adj.movement_type, qty_delta=adj.qty_delta,
         ref_type="STOCK_ADJ", ref_id=str(adj.id),
         notes=(adj.get_reason_display() + (f": {adj.notes}" if adj.notes else "")), user=user,
+        bin=adj.bin,
     )
     value = getattr(movement, "value", None) or Decimal("0.00")
     fields = ["status", "posted_at", "approved_by"]
@@ -2754,6 +2755,71 @@ def site_delete(request, site_id):
         messages.success(request, "Site deleted.")
         return redirect("site_list")
     return render(request, "locations/site_delete.html", {"tenant": tenant, "site": obj})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_READONLY])
+def bin_list(request):
+    from core.models import Bin
+    from core.access import accessible_location_ids
+    tenant = _get_default_tenant(request)
+    bins = Bin.objects.filter(tenant=tenant).select_related("location").order_by("location__name", "code")
+    allowed = accessible_location_ids(request.user, tenant)
+    if allowed is not None:
+        bins = bins.filter(location_id__in=allowed)
+    return render(request, "locations/bin_list.html", {"tenant": tenant, "bins": bins})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
+def bin_create(request):
+    from core.forms import BinForm
+    tenant = _get_default_tenant(request)
+    form = BinForm(request.POST or None)
+    _scope_location_fields(form, request, tenant, "location")
+    if request.method == "POST" and form.is_valid():
+        obj = form.save(commit=False)
+        obj.tenant = tenant
+        try:
+            obj.save()
+            messages.success(request, "Bin created.")
+            return redirect("bin_list")
+        except IntegrityError:
+            form.add_error("code", "A bin with this code already exists at that location.")
+    return render(request, "locations/bin_form.html", {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
+def bin_edit(request, bin_id):
+    from core.models import Bin
+    from core.forms import BinForm
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(Bin, id=bin_id, tenant=tenant)
+    form = BinForm(request.POST or None, instance=obj)
+    _scope_location_fields(form, request, tenant, "location")
+    if request.method == "POST" and form.is_valid():
+        try:
+            form.save()
+            messages.success(request, "Bin updated.")
+            return redirect("bin_list")
+        except IntegrityError:
+            form.add_error("code", "A bin with this code already exists at that location.")
+    return render(request, "locations/bin_form.html", {"tenant": tenant, "form": form, "mode": "edit"})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
+def bin_delete(request, bin_id):
+    from core.models import Bin
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(Bin, id=bin_id, tenant=tenant)
+    if request.method == "POST":
+        log_audit(action="RECORD_DELETED", request=request, user=request.user, tenant=tenant, detail=f"Bin {obj}")
+        obj.delete()
+        messages.success(request, "Bin deleted.")
+        return redirect("bin_list")
+    return render(request, "locations/bin_delete.html", {"tenant": tenant, "bin": obj})
 
 
 @login_required

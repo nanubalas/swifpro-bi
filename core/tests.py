@@ -293,6 +293,51 @@ class SiteTierTests(TestCase):
         self.assertEqual(names, {"Mine"})
 
 
+class BinTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership, Location
+        self.tenant = Tenant.objects.create(name="Bin Co")
+        self.wh = Location.objects.create(tenant=self.tenant, name="WH", type="WAREHOUSE", is_active=True, holds_stock=True)
+        self.user = User.objects.create_user("binu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="binu", password="pw")
+
+    def test_create_bin(self):
+        from core.models import Bin
+        resp = self.client.post("/bins/new/", {"location": self.wh.id, "code": "A-01", "is_active": "on"})
+        self.assertEqual(resp.status_code, 302)
+        b = Bin.objects.get(tenant=self.tenant)
+        self.assertEqual(b.code, "A-01")
+        self.assertEqual(b.location_id, self.wh.id)
+
+    def test_adjustment_records_bin_on_movement(self):
+        from core.models import Product, Bin, StockAdjustment, InventoryMovement
+        p = Product.objects.create(tenant=self.tenant, sku="B1", name="P")
+        b = Bin.objects.create(tenant=self.tenant, location=self.wh, code="A-02")
+        resp = self.client.post("/inventory/adjustments/new/", {
+            "product": p.id, "location": self.wh.id, "bin": b.id,
+            "reason": "ADJUSTMENT", "qty_delta": "5",
+        })
+        self.assertEqual(resp.status_code, 302)
+        adj = StockAdjustment.objects.get(tenant=self.tenant)
+        self.assertEqual(adj.bin_id, b.id)
+        mv = InventoryMovement.objects.get(tenant=self.tenant, product=p)
+        self.assertEqual(mv.bin_id, b.id)
+
+    def test_bin_must_match_location(self):
+        from core.models import Product, Bin, Location, StockAdjustment
+        p = Product.objects.create(tenant=self.tenant, sku="B2", name="P")
+        other = Location.objects.create(tenant=self.tenant, name="WH2", type="WAREHOUSE", is_active=True, holds_stock=True)
+        b = Bin.objects.create(tenant=self.tenant, location=other, code="X-01")
+        resp = self.client.post("/inventory/adjustments/new/", {
+            "product": p.id, "location": self.wh.id, "bin": b.id,
+            "reason": "ADJUSTMENT", "qty_delta": "5",
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Bin must belong to the chosen location")
+        self.assertEqual(StockAdjustment.objects.filter(tenant=self.tenant).count(), 0)
+
+
 class LocationAccessTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership, Location, InventoryBalance, Product
