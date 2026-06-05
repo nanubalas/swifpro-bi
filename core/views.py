@@ -2698,6 +2698,65 @@ def location_access(request):
 
 
 @login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_READONLY])
+def site_list(request):
+    from core.models import Site
+    tenant = _get_default_tenant(request)
+    sites = Site.objects.filter(tenant=tenant).prefetch_related("locations").order_by("name")
+    return render(request, "locations/site_list.html", {"tenant": tenant, "sites": sites})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
+def site_create(request):
+    from core.forms import SiteForm
+    tenant = _get_default_tenant(request)
+    form = SiteForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        obj = form.save(commit=False)
+        obj.tenant = tenant
+        try:
+            obj.save()
+            messages.success(request, "Site created.")
+            return redirect("site_list")
+        except IntegrityError:
+            form.add_error("name", "A site with this name already exists.")
+    return render(request, "locations/site_form.html", {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
+def site_edit(request, site_id):
+    from core.models import Site
+    from core.forms import SiteForm
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(Site, id=site_id, tenant=tenant)
+    form = SiteForm(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid():
+        try:
+            form.save()
+            messages.success(request, "Site updated.")
+            return redirect("site_list")
+        except IntegrityError:
+            form.add_error("name", "A site with this name already exists.")
+    return render(request, "locations/site_form.html", {"tenant": tenant, "form": form, "mode": "edit"})
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_WAREHOUSE])
+def site_delete(request, site_id):
+    from core.models import Site
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(Site, id=site_id, tenant=tenant)
+    if request.method == "POST":
+        log_audit(action="RECORD_DELETED", request=request, user=request.user, tenant=tenant, detail=f"Site {obj.name}")
+        obj.delete()  # locations' site FK is SET_NULL
+        messages.success(request, "Site deleted.")
+        return redirect("site_list")
+    return render(request, "locations/site_delete.html", {"tenant": tenant, "site": obj})
+
+
+@login_required
 @role_required([ROLE_ADMIN, ROLE_FINANCE])
 
 def channel_list(request):

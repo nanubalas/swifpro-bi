@@ -8,7 +8,7 @@ from core.models import (
     CycleCount, CycleCountLine, InventoryLotBalance, InventoryReservation,
     PurchaseOrder, PurchaseOrderLine, Shipment,
     PurchaseRequisition, PurchaseRequisitionLine,
-    Product, Supplier, Location, ChannelConnection,
+    Product, Supplier, Location, Site, ChannelConnection,
     SalesOrder, SalesOrderLine, Tenant,
     UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine, ProductBarcode, ProductCategory,
     StockAdjustment,
@@ -216,10 +216,17 @@ class SupplierForm(TenantModelForm):
             "categories": "Comma-separated, e.g. Raw materials, Logistics.",
         }
 
+class SiteForm(TenantModelForm):
+    class Meta:
+        model = Site
+        fields = ["name", "code", "address", "contact_person", "phone", "email", "is_active"]
+        widgets = {"address": forms.Textarea(attrs={"rows": 2})}
+
+
 class LocationForm(TenantModelForm):
     class Meta:
         model = Location
-        fields = ["name", "type", "address", "contact_person", "phone", "email",
+        fields = ["name", "site", "type", "address", "contact_person", "phone", "email",
                   "opening_hours", "is_active", "holds_stock"]
         widgets = {"address": forms.Textarea(attrs={"rows": 2})}
         labels = {"holds_stock": "Holds stock (show in inventory)",

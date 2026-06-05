@@ -249,6 +249,50 @@ class CompanyGroupTests(TestCase):
         self.assertEqual(resp.context["company_count"], 2)
 
 
+class SiteTierTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Site Co")
+        self.user = User.objects.create_user("siteu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="siteu", password="pw")
+
+    def test_create_site_and_assign_location(self):
+        from core.models import Site, Location
+        resp = self.client.post("/sites/new/", {"name": "Manchester Plant", "code": "MCR", "is_active": "on"})
+        self.assertEqual(resp.status_code, 302)
+        site = Site.objects.get(tenant=self.tenant, name="Manchester Plant")
+        resp = self.client.post("/locations/new/", {
+            "name": "MCR Warehouse", "site": site.id, "type": "WAREHOUSE",
+            "is_active": "on", "holds_stock": "on",
+        })
+        self.assertEqual(resp.status_code, 302)
+        loc = Location.objects.get(tenant=self.tenant, name="MCR Warehouse")
+        self.assertEqual(loc.site_id, site.id)
+
+    def test_site_list_renders_with_locations(self):
+        from core.models import Site, Location
+        site = Site.objects.create(tenant=self.tenant, name="HQ")
+        Location.objects.create(tenant=self.tenant, name="HQ WH", type="WAREHOUSE", site=site)
+        resp = self.client.get("/sites/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "HQ WH")
+
+    def test_site_scoped_to_tenant_in_location_form(self):
+        from core.current import set_current_tenant, clear_current_tenant
+        from core.forms import LocationForm
+        from core.models import Site, Tenant as T
+        Site.objects.create(tenant=self.tenant, name="Mine")
+        other = T.objects.create(name="Other")
+        Site.objects.create(tenant=other, name="Theirs")
+        set_current_tenant(self.tenant)
+        try:
+            names = set(LocationForm().fields["site"].queryset.values_list("name", flat=True))
+        finally:
+            clear_current_tenant()
+        self.assertEqual(names, {"Mine"})
+
+
 class LocationAccessTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership, Location, InventoryBalance, Product

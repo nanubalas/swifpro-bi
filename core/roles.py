@@ -120,6 +120,7 @@ NAV = [
         ("Low Stock", "/inventory/low-stock/", "exclamation-triangle", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
         ("Transfers", "/transfers/", "arrow-left-right", {ADMIN, MANAGER, WAREHOUSE}),
         ("Cycle Counts", "/cycle-counts/", "clipboard-check", {ADMIN, MANAGER, WAREHOUSE}),
+        ("Sites", "/sites/", "buildings", {ADMIN, MANAGER, WAREHOUSE}),
         ("Locations", "/locations/", "geo-alt", {ADMIN, MANAGER, WAREHOUSE}),
         ("Location Access", "/locations/access/", "person-lock", {ADMIN}),
         ("Products", "/products/", "box-seam", {ADMIN, MANAGER, WAREHOUSE, PURCHASING, SALES}),
