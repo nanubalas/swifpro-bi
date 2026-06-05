@@ -150,6 +150,50 @@ class FormTenantScopeTests(TestCase):
         self.assertEqual(names, ["A Supplier"])
 
 
+class LocationProfileTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Loc Co")
+        self.user = User.objects.create_user("locu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="locu", password="pw")
+
+    def test_storage_unit_type_available(self):
+        from core.models import Location
+        self.assertIn("STORAGE", dict(Location.Type.choices))
+        self.assertEqual(dict(Location.Type.choices)["STORAGE"], "Storage unit")
+
+    def test_create_with_all_fields(self):
+        from core.models import Location
+        resp = self.client.post("/locations/new/", {
+            "name": "Camden Shop", "type": "STORE", "address": "1 High St\nLondon",
+            "contact_person": "Sam", "phone": "+44 20 7946 0000", "email": "shop@x.example",
+            "opening_hours": "Mon-Fri 9-5", "is_active": "on", "holds_stock": "on",
+        })
+        self.assertEqual(resp.status_code, 302)
+        loc = Location.objects.get(tenant=self.tenant, name="Camden Shop")
+        self.assertEqual(loc.type, "STORE")
+        self.assertEqual(loc.contact_person, "Sam")
+        self.assertEqual(loc.email, "shop@x.example")
+        self.assertEqual(loc.opening_hours, "Mon-Fri 9-5")
+        self.assertTrue(loc.is_active)
+        self.assertTrue(loc.holds_stock)
+
+    def test_inactive_or_nonstock_location_excluded_from_stock_form(self):
+        from core.current import set_current_tenant, clear_current_tenant
+        from core.forms import StockAdjustmentForm
+        from core.models import Location
+        Location.objects.create(tenant=self.tenant, name="Live WH", type="WAREHOUSE", is_active=True, holds_stock=True)
+        Location.objects.create(tenant=self.tenant, name="Closed WH", type="WAREHOUSE", is_active=False, holds_stock=True)
+        Location.objects.create(tenant=self.tenant, name="Head Office", type="OFFICE", is_active=True, holds_stock=False)
+        set_current_tenant(self.tenant)
+        try:
+            names = set(StockAdjustmentForm().fields["location"].queryset.values_list("name", flat=True))
+        finally:
+            clear_current_tenant()
+        self.assertEqual(names, {"Live WH"})
+
+
 class GLBalanceTests(TestCase):
     def test_supplier_invoice_journal_balances_with_vat(self):
         from core.models import (

@@ -26,6 +26,32 @@
           {{ form.type }}
           {% if form.type.errors %}<div class="text-danger small">{{ form.type.errors }}</div>{% endif %}
         </div>
+        <div class="col-12">
+          <label class="form-label">Address</label>
+          {{ form.address }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Contact person</label>
+          {{ form.contact_person }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Phone</label>
+          {{ form.phone }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Email</label>
+          {{ form.email }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Opening hours (optional)</label>
+          {{ form.opening_hours }}
+        </div>
+        <div class="col-md-3 d-flex align-items-center gap-2 pt-4">
+          <div class="form-check">{{ form.is_active }} <label class="form-check-label">Active</label></div>
+        </div>
+        <div class="col-md-3 d-flex align-items-center gap-2 pt-4">
+          <div class="form-check">{{ form.holds_stock }} <label class="form-check-label">Holds stock</label></div>
+        </div>
       </div>
 
       <div class="d-flex justify-content-end gap-2 mt-4">
@@ -39,6 +65,10 @@
 </div>
 
 <script>
-  document.querySelectorAll("input, select, textarea").forEach(el => el.classList.add("form-control"));
+  document.querySelectorAll("form select").forEach(el => el.classList.add("form-select"));
+  document.querySelectorAll("form input, form textarea").forEach(el => {
+    if (el.type === "checkbox") el.classList.add("form-check-input");
+    else if (el.type !== "hidden") el.classList.add("form-control");
+  });
 </script>
 {% endblock %}

@@ -18,14 +18,20 @@
           <tr>
             <th>Name</th>
             <th>Type</th>
+            <th>Contact</th>
+            <th>Stock</th>
+            <th>Status</th>
             <th class="text-end">Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for l in locations %}
-          <tr>
-            <td class="fw-semibold">{{ l.name }}</td>
-            <td><span class="badge text-bg-light">{{ l.type }}</span></td>
+          <tr {% if not l.is_active %}class="text-muted"{% endif %}>
+            <td class="fw-semibold">{{ l.name }}{% if l.address %}<div class="text-muted small fw-normal">{{ l.address|linebreaksbr }}</div>{% endif %}</td>
+            <td><span class="badge text-bg-light">{{ l.get_type_display }}</span></td>
+            <td class="small">{% if l.contact_person %}{{ l.contact_person }}{% endif %}{% if l.phone %}<div class="text-muted">{{ l.phone }}</div>{% endif %}{% if l.email %}<div class="text-muted">{{ l.email }}</div>{% endif %}</td>
+            <td>{% if l.holds_stock %}<span class="badge text-bg-success">Visible</span>{% else %}<span class="badge text-bg-secondary">No stock</span>{% endif %}</td>
+            <td>{% if l.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
             <td class="text-end">
               <div class="btn-group">
                 <a class="btn btn-sm btn-outline-primary" href="/locations/{{ l.id }}/edit/">Edit</a>
@@ -35,7 +41,7 @@
           </tr>
           {% empty %}
           <tr>
-            <td colspan="3" class="text-center text-muted py-5">
+            <td colspan="6" class="text-center text-muted py-5">
               No locations yet. Create your main warehouse first.
             </td>
           </tr>

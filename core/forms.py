@@ -41,6 +41,21 @@ class TenantModelForm(forms.ModelForm):
             if any(f.name == "tenant" for f in qs.model._meta.fields):
                 field.queryset = qs.filter(tenant=tenant)
 
+    def _limit_stock_locations(self, *field_names):
+        """Restrict Location dropdowns to active, stock-holding locations, while
+        keeping whatever value an existing record already points at."""
+        from django.db.models import Q
+        for name in field_names:
+            field = self.fields.get(name)
+            if field is None or getattr(field, "queryset", None) is None:
+                continue
+            current_id = getattr(self.instance, f"{name}_id", None)
+            cond = Q(is_active=True, holds_stock=True)
+            if current_id:
+                cond = cond | Q(pk=current_id)
+            field.queryset = field.queryset.filter(cond)
+
+
 class PurchaseOrderForm(TenantModelForm):
     action = forms.ChoiceField(
         choices=(("save", "Save Draft"), ("submit", "Submit PO")),
@@ -146,6 +161,10 @@ class StockAdjustmentForm(TenantModelForm):
             "supplier": "For 'Return to supplier' only — raises a purchase credit note that reduces Accounts Payable.",
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._limit_stock_locations("location")
+
     def clean_qty_delta(self):
         qty = self.cleaned_data.get("qty_delta")
         if qty is not None and qty == 0:
@@ -200,7 +219,11 @@ class SupplierForm(TenantModelForm):
 class LocationForm(TenantModelForm):
     class Meta:
         model = Location
-        fields = ["name", "type"]
+        fields = ["name", "type", "address", "contact_person", "phone", "email",
+                  "opening_hours", "is_active", "holds_stock"]
+        widgets = {"address": forms.Textarea(attrs={"rows": 2})}
+        labels = {"holds_stock": "Holds stock (show in inventory)",
+                  "is_active": "Active", "opening_hours": "Opening hours (optional)"}
 
 class ChannelConnectionForm(TenantModelForm):
     class Meta:
@@ -351,6 +374,10 @@ class CycleCountForm(TenantModelForm):
         model = CycleCount
         fields = ["location", "count_date", "notes"]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._limit_stock_locations("location")
+
 class CycleCountLineForm(TenantModelForm):
     class Meta:
         model = CycleCountLine
@@ -374,6 +401,10 @@ class InventoryTransferForm(TenantModelForm):
     class Meta:
         model = InventoryTransfer
         fields = ["from_location","to_location","notes"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._limit_stock_locations("from_location", "to_location")
 
 InventoryTransferLineFormSet = inlineformset_factory(
     InventoryTransfer,

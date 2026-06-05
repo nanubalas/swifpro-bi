@@ -227,8 +227,9 @@ class Location(models.Model):
         SHOP = "STORE", "Shop / Store"
         OFFICE = "OFFICE", "Office"
         VAN = "VAN", "Van"
-        THREEPL = "THREEPL", "3PL"
         POPUP = "POPUP", "Pop-up location"
+        THREEPL = "THREEPL", "3PL"
+        STORAGE = "STORAGE", "Storage unit"
         TRANSIT = "TRANSIT", "Transit"
         RETURNS = "RETURNS", "Returns"
         QUARANTINE = "QUARANTINE", "Quarantine"
@@ -236,6 +237,15 @@ class Location(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     name = models.CharField(max_length=200)
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.WAREHOUSE)
+    address = models.TextField(blank=True, null=True)
+    contact_person = models.CharField(max_length=200, blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    opening_hours = models.CharField(max_length=255, blank=True, null=True)  # e.g. "Mon–Fri 9–5"
+    is_active = models.BooleanField(default=True)
+    # Stock visibility: whether inventory is held & shown at this location
+    # (e.g. an Office or Van that doesn't carry sellable stock can be False).
+    holds_stock = models.BooleanField(default=True)
 
     class Meta:
         unique_together = ("tenant", "name")
