@@ -471,8 +471,25 @@ dashboard_readonly = _make_dashboard(roles_mod.READONLY)
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def audit_log_list(request):
     tenant = _get_default_tenant(request)
-    logs = AuditLog.objects.filter(tenant=tenant)[:300]
-    return render(request, "audit_log.html", {"tenant": tenant, "logs": logs})
+    qs = AuditLog.objects.filter(tenant=tenant).select_related("user")
+    action = (request.GET.get("action") or "").strip()
+    q = (request.GET.get("q") or "").strip()
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    if action:
+        qs = qs.filter(action=action)
+    if q:
+        qs = qs.filter(Q(username__icontains=q) | Q(detail__icontains=q) |
+                       Q(entity_type__icontains=q) | Q(entity_id__icontains=q))
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+    actions = list(AuditLog.objects.filter(tenant=tenant).values_list("action", flat=True).distinct().order_by("action"))
+    return render(request, "audit_log.html", {
+        "tenant": tenant, "logs": qs[:500], "actions": actions,
+        "f_action": action, "q": q, "date_from": date_from, "date_to": date_to,
+    })
 
 
 def _csv_response(filename, columns, rows):
@@ -729,9 +746,11 @@ def audit_log_export(request):
     """Download the audit log for the active organisation as CSV/Excel (admin)."""
     tenant = _get_default_tenant(request)
     logs = AuditLog.objects.filter(tenant=tenant)[:5000]
-    columns = ["timestamp", "action", "user", "detail", "path", "ip"]
-    rows = [[l.created_at.strftime("%Y-%m-%d %H:%M:%S"), l.action,
-             l.username or "", l.detail or "", l.path or "", l.ip or ""] for l in logs]
+    columns = ["timestamp", "action", "user", "entity_type", "entity_id", "old_value",
+               "new_value", "detail", "path", "ip", "user_agent"]
+    rows = [[l.created_at.strftime("%Y-%m-%d %H:%M:%S"), l.action, l.username or "",
+             l.entity_type or "", l.entity_id or "", l.old_value or "", l.new_value or "",
+             l.detail or "", l.path or "", l.ip or "", l.user_agent or ""] for l in logs]
     log_audit(action="DATA_EXPORTED", request=request, user=request.user, tenant=tenant,
               detail=f"audit log ({len(rows)} rows)")
     return _export_response(request, "audit-log.csv", columns, rows, sheet_title="Audit log")

@@ -174,22 +174,43 @@ class AccessRequest(models.Model):
 
 
 class AuditLog(models.Model):
-    """Security/audit trail: logins, access-denied, and sensitive actions."""
+    """Security/audit trail: logins, access-denied, and sensitive actions.
+
+    Append-only: records cannot be modified once written (see save()), so the
+    trail can be trusted as evidence of who did what, when, and from where."""
     tenant = models.ForeignKey(Tenant, on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_logs")
     user = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     username = models.CharField(max_length=150, blank=True, null=True)
     action = models.CharField(max_length=50)          # LOGIN, LOGOUT, ACCESS_DENIED, ...
+    entity_type = models.CharField(max_length=80, blank=True, null=True)   # e.g. "CustomerInvoice"
+    entity_id = models.CharField(max_length=64, blank=True, null=True)     # PK / document number
+    old_value = models.TextField(blank=True, null=True)
+    new_value = models.TextField(blank=True, null=True)
     detail = models.CharField(max_length=255, blank=True, null=True)
     path = models.CharField(max_length=255, blank=True, null=True)
     ip = models.CharField(max_length=64, blank=True, null=True)
+    user_agent = models.CharField(max_length=255, blank=True, null=True)   # browser / device
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         ordering = ["-created_at"]
-        indexes = [models.Index(fields=["tenant", "-created_at"]), models.Index(fields=["action"])]
+        indexes = [models.Index(fields=["tenant", "-created_at"]), models.Index(fields=["action"]),
+                   models.Index(fields=["entity_type", "entity_id"])]
 
     def __str__(self):
         return f"{self.created_at:%Y-%m-%d %H:%M} {self.action} {self.username or ''}"
+
+    def save(self, *args, **kwargs):
+        # Append-only: block any update to an existing record.
+        if self.pk is not None and AuditLog.objects.filter(pk=self.pk).exists():
+            raise ValueError("Audit log entries are immutable and cannot be modified.")
+        super().save(*args, **kwargs)
+
+    @property
+    def change_summary(self):
+        if self.old_value or self.new_value:
+            return f"{self.old_value or '—'} → {self.new_value or '—'}"
+        return ""
 
 
 class Location(models.Model):

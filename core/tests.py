@@ -435,6 +435,58 @@ class AuditTrailPhase3Tests(TestCase):
         self.assertTrue(self.client.login(username="auadmin", password="Str0ng-Pass-99"))
 
 
+class AuditLogStructuredTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="AuditS Co")
+        self.admin = User.objects.create_user("asadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.sales = User.objects.create_user("assales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+
+    def test_log_audit_captures_structured_fields_and_user_agent(self):
+        from core.audit import log_audit
+        from core.models import AuditLog
+
+        class FakeReq:
+            path = "/x/"
+            META = {"REMOTE_ADDR": "10.0.0.5", "HTTP_USER_AGENT": "Mozilla/5.0 TestBrowser"}
+        log_audit(action="UPDATE", request=FakeReq(), user=self.admin, tenant=self.tenant,
+                  entity_type="Product", entity_id="42", old_value="5.00", new_value="7.50",
+                  detail="cost change")
+        log = AuditLog.objects.get(action="UPDATE")
+        self.assertEqual(log.entity_type, "Product")
+        self.assertEqual(log.entity_id, "42")
+        self.assertEqual(log.old_value, "5.00")
+        self.assertEqual(log.new_value, "7.50")
+        self.assertEqual(log.ip, "10.0.0.5")
+        self.assertEqual(log.user_agent, "Mozilla/5.0 TestBrowser")
+        self.assertEqual(log.change_summary, "5.00 → 7.50")
+
+    def test_audit_log_is_immutable(self):
+        from core.models import AuditLog
+        log = AuditLog.objects.create(tenant=self.tenant, action="LOGIN", username="x")
+        log.action = "TAMPERED"
+        with self.assertRaises(ValueError):
+            log.save()
+        log.refresh_from_db()
+        self.assertEqual(log.action, "LOGIN")
+
+    def test_viewer_filters_by_action_and_is_admin_only(self):
+        from core.audit import log_audit
+        log_audit(action="LOGIN", user=self.admin, tenant=self.tenant)
+        log_audit(action="DATA_EXPORTED", user=self.admin, tenant=self.tenant)
+        # Non-admin cannot view.
+        self.client.login(username="assales", password="pw")
+        self.assertEqual(self.client.get("/audit/").status_code, 403)
+        # Admin can, and the action filter narrows results.
+        self.client.login(username="asadmin", password="pw")
+        resp = self.client.get("/audit/?action=DATA_EXPORTED")
+        self.assertEqual(resp.status_code, 200)
+        actions = {l.action for l in resp.context["logs"]}
+        self.assertEqual(actions, {"DATA_EXPORTED"})
+
+
 class UserPermissionOverrideTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership, UserPermissionOverride
