@@ -31,7 +31,7 @@ from core import roles as roles_mod
 from core.access import (
     get_active_role, get_memberships, default_landing_url, SESSION_TENANT_KEY,
     SESSION_LOCATION_KEY, get_active_location, selectable_locations,
-    can_access_company, can_access_site,
+    can_access_company, can_access_site, active_location_ids,
 )
 from core.audit import log_audit
 from core.forms import (
@@ -116,6 +116,9 @@ def _default_vat_rate(tenant):
 def po_list(request):
     tenant = _get_default_tenant(request)
     pos = PurchaseOrder.objects.filter(tenant=tenant).order_by("-created_at")
+    sel = active_location_ids(request)  # scope to the selected receiving site
+    if sel:
+        pos = pos.filter(receiving_location_id__in=sel)
     return render(request, "po_list.html", {"tenant": tenant, "pos": pos})
 
 @login_required
@@ -2069,7 +2072,7 @@ def inventory_list(request):
         .order_by("product__sku", "location__name")
     )
     # Restrict to the locations this user may see.
-    allowed = accessible_location_ids(request.user, tenant)
+    allowed = active_location_ids(request)  # scope to the selected site
     if allowed is not None:
         balances = balances.filter(location_id__in=allowed)
     # Optional location filter.
@@ -2128,7 +2131,7 @@ def adjustment_list(request):
     from core.access import accessible_location_ids
     tenant = _get_default_tenant(request)
     adjustments = StockAdjustment.objects.filter(tenant=tenant).select_related("product", "location", "requested_by")
-    allowed = accessible_location_ids(request.user, tenant)
+    allowed = active_location_ids(request)  # scope to the selected site
     if allowed is not None:
         adjustments = adjustments.filter(location_id__in=allowed)
     return render(request, "inventory/adjustment_list.html", {
@@ -2300,7 +2303,7 @@ def stock_movements(request):
     date_to = _parse_date(request.GET.get("to"))
 
     from core.access import accessible_location_ids
-    allowed = accessible_location_ids(request.user, tenant)
+    allowed = active_location_ids(request)  # scope to the selected site
 
     qs = InventoryMovement.objects.filter(tenant=tenant).select_related("product", "location", "user")
     if allowed is not None:
@@ -2954,7 +2957,7 @@ def bin_list(request):
     from core.access import accessible_location_ids
     tenant = _get_default_tenant(request)
     bins = Bin.objects.filter(tenant=tenant).select_related("location").order_by("location__name", "code")
-    allowed = accessible_location_ids(request.user, tenant)
+    allowed = active_location_ids(request)  # scope to the selected site
     if allowed is not None:
         bins = bins.filter(location_id__in=allowed)
     return render(request, "locations/bin_list.html", {"tenant": tenant, "bins": bins})
@@ -3596,7 +3599,7 @@ def transfer_list(request):
     from django.db.models import Q
     tenant = _get_default_tenant(request)
     transfers = InventoryTransfer.objects.filter(tenant=tenant).order_by("-created_at")
-    allowed = accessible_location_ids(request.user, tenant)
+    allowed = active_location_ids(request)  # scope to the selected site
     if allowed is not None:
         transfers = transfers.filter(Q(from_location_id__in=allowed) | Q(to_location_id__in=allowed))
     return render(request, "transfers/transfer_list.html", {"tenant": tenant, "transfers": transfers})
@@ -4075,6 +4078,9 @@ def ar_invoice_list(request):
         .prefetch_related("lines", "lines__tax_code")
         .order_by("-invoice_date", "-id")
     )
+    sel = active_location_ids(request)  # scope to the selected site
+    if sel:
+        invoices = invoices.filter(location_id__in=sel)
     return render(request, "ar/ar_invoice_list.html", {"tenant": tenant, "invoices": invoices})
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
@@ -4430,6 +4436,9 @@ def quote_delete(request, quote_id):
 def corder_list(request):
     tenant = _get_default_tenant(request)
     orders = CustomerOrder.objects.filter(tenant=tenant).select_related("customer").prefetch_related("lines", "lines__tax_code").order_by("-order_date", "-id")
+    sel = active_location_ids(request)  # scope to the selected site
+    if sel:
+        orders = orders.filter(location_id__in=sel)
     return render(request, "sales/corder_list.html", {"tenant": tenant, "orders": orders})
 
 
@@ -4797,7 +4806,7 @@ def _sales_location_filter(request, tenant):
     location for the dropdown, and locations is the list to populate it. Honours
     the user's per-location access (a restricted user can't widen past their grants)."""
     from core.access import accessible_location_ids, accessible_locations
-    allowed = accessible_location_ids(request.user, tenant)
+    allowed = active_location_ids(request)  # scope to the selected site
     locations = list(accessible_locations(request.user, tenant).order_by("name"))
     selected_id = None
     raw = (request.GET.get("location") or "").strip()
@@ -5134,7 +5143,7 @@ def report_aged_receivables(request):
 def report_stock_valuation(request):
     from core.access import accessible_location_ids
     tenant = _get_default_tenant(request)
-    allowed = accessible_location_ids(request.user, tenant)
+    allowed = active_location_ids(request)  # scope to the selected site
     data = reports_service.stock_valuation(tenant, location_ids=allowed)
     return render(request, "reports/stock_valuation.html", {"tenant": tenant, "data": data})
 
@@ -5145,7 +5154,7 @@ def report_inventory_analytics(request):
     from core.access import accessible_location_ids
     tenant = _get_default_tenant(request)
     date_from, date_to = _sales_period(request, tenant)
-    allowed = accessible_location_ids(request.user, tenant)
+    allowed = active_location_ids(request)  # scope to the selected site
     data = reports_service.inventory_analytics(tenant, date_from, date_to, location_ids=allowed)
     return render(request, "reports/inventory_analytics.html", {
         "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to})
