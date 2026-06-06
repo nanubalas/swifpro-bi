@@ -1308,6 +1308,8 @@ def po_create(request):
         if form.is_valid() and formset.is_valid():
             po = form.save(commit=False)
             po.tenant = tenant
+            if not po.receiving_location_id:
+                po.receiving_location = _order_stock_location(tenant)  # default to the org's main stock location
 
             action = form.cleaned_data.get("action") or "save"
             po.status = PurchaseOrder.Status.SUBMITTED if action == "submit" else PurchaseOrder.Status.DRAFT
@@ -1337,7 +1339,7 @@ def po_create(request):
 
             # Create shipment record on submit only if approval not required
             if po.status == PurchaseOrder.Status.SUBMITTED and not getattr(po, "approval_required", False):
-                dest = Location.objects.filter(tenant=tenant).order_by("id").first()
+                dest = _po_destination(po)
                 if dest:
                     Shipment.objects.get_or_create(
                         tenant=tenant,
@@ -1378,7 +1380,7 @@ def po_approve(request, po_id):
     po.save()
 
     # Ensure there is at least one shipment + shipment lines
-    dest = Location.objects.filter(tenant=tenant).order_by("id").first()
+    dest = _po_destination(po)
     if dest:
         shipment, _ = Shipment.objects.get_or_create(
             tenant=tenant,
@@ -1445,7 +1447,7 @@ def po_submit(request, po_id):
     record_po_prices(po)
 
     # Always create at least 1 shipment on submit (planned), with shipment lines (expected qty = open qty)
-    dest = Location.objects.filter(tenant=tenant).order_by("id").first()
+    dest = _po_destination(po)
     if not dest:
         messages.error(request, "Create at least one Location before submitting POs.")
         return redirect("po_detail", po_id=po.id)
@@ -4380,6 +4382,12 @@ def corder_pdf(request, order_id):
 def _order_stock_location(tenant):
     return (Location.objects.filter(tenant=tenant, type=Location.Type.WAREHOUSE).order_by("id").first()
             or Location.objects.filter(tenant=tenant).order_by("id").first())
+
+
+def _po_destination(po):
+    """Receiving location for a PO's goods: the PO's own receiving_location when
+    set, otherwise the org's first location (legacy fallback)."""
+    return po.receiving_location or Location.objects.filter(tenant=po.tenant).order_by("id").first()
 
 
 def _reserve_customer_order(o):

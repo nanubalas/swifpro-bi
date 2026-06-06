@@ -4466,3 +4466,58 @@ class SalesLocationTests(TestCase):
         self.assertEqual(len(all_rows), 2)
         self.assertEqual(len(b_rows), 1)
         self.assertEqual(b_rows[0]["invoice"].invoice_number, "INV-B")
+
+
+class POReceivingLocationTests(TestCase):
+    """Purchase orders carry a structured receiving location; shipments and
+    goods receipts land stock there."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Supplier
+        self.tenant = Tenant.objects.create(name="POLoc Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.locA = Location.objects.create(tenant=self.tenant, name="WH A", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, name="WH B", type=Location.Type.WAREHOUSE)
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Supp")
+        self.prod = Product.objects.create(tenant=self.tenant, sku="POL1", name="Widget")
+        self.user = User.objects.create_user("poluser", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="poluser", password="pw")
+
+    def _post_po(self, receiving_location=None, action="save"):
+        data = {
+            "supplier": self.supplier.id, "expected_date": "2026-02-01", "action": action,
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-product": self.prod.id, "lines-0-ordered_qty": "10",
+            "lines-0-unit_cost": "4.00", "lines-0-tax_code": self.std.id,
+        }
+        if receiving_location is not None:
+            data["receiving_location"] = receiving_location.id
+        return self.client.post("/po/new/", data)
+
+    def test_po_defaults_receiving_location(self):
+        from core.models import PurchaseOrder
+        resp = self._post_po()
+        self.assertEqual(resp.status_code, 302)
+        po = PurchaseOrder.objects.get(tenant=self.tenant)
+        self.assertIsNotNone(po.receiving_location_id)  # defaulted to a stock location
+
+    def test_explicit_receiving_location_drives_shipment_destination(self):
+        from core.models import PurchaseOrder, Shipment
+        resp = self._post_po(receiving_location=self.locB, action="submit")
+        self.assertEqual(resp.status_code, 302)
+        po = PurchaseOrder.objects.get(tenant=self.tenant)
+        self.assertEqual(po.receiving_location_id, self.locB.id)
+        shipment = Shipment.objects.get(po=po)
+        self.assertEqual(shipment.destination_id, self.locB.id)
+
+    def test_po_destination_helper(self):
+        from core.models import PurchaseOrder
+        from core.views import _po_destination
+        po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-H1",
+                                          supplier=self.supplier, receiving_location=self.locB)
+        self.assertEqual(_po_destination(po), self.locB)
+        po2 = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-H2", supplier=self.supplier)
+        self.assertEqual(_po_destination(po2), self.locA)  # fallback to first location

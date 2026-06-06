@@ -589,7 +589,9 @@ class PurchaseOrder(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     po_number = models.CharField(max_length=40)
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
-    delivery_address = models.TextField(blank=True, null=True)  # where goods should be delivered
+    receiving_location = models.ForeignKey("Location", on_delete=models.SET_NULL, null=True, blank=True,
+                                           related_name="purchase_orders")  # where stock is received
+    delivery_address = models.TextField(blank=True, null=True)  # free-text delivery note (supplements receiving_location)
     currency_code = models.CharField(max_length=3, default="GBP")  # defaults from supplier/tenant
     version = models.PositiveIntegerField(default=1)
     supersedes = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="amended_by")

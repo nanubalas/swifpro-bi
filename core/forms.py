@@ -64,12 +64,18 @@ class PurchaseOrderForm(TenantModelForm):
 
     class Meta:
         model = PurchaseOrder
-        fields = ["supplier", "expected_date", "delivery_address", "notes"]
+        fields = ["supplier", "receiving_location", "expected_date", "delivery_address", "notes"]
         widgets = {
             "expected_date": forms.DateInput(attrs={"type": "date"}),
             "delivery_address": forms.Textarea(attrs={"rows": 2}),
             "notes": forms.Textarea(attrs={"rows": 2}),
         }
+        help_texts = {"receiving_location": "Warehouse / store goods are received into."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._limit_stock_locations("receiving_location")
+        self.fields["receiving_location"].required = False
 
 PurchaseOrderLineFormSet = inlineformset_factory(
     PurchaseOrder,
