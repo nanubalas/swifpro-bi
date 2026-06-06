@@ -379,7 +379,7 @@ class SiteTierTests(TestCase):
             names = set(LocationForm().fields["site"].queryset.values_list("name", flat=True))
         finally:
             clear_current_tenant()
-        self.assertEqual(names, {"Mine"})
+        self.assertEqual(names, {"Main Site", "Mine"})  # tenant's sites only (auto + own), not "Theirs"
 
 
 class BinTests(TestCase):
@@ -4806,3 +4806,37 @@ class SiteDataScopingTests(TestCase):
         self.assertEqual(self._ctx_ids("/ar/invoices/", "invoices"), [self.invB.id])
         self.assertEqual(self._ctx_ids("/customer-orders/", "orders"), [self.ordB.id])
         self.assertEqual(self._ctx_ids("/po/", "pos"), [self.poB.id])
+
+
+class DefaultSiteTests(TestCase):
+    """A fresh company gets a default Site, and the Main Location sits under it."""
+
+    def test_new_tenant_gets_default_site_with_location(self):
+        from core.models import Site, Location
+        t = Tenant.objects.create(name="Site Boot Co")
+        sites = Site.objects.filter(tenant=t)
+        self.assertEqual(sites.count(), 1)
+        site = sites.get()
+        self.assertEqual(site.name, "Main Site")
+        self.assertTrue(site.is_default)
+        self.assertEqual(site.site_type, Site.Type.OPERATING_SITE)
+        loc = Location.objects.get(tenant=t, name="Main Location")
+        self.assertEqual(loc.site_id, site.id)  # location belongs to the site
+
+    def test_existing_location_without_site_is_attached(self):
+        from core.models import Site, Location
+        t = Tenant.objects.create(name="Orphan Co")
+        # Simulate a legacy orphan location (no site).
+        orphan = Location.objects.create(tenant=t, name="Legacy WH", type=Location.Type.WAREHOUSE)
+        orphan.site = None
+        orphan.save(update_fields=["site"])
+        # The backfill helper (same logic as migration 0066) re-attaches it.
+        site = Site.objects.filter(tenant=t, is_default=True).first()
+        Location.objects.filter(tenant=t, site__isnull=True).update(site=site)
+        orphan.refresh_from_db()
+        self.assertEqual(orphan.site_id, site.id)
+
+    def test_site_type_choices_present(self):
+        from core.models import Site
+        keys = set(dict(Site.Type.choices))
+        self.assertEqual(keys, {"region", "country_division", "city_branch", "business_unit", "operating_site"})

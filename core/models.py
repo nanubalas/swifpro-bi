@@ -255,20 +255,34 @@ class AuditLog(models.Model):
 
 
 class Site(models.Model):
-    """A site / plant: an operational tier between the company and its
-    warehouses. A company can run several sites, each holding many locations.
-    Mirrors Epicor's Company -> Site -> Warehouse."""
+    """A site: the operating / reporting tier between the company and its
+    inventory locations (Company -> Site -> Inventory Location). A site is a
+    region, country division, city branch, business unit or operating site -
+    NOT a stock-storage location. It holds many inventory Locations."""
+    class Type(models.TextChoices):
+        REGION = "region", "Region"
+        COUNTRY_DIVISION = "country_division", "Country division"
+        CITY_BRANCH = "city_branch", "City branch"
+        BUSINESS_UNIT = "business_unit", "Business unit"
+        OPERATING_SITE = "operating_site", "Operating site"
+
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="sites")
     name = models.CharField(max_length=200)
     code = models.CharField(max_length=20, blank=True, null=True)
+    site_type = models.CharField(max_length=20, choices=Type.choices, default=Type.OPERATING_SITE)
+    region = models.CharField(max_length=120, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     contact_person = models.CharField(max_length=200, blank=True, null=True)
     phone = models.CharField(max_length=50, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
+    manager = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name="managed_sites")
+    is_default = models.BooleanField(default=False)  # the company's default operating site
     is_active = models.BooleanField(default=True)
 
     class Meta:
         unique_together = ("tenant", "name")
+        ordering = ["name"]
 
     def __str__(self):
         return self.name
