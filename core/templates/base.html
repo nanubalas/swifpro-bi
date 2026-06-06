@@ -163,6 +163,40 @@
       background: linear-gradient(135deg, var(--skn-brand), var(--skn-accent));
     }
 
+    /* ---------- Workspace switcher (two-pane company + site picker) ---------- */
+    .skn-ctx-modal .modal-dialog { max-width: 600px; }
+    .skn-ctx-modal .modal-content {
+      border-radius: 16px; overflow: hidden;
+      border: 1px solid var(--skn-border); box-shadow: var(--skn-shadow-lg);
+      background: var(--skn-surface);
+    }
+    .skn-ws-title { display: flex; align-items: center; gap: .55rem; padding: .9rem 1.1rem; border-bottom: 1px solid var(--skn-border); font-weight: 700; }
+    .skn-ws-title > i { color: var(--skn-brand); }
+    .skn-ws { display: grid; grid-template-columns: 1fr 1.2fr; }
+    .skn-ws-pane { padding: .55rem; overflow: auto; max-height: 56vh; min-height: 300px; }
+    .skn-ws-companies { border-right: 1px solid var(--skn-border); background: var(--skn-surface-2); }
+    .skn-ws-panehdr { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--skn-muted); padding: .55rem .7rem .4rem; }
+    .skn-ws-co, .skn-ws-site {
+      display: flex; align-items: center; gap: .6rem; width: 100%; text-align: left;
+      border: 0; background: transparent; color: var(--skn-text);
+      padding: .62rem .7rem; border-radius: 10px; font-size: .94rem; transition: background .14s ease;
+    }
+    .skn-ws-co > i:first-child, .skn-ws-site > i:first-child { color: var(--skn-muted); width: 1.1rem; text-align: center; flex: none; }
+    .skn-ws-co .bi-chevron-right { color: var(--skn-muted); font-size: .78rem; flex: none; }
+    .skn-ws-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .skn-ctx-region { color: var(--skn-muted); font-size: .8rem; font-weight: 500; }
+    .skn-ws-co:hover, .skn-ws-site:hover { background: var(--skn-brand-soft); }
+    .skn-ws-co.active { background: var(--skn-surface); color: var(--skn-brand); font-weight: 650; box-shadow: var(--skn-shadow-sm); }
+    .skn-ws-co.active > i:first-child, .skn-ws-co.active .bi-chevron-right { color: var(--skn-brand); }
+    .skn-ws-site .skn-ws-check { opacity: 0; color: var(--skn-brand); flex: none; }
+    .skn-ws-site.active { background: var(--skn-brand-soft); color: var(--skn-brand); font-weight: 650; }
+    .skn-ws-site.active > i:first-child { color: var(--skn-brand); }
+    .skn-ws-site.active .skn-ws-check { opacity: 1; }
+    .skn-ws-footer { display: flex; justify-content: flex-end; padding: .85rem 1.1rem; border-top: 1px solid var(--skn-border); }
+    .skn-ws-footer form { display: flex; gap: .6rem; margin: 0; }
+    .skn-ctx-empty { text-align: center; color: var(--skn-muted); padding: 1.4rem .7rem; font-size: .88rem; }
+    @media (max-width: 575.98px) { .skn-ws { grid-template-columns: 1fr 1fr; } .skn-ws-pane { min-height: 240px; } }
+
     /* ---------- Cards / tiles ---------- */
     .card, .card-soft, .tile {
       background: var(--skn-surface);
@@ -348,52 +382,6 @@
       <button class="skn-iconbtn" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle light / dark">
         <i class="bi bi-moon-stars"></i>
       </button>
-      {% if user.is_authenticated and active_site_id %}
-        {# Company switcher (only when the user belongs to more than one) #}
-        {% if switch_companies|length > 1 %}
-        <div class="dropdown">
-          <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Switch company">
-            <i class="bi bi-building me-1"></i><span class="d-none d-md-inline">{{ active_tenant_name }}</span>
-          </button>
-          <ul class="dropdown-menu dropdown-menu-end">
-            <li><h6 class="dropdown-header">Company</h6></li>
-            {% for c in switch_companies %}
-            <li>
-              <form method="post" action="{% url 'switch_company' %}" class="d-inline">
-                {% csrf_token %}
-                <input type="hidden" name="tenant" value="{{ c.id }}">
-                <button type="submit" class="dropdown-item {% if c.id == active_tenant_id %}active{% endif %}">{{ c.name }}</button>
-              </form>
-            </li>
-            {% endfor %}
-          </ul>
-        </div>
-        {% else %}
-        <span class="badge text-bg-light border d-none d-md-inline"><i class="bi bi-building me-1"></i>{{ active_tenant_name }}</span>
-        {% endif %}
-
-        {# Site switcher - mandatory single site, never 'all sites' #}
-        <div class="dropdown">
-          <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Switch site">
-            <i class="bi bi-geo-alt me-1"></i><span class="d-none d-md-inline">{{ active_site_name }}</span>
-          </button>
-          <ul class="dropdown-menu dropdown-menu-end" style="max-height:60vh; overflow:auto;">
-            <li><h6 class="dropdown-header">Site</h6></li>
-            {% for s in switch_sites %}
-            <li>
-              <form method="post" action="{% url 'switch_site' %}" class="d-inline">
-                {% csrf_token %}
-                <input type="hidden" name="site" value="{{ s.id }}">
-                <input type="hidden" name="next" value="{{ request.path }}">
-                <button type="submit" class="dropdown-item {% if s.id == active_site_id %}active{% endif %}">
-                  {{ s.name }}{% if s.region %} <span class="text-muted small">({{ s.region }})</span>{% endif %}
-                </button>
-              </form>
-            </li>
-            {% endfor %}
-          </ul>
-        </div>
-      {% endif %}
       {% if user.is_authenticated %}
         <span class="skn-userchip">
           <span class="skn-avatar">{{ user.username|first|upper }}</span>
@@ -499,6 +487,60 @@
       root.setAttribute("data-bs-theme", next);
       try { localStorage.setItem("skunow-theme", next); } catch (e) {}
       syncIcon();
+    });
+  })();
+
+  // ---- Workspace switcher (two-pane: company -> its sites -> Switch) ----
+  (function () {
+    var modalEl = document.getElementById("workspaceSwitcher");
+    if (!modalEl || !window.bootstrap) return;
+    var tenantInput = document.getElementById("wsTenant");
+    var siteInput = document.getElementById("wsSite");
+    var okBtn = document.getElementById("wsOk");
+
+    // Highlight one site (within the visible company) and sync the hidden inputs.
+    function selectSite(btn) {
+      modalEl.querySelectorAll(".skn-ws-site").forEach(function (b) { b.classList.remove("active"); });
+      if (btn) {
+        btn.classList.add("active");
+        siteInput.value = btn.getAttribute("data-site");
+        tenantInput.value = btn.getAttribute("data-co");
+        okBtn.disabled = false;
+      } else {
+        siteInput.value = "";
+        okBtn.disabled = true;   // company with no sites - nothing to switch to
+      }
+    }
+
+    // Show a company's sites on the right; keep the current site if it belongs to
+    // that company, otherwise pre-select its first site.
+    function showCompany(coId) {
+      modalEl.querySelectorAll(".skn-ws-co").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-co") === coId);
+      });
+      modalEl.querySelectorAll(".skn-ws-sitegroup").forEach(function (g) {
+        g.hidden = g.getAttribute("data-co") !== coId;
+      });
+      tenantInput.value = coId;
+      var group = modalEl.querySelector('.skn-ws-sitegroup[data-co="' + coId + '"]');
+      var sites = group ? group.querySelectorAll(".skn-ws-site") : [];
+      var want = siteInput.value, pick = null;
+      sites.forEach(function (s) { if (s.getAttribute("data-site") === want) pick = s; });
+      if (!pick && sites.length) pick = sites[0];
+      selectSite(pick);
+    }
+
+    modalEl.addEventListener("click", function (e) {
+      var co = e.target.closest(".skn-ws-co");
+      if (co) { showCompany(co.getAttribute("data-co")); return; }
+      var site = e.target.closest(".skn-ws-site");
+      if (site) { selectSite(site); }
+    });
+
+    // Each time it opens, reset to the server-rendered active context.
+    modalEl.addEventListener("shown.bs.modal", function () {
+      siteInput.value = siteInput.getAttribute("value") || "";
+      showCompany(tenantInput.getAttribute("value"));
     });
   })();
 

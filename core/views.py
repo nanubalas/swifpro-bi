@@ -469,6 +469,44 @@ def switch_site(request):
 
 
 @login_required
+def switch_workspace(request):
+    """Combined company + site switcher used by the workspace picker.
+
+    Validates access to BOTH the chosen company and a site within it, then
+    applies them atomically (so the session is never left with a company but no
+    matching site). Stays on the current page when possible."""
+    from core.access import get_active_tenant
+    if request.method != "POST":
+        return redirect("landing")
+    tid = request.POST.get("tenant")
+    sid = request.POST.get("site")
+    next_url = _safe_next(request.POST.get("next") or "")
+
+    if not tid or not can_access_company(request.user, tid):
+        log_audit(action="UNAUTHORISED_COMPANY_ACCESS", request=request, user=request.user,
+                  detail=f"tenant_id={tid}")
+        raise PermissionDenied("You do not have access to that company.")
+    tenant = Tenant.objects.filter(id=tid).first()
+    if not sid or not can_access_site(request.user, tenant, sid):
+        log_audit(action="UNAUTHORISED_SITE_ACCESS", request=request, user=request.user, tenant=tenant,
+                  detail=f"site_id={sid}")
+        raise PermissionDenied("You do not have access to that site.")
+
+    # Both valid - apply together.
+    company_changed = str(request.session.get(SESSION_TENANT_KEY)) != str(tid)
+    request.session[SESSION_TENANT_KEY] = int(tid)
+    request.session[SESSION_SITE_KEY] = int(sid)
+    request.session.pop(SESSION_LOCATION_KEY, None)  # drop stale workflow location
+    site = selectable_sites(request.user, tenant).filter(id=sid).first()
+    if company_changed:
+        log_audit(action="COMPANY_SWITCHED", request=request, user=request.user, tenant=tenant,
+                  detail=f"tenant_id={tid}")
+    log_audit(action="SITE_SWITCHED", request=request, user=request.user, tenant=tenant,
+              detail=getattr(site, "name", sid))
+    return redirect(next_url or default_landing_url(tenant, get_active_role(request)))
+
+
+@login_required
 def no_site(request):
     """Shown when a user has no site they can work in (no accessible active
     location in the selected company)."""
@@ -601,6 +639,14 @@ def _render_dashboard(request, role_code):
     # of truth for per-role access); skip the self-referential Dashboard entry.
     sections = [(t, items) for (t, items) in roles_mod.sidebar_for_role(role_code) if t != "Dashboard"]
     site = get_active_site(request)
+    now = timezone.localtime()
+    hour = now.hour
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 18:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
     return render(request, "dashboards/home.html", {
         "tenant": tenant,
         "role_code": role_code,
@@ -610,6 +656,8 @@ def _render_dashboard(request, role_code):
         "kpis": _dashboard_kpis(tenant, role_code, site_id=getattr(site, "id", None),
                                 location_ids=active_location_ids(request)),
         "active_site": site,
+        "greeting": greeting,
+        "now": now,
         "onboarding_complete": tenant.onboarding_complete,
     })
 

@@ -25,13 +25,92 @@
   .launch-icon.gold { background: var(--skn-gold-soft); color: var(--skn-gold); }
   .launch-card:hover .launch-icon.gold { background: var(--skn-gold); color: #fff; }
   .launch-section-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 700; color: var(--skn-muted); }
+
+  /* ---- Welcome hero ---- */
+  /* Light mode: brighter teal-leaning gradient with a soft diagonal sheen. */
+  .skn-hero {
+    position: relative; overflow: hidden;
+    border-radius: var(--skn-radius);
+    background:
+      radial-gradient(760px 380px at 90% -35%, rgba(24,214,201,.55), transparent 62%),
+      linear-gradient(118deg, #0A2D57 0%, #0C4E78 52%, #0E7E86 100%);
+    color: #fff;
+    padding: 1.6rem 1.7rem;
+    box-shadow: var(--skn-shadow);
+  }
+  .skn-hero::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.08) 0, rgba(255,255,255,.08) 1px, transparent 1px, transparent 14px);
+    opacity: .6;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 70%);
+            mask-image: linear-gradient(90deg, transparent, #000 70%);
+  }
+  /* Dark mode: deep navy with a subtle dot-grid (techy). */
+  [data-bs-theme="dark"] .skn-hero {
+    background:
+      radial-gradient(900px 400px at 88% -40%, rgba(24,214,201,.45), transparent 60%),
+      linear-gradient(120deg, var(--brand-navy) 0%, var(--brand-navy-soft) 48%, #0A3A5E 100%);
+  }
+  [data-bs-theme="dark"] .skn-hero::after {
+    background-image: radial-gradient(rgba(255,255,255,.06) 1px, transparent 1px);
+    background-size: 22px 22px; opacity: .5;
+  }
+  .skn-hero > * { position: relative; z-index: 1; }
+  .skn-hero-avatar {
+    width: 56px; height: 56px; border-radius: 16px; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; font-weight: 800; color: #fff;
+    background: linear-gradient(135deg, var(--brand-teal), var(--brand-teal-bright));
+    box-shadow: 0 8px 22px -6px rgba(0,175,166,.65);
+  }
+  .skn-hero h1 { color: #fff; font-weight: 800; font-size: 1.7rem; letter-spacing: -.02em; margin: 0; }
+  .skn-hero .skn-hero-sub { color: rgba(255,255,255,.72); font-size: .92rem; }
+  .skn-hero-role {
+    display: inline-flex; align-items: center; gap: .4rem;
+    padding: .35rem .8rem; border-radius: 999px;
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.18);
+    color: #fff; font-size: .82rem; font-weight: 600; backdrop-filter: blur(4px);
+  }
+  .skn-hero-ctx {
+    display: inline-flex; align-items: center; gap: .65rem; flex-wrap: wrap;
+    margin-top: 1.1rem; padding: .5rem .55rem .5rem .85rem; border-radius: 999px;
+    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.16);
+    color: #fff; font-weight: 600; font-size: .9rem; text-decoration: none;
+    transition: background .18s ease, border-color .18s ease, transform .18s ease;
+  }
+  .skn-hero-ctx:hover { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.3); color: #fff; transform: translateY(-1px); }
+  .skn-hero-ctx i { color: var(--brand-teal-bright); }
+  .skn-hero-ctx .dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,.4); }
+  .skn-hero-ctx .kbd {
+    font-size: .66rem; font-weight: 700; color: rgba(255,255,255,.85);
+    border: 1px solid rgba(255,255,255,.3); border-radius: 6px; padding: .08rem .38rem; line-height: 1;
+  }
+  @media (max-width: 575.98px) { .skn-hero h1 { font-size: 1.4rem; } .skn-hero { padding: 1.3rem 1.2rem; } }
 </style>
 
-<!-- Header (identity only - no business data) -->
-<div class="mb-4">
-  <div class="text-muted small">{{ tenant.name }}{% if active_site %} · <i class="bi bi-geo-alt"></i> {{ active_site.name }}{% endif %} · {{ role_label }}</div>
-  <h2 class="fw-bold mb-1">Welcome back, {{ user.get_username }}</h2>
-  <div class="text-muted">Choose where you'd like to go.</div>
+<!-- Welcome hero (identity + context only - no business data) -->
+<div class="skn-hero mb-4">
+  <div class="d-flex align-items-start gap-3">
+    <span class="skn-hero-avatar">{{ user.username|first|upper }}</span>
+    <div class="flex-grow-1">
+      <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+        <div>
+          <h1>{{ greeting|default:'Welcome back' }}, {{ user.get_username }}</h1>
+          <div class="skn-hero-sub mt-1">{{ now|date:'l, j F Y' }} · Choose where you'd like to go.</div>
+        </div>
+        <span class="skn-hero-role"><i class="bi bi-person-badge"></i> {{ role_label }}</span>
+      </div>
+
+      {# Active context - tap to open the workspace switcher (company + site). #}
+      <a class="skn-hero-ctx" href="#" data-bs-toggle="modal" data-bs-target="#workspaceSwitcher" role="button"
+         title="Switch company / site">
+        <i class="bi bi-building"></i> <span>{{ tenant.name }}</span>
+        <span class="dot"></span>
+        <i class="bi bi-geo-alt"></i> <span>{% if active_site %}{{ active_site.name }}{% else %}No site{% endif %}</span>
+        <i class="bi bi-arrow-left-right ms-1"></i>
+      </a>
+    </div>
+  </div>
 </div>
 
 {% if role_code == 'ADMIN' and not onboarding_complete %}
@@ -81,4 +160,52 @@
 {% empty %}
 <div class="text-muted">No modules are available for your role yet. Contact your administrator.</div>
 {% endfor %}
+
+{# Workspace switcher: pick a company (left), then a site within it (right), then Switch. Dashboard-only. #}
+<div class="modal fade skn-ctx-modal" id="workspaceSwitcher" tabindex="-1" aria-labelledby="wsLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="skn-ws-title">
+        <i class="bi bi-grid-1x2"></i><span id="wsLabel">Switch workspace</span>
+        <button type="button" class="btn-close ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="skn-ws">
+        <div class="skn-ws-pane skn-ws-companies">
+          <div class="skn-ws-panehdr">Company</div>
+          {% for w in workspace_companies %}
+          <button type="button" class="skn-ws-co{% if w.tenant.id == active_tenant_id %} active{% endif %}" data-co="{{ w.tenant.id }}">
+            <i class="bi bi-building"></i><span class="skn-ws-name">{{ w.tenant.name }}</span><i class="bi bi-chevron-right"></i>
+          </button>
+          {% empty %}
+          <div class="skn-ctx-empty">No companies available.</div>
+          {% endfor %}
+        </div>
+        <div class="skn-ws-pane skn-ws-sites">
+          <div class="skn-ws-panehdr">Site</div>
+          {% for w in workspace_companies %}
+          <div class="skn-ws-sitegroup" data-co="{{ w.tenant.id }}"{% if w.tenant.id != active_tenant_id %} hidden{% endif %}>
+            {% for s in w.sites %}
+            <button type="button" class="skn-ws-site{% if w.tenant.id == active_tenant_id and s.id == active_site_id %} active{% endif %}" data-co="{{ w.tenant.id }}" data-site="{{ s.id }}">
+              <i class="bi bi-geo-alt"></i><span class="skn-ws-name">{{ s.name }}{% if s.region %} <span class="skn-ctx-region">· {{ s.region }}</span>{% endif %}</span><i class="bi bi-check2 skn-ws-check"></i>
+            </button>
+            {% empty %}
+            <div class="skn-ctx-empty">No sites available in this company.</div>
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="skn-ws-footer">
+        <form method="post" action="{% url 'switch_workspace' %}" id="wsForm">
+          {% csrf_token %}
+          <input type="hidden" name="tenant" id="wsTenant" value="{{ active_tenant_id }}">
+          <input type="hidden" name="site" id="wsSite" value="{{ active_site_id }}">
+          <input type="hidden" name="next" value="{{ request.path }}">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="wsOk">Switch</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
