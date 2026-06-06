@@ -5185,3 +5185,94 @@ class GLSiteDimensionTests(TestCase):
         # Filtered to site A.
         resp = self.client.get(f"/reports/profit-and-loss/?from=2026-01-01&to=2026-12-31&site={self.siteA.id}")
         self.assertEqual(resp.context["data"]["income_total"], Decimal("250.00"))
+
+
+class AuditSiteTests(TestCase):
+    """Audit records capture the working Site, and the log can be filtered by it."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site
+        self.tenant = Tenant.objects.create(name="AudSite Co")
+        self.main = Site.objects.get(tenant=self.tenant, is_default=True)
+        self.leic = Site.objects.create(tenant=self.tenant, name="Leicester", site_type=Site.Type.CITY_BRANCH)
+        self.admin = User.objects.create_user("audadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+
+    def test_log_audit_stamps_current_site(self):
+        from core.models import AuditLog
+        from core.current import set_current_site, clear_current_site
+        from core.audit import log_audit
+        set_current_site(self.leic)
+        try:
+            log_audit(action="DATA_EXPORTED", tenant=self.tenant, username="x", detail="test")
+        finally:
+            clear_current_site()
+        log = AuditLog.objects.filter(tenant=self.tenant, action="DATA_EXPORTED").first()
+        self.assertEqual(log.site_id, self.leic.id)
+
+    def test_explicit_site_overrides_threadlocal(self):
+        from core.models import AuditLog
+        from core.audit import log_audit
+        log_audit(action="RECORD_DELETED", tenant=self.tenant, site=self.main, username="x")
+        log = AuditLog.objects.filter(tenant=self.tenant, action="RECORD_DELETED").first()
+        self.assertEqual(log.site_id, self.main.id)
+
+    def test_audit_log_view_filters_by_site(self):
+        from core.models import AuditLog
+        AuditLog.objects.create(tenant=self.tenant, site=self.leic, action="LOGIN", username="a")
+        AuditLog.objects.create(tenant=self.tenant, site=self.main, action="LOGIN", username="b")
+        self.client.login(username="audadmin", password="pw")
+        resp = self.client.get(f"/audit/?site={self.leic.id}")
+        self.assertEqual(resp.status_code, 200)
+        usernames = {l.username for l in resp.context["logs"]}
+        self.assertIn("a", usernames)
+        self.assertNotIn("b", usernames)
+
+
+class DashboardSiteScopingTests(TestCase):
+    """Dashboard KPIs are scoped to the selected site (site-dimensioned data)."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site, InventoryMovement
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="DashSite Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        Site.objects.filter(tenant=self.tenant).delete()
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.siteA = Site.objects.create(tenant=self.tenant, name="A Site", site_type=Site.Type.CITY_BRANCH, is_default=True)
+        self.siteB = Site.objects.create(tenant=self.tenant, name="B Site", site_type=Site.Type.CITY_BRANCH)
+        self.locA = Location.objects.create(tenant=self.tenant, site=self.siteA, name="A WH", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, site=self.siteB, name="B WH", type=Location.Type.WAREHOUSE)
+        self.cust = Customer.objects.create(tenant=self.tenant, name="C")
+        self.prod = Product.objects.create(tenant=self.tenant, sku="DS1", name="W", cost_method=Product.CostMethod.AVERAGE)
+        for loc in (self.locA, self.locB):
+            apply_movement(tenant=self.tenant, product=self.prod, location=loc,
+                           movement_type=InventoryMovement.MovementType.RECEIVE, qty_delta=Decimal("100"),
+                           ref_type="SEED", ref_id=f"O{loc.id}", unit_cost=Decimal("4.00"))
+
+    def _invoice(self, number, loc, qty, price):
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust, invoice_number=number, location=loc)
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal(qty), unit_price=Decimal(price), tax_code=self.std)
+        post_customer_invoice(inv)
+        return inv
+
+    def test_kpis_scoped_to_site(self):
+        from core.views import _dashboard_kpis
+        from core.access import accessible_locations
+        self._invoice("INV-A", self.locA, "10", "25")  # site A this month
+        self._invoice("INV-B", self.locB, "4", "25")   # site B this month
+        a_locs = list(accessible_locations(None, self.tenant).filter(site=self.siteA).values_list("id", flat=True))
+        kA = {c["label"]: c["value"] for c in _dashboard_kpis(self.tenant, "ADMIN", site_id=self.siteA.id, location_ids=a_locs)}
+        # "Sales (this month)" should reflect only site A's revenue.
+        self.assertEqual(kA["Sales (this month)"], Decimal("250.00"))
+        company = {c["label"]: c["value"] for c in _dashboard_kpis(self.tenant, "ADMIN")}
+        self.assertEqual(company["Sales (this month)"], Decimal("350.00"))
+
+    def test_dashboard_page_renders_with_site(self):
+        from core.models import OrgMembership
+        u = User.objects.create_user("dsu", password="pw")
+        OrgMembership.objects.create(user=u, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="dsu", password="pw")  # auto-selects A Site
+        resp = self.client.get("/dashboard/admin")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["active_site"], self.siteA)

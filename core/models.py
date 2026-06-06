@@ -220,6 +220,7 @@ class AuditLog(models.Model):
     Append-only: records cannot be modified once written (see save()), so the
     trail can be trusted as evidence of who did what, when, and from where."""
     tenant = models.ForeignKey(Tenant, on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_logs")
+    site = models.ForeignKey("Site", on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_logs")
     user = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     username = models.CharField(max_length=150, blank=True, null=True)
     action = models.CharField(max_length=50)          # LOGIN, LOGOUT, ACCESS_DENIED, ...
