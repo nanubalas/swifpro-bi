@@ -383,10 +383,10 @@
             <li>
               <form method="post" action="{% url 'switch_site' %}" class="d-inline">
                 {% csrf_token %}
-                <input type="hidden" name="location" value="{{ s.id }}">
+                <input type="hidden" name="site" value="{{ s.id }}">
                 <input type="hidden" name="next" value="{{ request.path }}">
                 <button type="submit" class="dropdown-item {% if s.id == active_site_id %}active{% endif %}">
-                  {{ s.name }}{% if s.site %} <span class="text-muted small">({{ s.site.name }})</span>{% endif %}
+                  {{ s.name }}{% if s.region %} <span class="text-muted small">({{ s.region }})</span>{% endif %}
                 </button>
               </form>
             </li>

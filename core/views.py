@@ -30,7 +30,8 @@ from django.core.exceptions import PermissionDenied
 from core import roles as roles_mod
 from core.access import (
     get_active_role, get_memberships, default_landing_url, SESSION_TENANT_KEY,
-    SESSION_LOCATION_KEY, get_active_location, selectable_locations,
+    SESSION_LOCATION_KEY, SESSION_SITE_KEY, get_active_location, get_active_site,
+    selectable_locations, selectable_sites, active_site_id,
     can_access_company, can_access_site, active_location_ids,
 )
 from core.audit import log_audit
@@ -368,7 +369,9 @@ def _select_company(request, tid, *, switching):
                   detail=f"tenant_id={tid}")
         return False
     request.session[SESSION_TENANT_KEY] = int(tid)
-    request.session.pop(SESSION_LOCATION_KEY, None)  # switching company clears the site
+    # Switching company clears the selected site (and any stale workflow location).
+    request.session.pop(SESSION_SITE_KEY, None)
+    request.session.pop(SESSION_LOCATION_KEY, None)
     tenant = OrgMembership.objects.filter(user=request.user, tenant_id=tid).first()
     log_audit(action="COMPANY_SWITCHED" if switching else "COMPANY_SELECTED",
               request=request, user=request.user, tenant=getattr(tenant, "tenant", None),
@@ -390,31 +393,33 @@ def select_org(request):
 
 @login_required
 def select_site(request):
-    """Site (location) chooser - mandatory; there is no 'all sites' option."""
+    """Mandatory Site chooser - the global context is Company + Site. There is no
+    'all sites' option, and inventory locations are NOT chosen here."""
     from core.access import get_active_tenant
     tenant = get_active_tenant(request)
     if tenant is None:
         return redirect("landing")
-    locations = list(selectable_locations(request.user, tenant))
+    sites = list(selectable_sites(request.user, tenant))
     next_url = request.POST.get("next") or request.GET.get("next") or ""
     if request.method == "POST":
-        lid = request.POST.get("location")
-        if lid and can_access_site(request.user, tenant, lid):
-            request.session[SESSION_LOCATION_KEY] = int(lid)
-            loc = next((l for l in locations if str(l.id) == str(lid)), None)
+        sid = request.POST.get("site")
+        if sid and can_access_site(request.user, tenant, sid):
+            request.session[SESSION_SITE_KEY] = int(sid)
+            request.session.pop(SESSION_LOCATION_KEY, None)  # drop stale workflow location
+            site = next((s for s in sites if str(s.id) == str(sid)), None)
             log_audit(action="SITE_SELECTED", request=request, user=request.user, tenant=tenant,
-                      detail=getattr(loc, "name", lid))
+                      detail=getattr(site, "name", sid))
             return redirect(_safe_next(next_url) or default_landing_url(tenant, get_active_role(request)))
         log_audit(action="UNAUTHORISED_SITE_ACCESS", request=request, user=request.user, tenant=tenant,
-                  detail=f"location_id={lid}")
+                  detail=f"site_id={sid}")
         raise PermissionDenied("You do not have access to that site.")
-    if not locations:
+    if not sites:
         return redirect("no_site")
-    if len(locations) == 1:  # nothing to choose - take it and move on
-        request.session[SESSION_LOCATION_KEY] = locations[0].id
+    if len(sites) == 1:  # nothing to choose - take it and move on
+        request.session[SESSION_SITE_KEY] = sites[0].id
         return redirect("landing")
     return render(request, "select_site.html", {
-        "tenant": tenant, "locations": locations, "next": next_url})
+        "tenant": tenant, "sites": sites, "next": next_url})
 
 
 @login_required
@@ -435,16 +440,17 @@ def switch_site(request):
     from core.access import get_active_tenant
     tenant = get_active_tenant(request)
     if request.method == "POST" and tenant is not None:
-        lid = request.POST.get("location")
+        sid = request.POST.get("site")
         next_url = _safe_next(request.POST.get("next") or "")
-        if lid and can_access_site(request.user, tenant, lid):
-            request.session[SESSION_LOCATION_KEY] = int(lid)
-            loc = selectable_locations(request.user, tenant).filter(id=lid).first()
+        if sid and can_access_site(request.user, tenant, sid):
+            request.session[SESSION_SITE_KEY] = int(sid)
+            request.session.pop(SESSION_LOCATION_KEY, None)  # clear stale workflow location
+            site = selectable_sites(request.user, tenant).filter(id=sid).first()
             log_audit(action="SITE_SWITCHED", request=request, user=request.user, tenant=tenant,
-                      detail=getattr(loc, "name", lid))
+                      detail=getattr(site, "name", sid))
             return redirect(next_url or default_landing_url(tenant, get_active_role(request)))
         log_audit(action="UNAUTHORISED_SITE_ACCESS", request=request, user=request.user, tenant=tenant,
-                  detail=f"location_id={lid}")
+                  detail=f"site_id={sid}")
         raise PermissionDenied("You do not have access to that site.")
     return redirect("landing")
 

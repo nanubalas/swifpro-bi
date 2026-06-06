@@ -25,8 +25,8 @@ class _CtxClient(Client):
         return ok
 
     def _select_default_context(self):
-        from core.access import (get_memberships, selectable_locations,
-                                 SESSION_TENANT_KEY, SESSION_LOCATION_KEY)
+        from core.access import (get_memberships, selectable_sites,
+                                 SESSION_TENANT_KEY, SESSION_SITE_KEY)
         uid = self.session.get("_auth_user_id")
         if not uid:
             return
@@ -42,11 +42,11 @@ class _CtxClient(Client):
             tenant = prof.tenant if prof else Tenant.objects.order_by("id").first()
         if tenant is None:
             return
-        loc = selectable_locations(u, tenant).first()
+        site = selectable_sites(u, tenant).first()
         s = self.session
         s[SESSION_TENANT_KEY] = tenant.id
-        if loc:
-            s[SESSION_LOCATION_KEY] = loc.id
+        if site:
+            s[SESSION_SITE_KEY] = site.id
         s.save()
 
 
@@ -4292,11 +4292,13 @@ class LocationAccessEnforcementTests(TestCase):
 
     def setUp(self):
         from core.models import (OrgMembership, UserLocationAccess, StockAdjustment,
-                                 InventoryTransfer, InventoryBalance)
+                                 InventoryTransfer, InventoryBalance, Site)
         self.tenant = Tenant.objects.create(name="Acc Co")
         Location.objects.filter(tenant=self.tenant).delete()
+        # locA under the default Main Site; locB under a second site.
+        self.siteB = Site.objects.create(tenant=self.tenant, name="Site B", site_type=Site.Type.CITY_BRANCH)
         self.locA = Location.objects.create(tenant=self.tenant, name="WH-A", type=Location.Type.WAREHOUSE)
-        self.locB = Location.objects.create(tenant=self.tenant, name="WH-B", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, site=self.siteB, name="WH-B", type=Location.Type.WAREHOUSE)
         self.prod = Product.objects.create(tenant=self.tenant, sku="ACC1", name="P")
         # Warehouse user restricted to WH-A only.
         self.user = User.objects.create_user("whA", password="pw")
@@ -4336,12 +4338,12 @@ class LocationAccessEnforcementTests(TestCase):
         from core.models import OrgMembership
         admin = User.objects.create_user("accadmin", password="pw")
         OrgMembership.objects.create(user=admin, tenant=self.tenant, role="ADMIN", is_default=True)
-        self.client.login(username="accadmin", password="pw")  # auto-selects WH-A (first)
+        self.client.login(username="accadmin", password="pw")  # auto-selects Main Site (first)
         ids = [a.id for a in self.client.get("/inventory/adjustments/").context["adjustments"]]
         self.assertIn(self.adjA.id, ids)
-        self.assertNotIn(self.adjB.id, ids)
-        # Switching site reveals the other location's data (and hides the first).
-        self.client.post("/switch-site/", {"location": self.locB.id})
+        self.assertNotIn(self.adjB.id, ids)  # adjB is at a location under another site
+        # Switching site reveals the other site's data (and hides the first).
+        self.client.post("/switch-site/", {"site": self.siteB.id})
         ids = [a.id for a in self.client.get("/inventory/adjustments/").context["adjustments"]]
         self.assertIn(self.adjB.id, ids)
         self.assertNotIn(self.adjA.id, ids)
@@ -4649,10 +4651,9 @@ class SiteContextTests(TestCase):
     client_class = Client  # exercise the real gate, not the auto-context client
 
     def setUp(self):
-        from core.models import OrgMembership
+        from core.models import OrgMembership, Site
         self.tenant = Tenant.objects.create(name="Ctx Co")
-        Location.objects.filter(tenant=self.tenant).delete()
-        self.locA = Location.objects.create(tenant=self.tenant, name="Site A", type=Location.Type.WAREHOUSE)
+        self.main_site = Site.objects.get(tenant=self.tenant, is_default=True)
         self.user = User.objects.create_user("ctxu", password="pw")
         OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
 
@@ -4664,23 +4665,24 @@ class SiteContextTests(TestCase):
         resp = self.client.get("/inventory/")
         self.assertEqual(resp.status_code, 200)  # no redirect - auto-selected
         self.assertEqual(self.client.session["active_tenant_id"], self.tenant.id)
-        self.assertEqual(self.client.session["active_location_id"], self.locA.id)
+        self.assertEqual(self.client.session["active_site_id"], self.main_site.id)
 
     def test_multiple_sites_force_selection(self):
-        from core.models import AuditLog
-        locB = Location.objects.create(tenant=self.tenant, name="Site B", type=Location.Type.WAREHOUSE)
+        from core.models import AuditLog, Site
+        siteB = Site.objects.create(tenant=self.tenant, name="Leicester", site_type=Site.Type.CITY_BRANCH)
         self._login()
         resp = self.client.get("/inventory/")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/select-site/", resp["Location"])
         # Pick a specific site -> proceeds, context set, audited.
-        resp2 = self.client.post("/select-site/", {"location": locB.id, "next": "/inventory/"})
+        resp2 = self.client.post("/select-site/", {"site": siteB.id, "next": "/inventory/"})
         self.assertRedirects(resp2, "/inventory/")
-        self.assertEqual(self.client.session["active_location_id"], locB.id)
+        self.assertEqual(self.client.session["active_site_id"], siteB.id)
         self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="SITE_SELECTED").exists())
 
     def test_site_picker_has_no_all_sites_option(self):
-        Location.objects.create(tenant=self.tenant, name="Site B", type=Location.Type.WAREHOUSE)
+        from core.models import Site
+        Site.objects.create(tenant=self.tenant, name="Leicester", site_type=Site.Type.CITY_BRANCH)
         self._login()
         resp = self.client.get("/select-site/")
         self.assertEqual(resp.status_code, 200)
@@ -4689,7 +4691,7 @@ class SiteContextTests(TestCase):
 
     def test_multiple_companies_force_company_then_site(self):
         from core.models import OrgMembership, Tenant as T
-        t2 = T.objects.create(name="Ctx Co 2")  # gets its own Main Location via signal
+        t2 = T.objects.create(name="Ctx Co 2")  # gets its own default Site via signal
         OrgMembership.objects.create(user=self.user, tenant=t2, role="ADMIN")
         self._login()
         resp = self.client.get("/inventory/")
@@ -4704,34 +4706,39 @@ class SiteContextTests(TestCase):
         t2 = T.objects.create(name="Ctx Co 2")
         OrgMembership.objects.create(user=self.user, tenant=t2, role="ADMIN")
         self._login()
-        self.client.get("/inventory/")  # may redirect to select-org; set context explicitly
         s = self.client.session
         s["active_tenant_id"] = self.tenant.id
-        s["active_location_id"] = self.locA.id
+        s["active_site_id"] = self.main_site.id
         s.save()
         resp = self.client.post("/switch-company/", {"tenant": t2.id})
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self.client.session["active_tenant_id"], t2.id)
-        self.assertNotIn("active_location_id", self.client.session)  # site cleared
+        self.assertNotIn("active_site_id", self.client.session)  # site cleared
         self.assertTrue(AuditLog.objects.filter(action="COMPANY_SWITCHED").exists())
 
     def test_switch_site_stays_on_page(self):
-        from core.models import AuditLog
-        locB = Location.objects.create(tenant=self.tenant, name="Site B", type=Location.Type.WAREHOUSE)
+        from core.models import AuditLog, Site
+        siteB = Site.objects.create(tenant=self.tenant, name="Leicester", site_type=Site.Type.CITY_BRANCH)
         self._login()
-        self.client.get("/inventory/")  # auto-selects locA
-        resp = self.client.post("/switch-site/", {"location": locB.id, "next": "/inventory/"})
+        self.client.get("/inventory/")  # auto-selects... multiple sites now -> may redirect; set context
+        s = self.client.session
+        s["active_site_id"] = self.main_site.id
+        s.save()
+        resp = self.client.post("/switch-site/", {"site": siteB.id, "next": "/inventory/"})
         self.assertRedirects(resp, "/inventory/")
-        self.assertEqual(self.client.session["active_location_id"], locB.id)
+        self.assertEqual(self.client.session["active_site_id"], siteB.id)
         self.assertTrue(AuditLog.objects.filter(action="SITE_SWITCHED").exists())
 
     def test_unauthorised_site_returns_403_and_audits(self):
-        from core.models import OrgMembership, Tenant as T, AuditLog
+        from core.models import Tenant as T, Site, AuditLog
         other = T.objects.create(name="Other Ctx")
-        other_loc = Location.objects.filter(tenant=other).first()
+        other_site = Site.objects.filter(tenant=other).first()
         self._login()
-        self.client.get("/inventory/")  # establish context in self.tenant
-        resp = self.client.post("/switch-site/", {"location": other_loc.id})
+        s = self.client.session
+        s["active_tenant_id"] = self.tenant.id
+        s["active_site_id"] = self.main_site.id
+        s.save()
+        resp = self.client.post("/switch-site/", {"site": other_site.id})
         self.assertEqual(resp.status_code, 403)
         self.assertTrue(AuditLog.objects.filter(action="UNAUTHORISED_SITE_ACCESS").exists())
 
@@ -4739,18 +4746,17 @@ class SiteContextTests(TestCase):
         from core.models import Tenant as T
         other = T.objects.create(name="Other Ctx 2")  # user is not a member
         self._login()
-        self.client.get("/inventory/")
         resp = self.client.post("/switch-company/", {"tenant": other.id})
         self.assertEqual(resp.status_code, 403)
 
     def test_restricted_user_no_site_shows_no_site_page(self):
-        from core.models import OrgMembership, UserLocationAccess
-        # A warehouse user with a grant to an inactive location only -> no selectable site.
-        self.locA.is_active = False
-        self.locA.save()
+        from core.models import OrgMembership, UserSiteAccess
+        # A warehouse user granted only an inactive site -> no selectable site.
+        self.main_site.is_active = False
+        self.main_site.save()
         u2 = User.objects.create_user("ctxnos", password="pw")
         OrgMembership.objects.create(user=u2, tenant=self.tenant, role="WAREHOUSE", is_default=True)
-        UserLocationAccess.objects.create(tenant=self.tenant, user=u2, location=self.locA)
+        UserSiteAccess.objects.create(tenant=self.tenant, user=u2, site=self.main_site)
         self.client.login(username="ctxnos", password="pw")
         resp = self.client.get("/inventory/", follow=True)
         self.assertContains(resp, "No site available")
@@ -4762,19 +4768,23 @@ class SiteDataScopingTests(TestCase):
 
     def setUp(self):
         from core.models import (OrgMembership, InventoryBalance, CustomerOrder,
-                                 CustomerOrderLine, Supplier)
+                                 CustomerOrderLine, Supplier, Site)
         self.tenant = Tenant.objects.create(name="Scope Co")
         Location.objects.filter(tenant=self.tenant).delete()
+        Site.objects.filter(tenant=self.tenant).delete()
         self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
-        self.locA = Location.objects.create(tenant=self.tenant, name="A-Site", type=Location.Type.WAREHOUSE)
-        self.locB = Location.objects.create(tenant=self.tenant, name="B-Site", type=Location.Type.WAREHOUSE)
+        # Two sites, each with one inventory location.
+        self.siteA = Site.objects.create(tenant=self.tenant, name="A Site", site_type=Site.Type.CITY_BRANCH)
+        self.siteB = Site.objects.create(tenant=self.tenant, name="B Site", site_type=Site.Type.CITY_BRANCH)
+        self.locA = Location.objects.create(tenant=self.tenant, site=self.siteA, name="A Warehouse", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, site=self.siteB, name="B Warehouse", type=Location.Type.WAREHOUSE)
         self.prod = Product.objects.create(tenant=self.tenant, sku="SC1", name="Widget")
         self.cust = Customer.objects.create(tenant=self.tenant, name="Cust")
         self.supplier = Supplier.objects.create(tenant=self.tenant, name="Supp")
-        # Inventory at both sites.
+        # Inventory at both sites' locations.
         InventoryBalance.objects.create(tenant=self.tenant, product=self.prod, location=self.locA, on_hand=Decimal("5"))
         InventoryBalance.objects.create(tenant=self.tenant, product=self.prod, location=self.locB, on_hand=Decimal("9"))
-        # An invoice, order and PO at each site.
+        # An invoice, order and PO whose location sits under each site.
         self.invA = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust, invoice_number="INV-A", location=self.locA)
         self.invB = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust, invoice_number="INV-B", location=self.locB)
         self.ordA = CustomerOrder.objects.create(tenant=self.tenant, customer=self.cust, order_number="SO-A", location=self.locA)
@@ -4783,14 +4793,14 @@ class SiteDataScopingTests(TestCase):
         self.poB = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-B", supplier=self.supplier, receiving_location=self.locB)
         self.user = User.objects.create_user("scopeu", password="pw")
         OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
-        self.client.login(username="scopeu", password="pw")  # auto-selects A-Site (first)
+        self.client.login(username="scopeu", password="pw")  # auto-selects A Site (first)
 
     def _ctx_ids(self, url, key):
         return [o.id for o in self.client.get(url).context[key]]
 
     def test_lists_scoped_to_selected_site(self):
-        self.assertEqual(self.client.session["active_location_id"], self.locA.id)
-        # Inventory
+        self.assertEqual(self.client.session["active_site_id"], self.siteA.id)
+        # Inventory (locations under the selected site)
         bals = self.client.get("/inventory/").context["balances"]
         self.assertEqual({b.location_id for b in bals}, {self.locA.id})
         # Invoices / orders / POs
@@ -4799,8 +4809,8 @@ class SiteDataScopingTests(TestCase):
         self.assertEqual(self._ctx_ids("/po/", "pos"), [self.poA.id])
 
     def test_switching_site_swaps_data(self):
-        self.client.post("/switch-site/", {"location": self.locB.id})
-        self.assertEqual(self.client.session["active_location_id"], self.locB.id)
+        self.client.post("/switch-site/", {"site": self.siteB.id})
+        self.assertEqual(self.client.session["active_site_id"], self.siteB.id)
         bals = self.client.get("/inventory/").context["balances"]
         self.assertEqual({b.location_id for b in bals}, {self.locB.id})
         self.assertEqual(self._ctx_ids("/ar/invoices/", "invoices"), [self.invB.id])

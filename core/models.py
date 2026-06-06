@@ -318,6 +318,16 @@ class Location(models.Model):
     class Meta:
         unique_together = ("tenant", "name")
 
+    def save(self, *args, **kwargs):
+        # Every inventory location belongs to a Site. Attach to the company's
+        # default Site when none is given (keeps Company -> Site -> Location whole).
+        if self.site_id is None and self.tenant_id:
+            default = (Site.objects.filter(tenant_id=self.tenant_id, is_default=True).order_by("id").first()
+                       or Site.objects.filter(tenant_id=self.tenant_id).order_by("id").first())
+            if default is not None:
+                self.site = default
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.tenant.name} - {self.name}"
 

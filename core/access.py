@@ -222,12 +222,16 @@ def get_active_location(request):
 
 
 def active_location_ids(request):
-    """Location id(s) to scope module data to: exactly the selected site, as a
-    single-element list. Returns None only when no site is selected (e.g. on the
-    exempt setup pages), meaning 'do not narrow'. There is never an 'all' value
-    once a site is chosen - the gate guarantees one on every module page."""
-    loc = get_active_location(request)
-    return [loc.id] if loc is not None else None
+    """Inventory-location ids to scope module data to: the accessible locations
+    under the **selected Site**. Returns None only when no site is selected (e.g.
+    on exempt setup pages), meaning 'do not narrow'. An empty list means the site
+    has no accessible locations (so location-scoped lists are correctly empty)."""
+    site = get_active_site(request)
+    if site is None:
+        return None
+    user = getattr(request, "user", None)
+    tenant = get_active_tenant(request)
+    return list(accessible_locations(user, tenant).filter(site=site).values_list("id", flat=True))
 
 
 def get_active_site(request):
@@ -268,11 +272,18 @@ def can_access_company(user, tenant_id):
     return OrgMembership.objects.filter(user=user, tenant_id=tenant_id).exists()
 
 
-def can_access_site(user, tenant, location_id):
-    """True if `location_id` is a selectable site for the user in this company."""
+def can_access_site(user, tenant, site_id):
+    """True if `site_id` is a selectable Site for the user in this company."""
+    if tenant is None or not site_id:
+        return False
+    return selectable_sites(user, tenant).filter(id=site_id).exists()
+
+
+def can_access_location(user, tenant, location_id):
+    """True if `location_id` is an accessible inventory location in this company."""
     if tenant is None or not location_id:
         return False
-    return selectable_locations(user, tenant).filter(id=location_id).exists()
+    return accessible_locations(user, tenant).filter(id=location_id).exists()
 
 
 # Path prefixes that never require a selected context (auth, static, the
@@ -313,14 +324,14 @@ def context_gate(request):
     if not request.session.get(SESSION_TENANT_KEY):
         request.session[SESSION_TENANT_KEY] = tenant.id
 
-    # Site: must resolve to exactly one location.
-    if get_active_location(request) is not None:
+    # Site: the global context resolves to exactly one Site (never a location).
+    if get_active_site(request) is not None:
         return None
-    locs = list(selectable_locations(user, tenant))
-    if len(locs) == 1:
-        request.session[SESSION_LOCATION_KEY] = locs[0].id
+    sites = list(selectable_sites(user, tenant))
+    if len(sites) == 1:
+        request.session[SESSION_SITE_KEY] = sites[0].id
         return None
-    if not locs:
+    if not sites:
         return _safe_reverse("no_site")
     return _safe_reverse("select_site")
 
