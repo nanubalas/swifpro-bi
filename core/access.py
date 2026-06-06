@@ -144,6 +144,43 @@ def accessible_locations(user, tenant):
     return qs
 
 
+def accessible_site_ids(user, tenant):
+    """The site IDs a user may work in for a tenant, or None for 'all'.
+
+    Mirrors accessible_location_ids but for the Site tier: Admins, superusers
+    and users with no explicit grants are unrestricted (None)."""
+    from core.models import OrgMembership, UserSiteAccess
+    if tenant is None or user is None or not getattr(user, "is_authenticated", False):
+        return None
+    if getattr(user, "is_superuser", False):
+        return None
+    m = OrgMembership.objects.filter(user=user, tenant=tenant).first()
+    if m and m.role == roles.ADMIN:
+        return None
+    grants = set(UserSiteAccess.objects.filter(tenant=tenant, user=user)
+                 .values_list("site_id", flat=True))
+    return grants or None  # no grants -> unrestricted
+
+
+def accessible_sites(user, tenant):
+    """Site queryset the user may access (all active sites if unrestricted)."""
+    from core.models import Site
+    qs = Site.objects.filter(tenant=tenant)
+    ids = accessible_site_ids(user, tenant)
+    if ids is not None:
+        qs = qs.filter(id__in=ids)
+    return qs
+
+
+def selectable_sites(user, tenant):
+    """Active sites the user may select as their working site, ordered by name.
+    No 'all' sentinel - always a concrete set."""
+    if tenant is None:
+        from core.models import Site
+        return Site.objects.none()
+    return accessible_sites(user, tenant).filter(is_active=True).order_by("name")
+
+
 # ---------------------------------------------------------------------------
 # Mandatory company + site (location) context
 #
