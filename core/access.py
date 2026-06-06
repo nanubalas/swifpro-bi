@@ -12,6 +12,7 @@ from core import roles
 
 SESSION_TENANT_KEY = "active_tenant_id"
 SESSION_LOCATION_KEY = "active_location_id"
+SESSION_SITE_KEY = "active_site_id"
 
 
 def get_memberships(user):
@@ -227,6 +228,34 @@ def active_location_ids(request):
     once a site is chosen - the gate guarantees one on every module page."""
     loc = get_active_location(request)
     return [loc.id] if loc is not None else None
+
+
+def get_active_site(request):
+    """The validated selected Site for this session, or None.
+
+    During the Location->Site transition this falls back to the selected
+    location's site, so the context resolves before the gate is flipped (S4)."""
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return None
+    tenant = get_active_tenant(request)
+    if tenant is None:
+        return None
+    sid = request.session.get(SESSION_SITE_KEY) if hasattr(request, "session") else None
+    if sid:
+        site = selectable_sites(user, tenant).filter(id=sid).first()
+        if site is not None:
+            return site
+    # Transition fallback: derive the site from the currently selected location.
+    loc = get_active_location(request)
+    if loc is not None and loc.site_id:
+        return selectable_sites(user, tenant).filter(id=loc.site_id).first()
+    return None
+
+
+def active_site_id(request):
+    site = get_active_site(request)
+    return site.id if site is not None else None
 
 
 def can_access_company(user, tenant_id):

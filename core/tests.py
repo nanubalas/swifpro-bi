@@ -4889,3 +4889,47 @@ class SiteAccessTests(TestCase):
         # A grant in another tenant must not leak.
         UserSiteAccess.objects.create(tenant=self.tenant, user=self.staff, site=self.leic)
         self.assertIsNone(accessible_site_ids(self.staff, other))  # no grants there -> unrestricted in 'other'
+
+
+class ActiveSiteResolutionTests(TestCase):
+    """get_active_site resolves from the session, validates access, and falls
+    back to the selected location's site during the transition."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site
+        self.tenant = Tenant.objects.create(name="AS Co")
+        self.main_site = Site.objects.get(tenant=self.tenant, is_default=True)
+        self.main_loc = Location.objects.get(tenant=self.tenant, name="Main Location")
+        self.user = User.objects.create_user("asu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+
+    def _request(self, **session):
+        from django.test import RequestFactory
+        from django.contrib.sessions.backends.db import SessionStore
+        req = RequestFactory().get("/")
+        req.user = self.user
+        s = SessionStore()
+        for k, v in session.items():
+            s[k] = v
+        s.save()
+        req.session = s
+        return req
+
+    def test_explicit_site_selected(self):
+        from core.access import get_active_site, SESSION_TENANT_KEY, SESSION_SITE_KEY
+        req = self._request(**{SESSION_TENANT_KEY: self.tenant.id, SESSION_SITE_KEY: self.main_site.id})
+        self.assertEqual(get_active_site(req), self.main_site)
+
+    def test_fallback_from_selected_location(self):
+        from core.access import get_active_site, SESSION_TENANT_KEY, SESSION_LOCATION_KEY
+        # No site key, but a location is selected -> derive its site.
+        req = self._request(**{SESSION_TENANT_KEY: self.tenant.id, SESSION_LOCATION_KEY: self.main_loc.id})
+        self.assertEqual(get_active_site(req), self.main_site)
+
+    def test_invalid_site_not_returned(self):
+        from core.access import get_active_site, SESSION_TENANT_KEY, SESSION_SITE_KEY
+        from core.models import Site, Tenant as T
+        other = T.objects.create(name="AS Other")
+        foreign = Site.objects.filter(tenant=other).first()
+        req = self._request(**{SESSION_TENANT_KEY: self.tenant.id, SESSION_SITE_KEY: foreign.id})
+        self.assertIsNone(get_active_site(req))  # not in this company -> not returned

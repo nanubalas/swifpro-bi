@@ -33,3 +33,16 @@ def get_current_location():
 def clear_current_location():
     if hasattr(_state, "location"):
         del _state.location
+
+
+def set_current_site(site):
+    _state.site = site
+
+
+def get_current_site():
+    return getattr(_state, "site", None)
+
+
+def clear_current_site():
+    if hasattr(_state, "site"):
+        del _state.site

@@ -4,7 +4,8 @@ from django.shortcuts import redirect
 from django.utils import timezone as djtz
 
 from core.current import (set_current_tenant, clear_current_tenant,
-                          set_current_location, clear_current_location)
+                          set_current_location, clear_current_location,
+                          set_current_site, clear_current_site)
 
 
 class CurrentTenantMiddleware:
@@ -12,7 +13,7 @@ class CurrentTenantMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        from core.access import get_active_tenant, get_active_location, context_gate
+        from core.access import get_active_tenant, get_active_location, get_active_site, context_gate
 
         user = getattr(request, "user", None)
         authed = bool(user and user.is_authenticated)
@@ -27,8 +28,10 @@ class CurrentTenantMiddleware:
 
         tenant = get_active_tenant(request) if authed else None
         location = get_active_location(request) if authed else None
+        site = get_active_site(request) if authed else None
         set_current_tenant(tenant)
         set_current_location(location)
+        set_current_site(site)
 
         # Render dates/times in the active organisation's timezone.
         tz = getattr(tenant, "timezone", None)
@@ -42,4 +45,5 @@ class CurrentTenantMiddleware:
         finally:
             clear_current_tenant()
             clear_current_location()
+            clear_current_site()
             djtz.deactivate()
