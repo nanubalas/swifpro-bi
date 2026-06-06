@@ -4231,3 +4231,69 @@ class DefaultLocationTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         t = Tenant.objects.get(name="View Co")
         self.assertEqual(Location.objects.filter(tenant=t, name="Main Location").count(), 1)
+
+
+class LocationAccessEnforcementTests(TestCase):
+    """A location-restricted user only sees/acts on their granted locations in
+    stock adjustments, transfers and goods receipts."""
+
+    def setUp(self):
+        from core.models import (OrgMembership, UserLocationAccess, StockAdjustment,
+                                 InventoryTransfer, InventoryBalance)
+        self.tenant = Tenant.objects.create(name="Acc Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        self.locA = Location.objects.create(tenant=self.tenant, name="WH-A", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, name="WH-B", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="ACC1", name="P")
+        # Warehouse user restricted to WH-A only.
+        self.user = User.objects.create_user("whA", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        UserLocationAccess.objects.create(tenant=self.tenant, user=self.user, location=self.locA)
+        self.client.login(username="whA", password="pw")
+        # One adjustment at each location.
+        self.adjA = StockAdjustment.objects.create(tenant=self.tenant, product=self.prod, location=self.locA,
+                                                   qty_delta=Decimal("1"), requested_by=self.user)
+        self.adjB = StockAdjustment.objects.create(tenant=self.tenant, product=self.prod, location=self.locB,
+                                                   qty_delta=Decimal("1"), requested_by=self.user)
+        # A transfer entirely within WH-B (not accessible to whA).
+        self.trB = InventoryTransfer.objects.create(tenant=self.tenant, transfer_number="TR-B",
+                                                    from_location=self.locB, to_location=self.locB)
+
+    def test_adjustment_list_filtered_to_accessible(self):
+        resp = self.client.get("/inventory/adjustments/")
+        ids = [a.id for a in resp.context["adjustments"]]
+        self.assertIn(self.adjA.id, ids)
+        self.assertNotIn(self.adjB.id, ids)
+
+    def test_transfer_list_filtered_to_accessible(self):
+        from core.models import InventoryTransfer
+        trA = InventoryTransfer.objects.create(tenant=self.tenant, transfer_number="TR-A",
+                                               from_location=self.locA, to_location=self.locB)
+        resp = self.client.get("/transfers/")
+        ids = [t.id for t in resp.context["transfers"]]
+        self.assertIn(trA.id, ids)        # touches WH-A
+        self.assertNotIn(self.trB.id, ids)  # entirely in WH-B
+
+    def test_transfer_post_blocked_for_inaccessible_locations(self):
+        resp = self.client.post(f"/transfers/{self.trB.id}/post/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_sees_all_locations(self):
+        from core.models import OrgMembership
+        admin = User.objects.create_user("accadmin", password="pw")
+        OrgMembership.objects.create(user=admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="accadmin", password="pw")
+        resp = self.client.get("/inventory/adjustments/")
+        ids = [a.id for a in resp.context["adjustments"]]
+        self.assertIn(self.adjA.id, ids)
+        self.assertIn(self.adjB.id, ids)
+
+    def test_can_access_location_helper(self):
+        from core.views import _can_access_location
+
+        class _Req:
+            user = self.user
+        self.assertTrue(_can_access_location(_Req(), self.tenant, self.locA.id))
+        self.assertFalse(_can_access_location(_Req(), self.tenant, self.locB.id))
+        self.assertFalse(_can_access_location(_Req(), self.tenant, self.locA.id, self.locB.id))
+        self.assertTrue(_can_access_location(_Req(), self.tenant, None))  # None ignored

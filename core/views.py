@@ -86,6 +86,18 @@ def _scope_location_fields(form, request, tenant, *field_names):
             field.queryset = field.queryset.filter(id__in=allowed)
 
 
+def _can_access_location(request, tenant, *location_ids):
+    """True if the user may use every given location (None ids are ignored).
+
+    Mirrors accessible_location_ids: Admins/superusers/users with no grants are
+    unrestricted; otherwise the location must be in their granted set."""
+    from core.access import accessible_location_ids
+    allowed = accessible_location_ids(getattr(request, "user", None), tenant)
+    if allowed is None:
+        return True
+    return all(lid in allowed for lid in location_ids if lid is not None)
+
+
 def _generate_po_number():
     return "PO-" + timezone.now().strftime("%Y%m%d-%H%M%S-%f")
 
@@ -1797,6 +1809,9 @@ def receive_po(request, po_id):
         return redirect("shipment_detail", shipment_id=shipment.id)
 
     dest_location = shipment.destination
+    if not _can_access_location(request, tenant, getattr(dest_location, "id", None)):
+        messages.error(request, "You do not have access to this shipment's receiving location.")
+        return redirect("po_detail", po_id=po.id)
     default_grn = "GRN-" + timezone.now().strftime("%Y%m%d-%H%M%S-%f")
 
     if request.method == "POST":
@@ -2002,8 +2017,12 @@ def _post_stock_adjustment(adj, user):
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE])
 def adjustment_list(request):
     from core.models import StockAdjustment
+    from core.access import accessible_location_ids
     tenant = _get_default_tenant(request)
     adjustments = StockAdjustment.objects.filter(tenant=tenant).select_related("product", "location", "requested_by")
+    allowed = accessible_location_ids(request.user, tenant)
+    if allowed is not None:
+        adjustments = adjustments.filter(location_id__in=allowed)
     return render(request, "inventory/adjustment_list.html", {
         "tenant": tenant, "adjustments": adjustments,
         "threshold": tenant.stock_adjustment_approval_threshold,
@@ -3402,8 +3421,13 @@ def cycle_count_post(request, cc_id):
 @login_required
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE])
 def transfer_list(request):
+    from core.access import accessible_location_ids
+    from django.db.models import Q
     tenant = _get_default_tenant(request)
     transfers = InventoryTransfer.objects.filter(tenant=tenant).order_by("-created_at")
+    allowed = accessible_location_ids(request.user, tenant)
+    if allowed is not None:
+        transfers = transfers.filter(Q(from_location_id__in=allowed) | Q(to_location_id__in=allowed))
     return render(request, "transfers/transfer_list.html", {"tenant": tenant, "transfers": transfers})
 
 
@@ -3450,6 +3474,8 @@ def transfer_detail(request, transfer_id):
 def transfer_post(request, transfer_id):
     tenant = _get_default_tenant(request)
     transfer = get_object_or_404(InventoryTransfer, id=transfer_id, tenant=tenant)
+    if not _can_access_location(request, tenant, transfer.from_location_id, transfer.to_location_id):
+        raise PermissionDenied("You do not have access to one of this transfer's locations.")
     if request.method == "POST":
         _post_transfer(transfer, request)
         return redirect("transfer_detail", transfer_id=transfer.id)
