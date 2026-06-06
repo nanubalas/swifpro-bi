@@ -3535,6 +3535,8 @@ class PurchaseRequisitionTests(TestCase):
         self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
         self.prod = Product.objects.create(tenant=self.tenant, sku="SKU-R1", name="Part",
                                            standard_cost=Decimal("3.00"), preferred_supplier=self.supplier)
+        from core.models import Department
+        self.dept = Department.objects.create(tenant=self.tenant, name="Ops")
         self.user = User.objects.create_user("requ", password="pw")
         OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
         self.client.login(username="requ", password="pw")
@@ -3553,7 +3555,7 @@ class PurchaseRequisitionTests(TestCase):
     def test_create_via_view(self):
         from core.models import PurchaseRequisition
         resp = self.client.post("/requisitions/new/", {
-            "department": "Ops", "preferred_supplier": self.supplier.id, "needed_by": "",
+            "department": self.dept.id, "preferred_supplier": self.supplier.id, "needed_by": "",
             "justification": "Restock", "action": "submit",
             "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
             "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
@@ -3563,6 +3565,7 @@ class PurchaseRequisitionTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         req = PurchaseRequisition.objects.get(tenant=self.tenant)
         self.assertEqual(req.status, PurchaseRequisition.Status.SUBMITTED)
+        self.assertEqual(req.department, self.dept)
         self.assertEqual(req.requested_by, self.user)
         self.assertEqual(req.lines.count(), 1)
         self.assertEqual(req.estimated_total, Decimal("20.00"))
@@ -4521,3 +4524,65 @@ class POReceivingLocationTests(TestCase):
         self.assertEqual(_po_destination(po), self.locB)
         po2 = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-H2", supplier=self.supplier)
         self.assertEqual(_po_destination(po2), self.locA)  # fallback to first location
+
+
+class RequisitionDepartmentFKTests(TestCase):
+    """PurchaseRequisition.department is a structured Department FK; access-request
+    approval can assign a department to the new member."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Department
+        self.tenant = Tenant.objects.create(name="ReqDept Co")
+        self.other = Tenant.objects.create(name="ReqDept Other")
+        self.dept = Department.objects.create(tenant=self.tenant, name="Procurement")
+        self.foreign_dept = Department.objects.create(tenant=self.other, name="Foreign")
+        self.admin = User.objects.create_user("rdadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="rdadmin", password="pw")
+
+    def test_requisition_form_scopes_department_to_tenant(self):
+        from core.forms import PurchaseRequisitionForm
+        from core.current import set_current_tenant, clear_current_tenant
+        set_current_tenant(self.tenant)
+        try:
+            ids = set(PurchaseRequisitionForm().fields["department"].queryset.values_list("id", flat=True))
+        finally:
+            clear_current_tenant()
+        self.assertIn(self.dept.id, ids)
+        self.assertNotIn(self.foreign_dept.id, ids)  # another org's dept excluded
+
+    def test_requisition_links_department(self):
+        from core.models import PurchaseRequisition
+        req = PurchaseRequisition.objects.create(tenant=self.tenant, req_number="PR-D1", department=self.dept)
+        self.assertEqual(req.department, self.dept)
+        self.assertEqual(self.dept.requisitions.get(), req)
+
+    def test_deleting_department_nulls_requisition(self):
+        from core.models import PurchaseRequisition, Department
+        d = Department.objects.create(tenant=self.tenant, name="Temp")
+        req = PurchaseRequisition.objects.create(tenant=self.tenant, req_number="PR-D2", department=d)
+        d.delete()
+        req.refresh_from_db()
+        self.assertIsNone(req.department_id)  # SET_NULL
+
+    def test_access_request_approval_assigns_department(self):
+        from core.models import AccessRequest, OrgMembership
+        ar = AccessRequest.objects.create(name="Jane Doe", email="jane@x.example", team="Procurement")
+        resp = self.client.post(f"/access-requests/{ar.id}/action/", {
+            "action": "approve", "role": "PURCHASING", "department": self.dept.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        ar.refresh_from_db()
+        m = OrgMembership.objects.get(user=ar.created_user, tenant=self.tenant)
+        self.assertEqual(m.department, self.dept)
+
+    def test_access_request_approval_without_department(self):
+        from core.models import AccessRequest, OrgMembership
+        ar = AccessRequest.objects.create(name="No Dept", email="nd@x.example", team="")
+        resp = self.client.post(f"/access-requests/{ar.id}/action/", {
+            "action": "approve", "role": "SALES",
+        })
+        self.assertEqual(resp.status_code, 302)
+        ar.refresh_from_db()
+        m = OrgMembership.objects.get(user=ar.created_user, tenant=self.tenant)
+        self.assertIsNone(m.department_id)

@@ -859,10 +859,13 @@ def _unique_username(base):
 
 @role_required([ROLE_ADMIN], [ROLE_ADMIN])
 def access_request_list(request):
+    from core.models import Department
     tenant = _get_default_tenant(request)
     requests = AccessRequest.objects.all()
+    departments = Department.objects.filter(tenant=tenant, is_active=True).order_by("name")
     return render(request, "access_requests.html", {
         "tenant": tenant, "requests": requests, "roles": roles_mod.ROLE_CHOICES,
+        "departments": departments,
     })
 
 
@@ -905,8 +908,17 @@ def access_request_action(request, req_id):
             first_name=parts[0], last_name=(parts[1] if len(parts) > 1 else ""),
             password=temp_password,
         )
+        # Optionally assign the new member to a structured department.
+        from core.models import Department
+        dept = None
+        dept_id = (request.POST.get("department") or "").strip()
+        if dept_id.isdigit():
+            dept = Department.objects.filter(id=int(dept_id), tenant=tenant).first()
+
         UserProfile.objects.update_or_create(user=user, defaults={"tenant": tenant})
-        OrgMembership.objects.get_or_create(user=user, tenant=tenant, defaults={"role": role, "is_default": True})
+        OrgMembership.objects.get_or_create(
+            user=user, tenant=tenant,
+            defaults={"role": role, "is_default": True, "department": dept})
 
         req.status = AccessRequest.Status.APPROVED
         req.reviewed_by = request.user
@@ -2158,7 +2170,6 @@ def low_stock_reorder(request):
         req = PurchaseRequisition.objects.create(
             tenant=tenant,
             req_number=_generate_req_number(),
-            department="Auto-reorder",
             preferred_supplier=supplier,
             justification="Raised automatically from low-stock alerts.",
             status=PurchaseRequisition.Status.DRAFT,

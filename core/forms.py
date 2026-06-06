@@ -100,6 +100,11 @@ class PurchaseRequisitionForm(TenantModelForm):
             "justification": forms.Textarea(attrs={"rows": 2}),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # department is an optional FK auto-scoped to the tenant by TenantModelForm.
+        self.fields["department"].required = False
+
 
 PurchaseRequisitionLineFormSet = inlineformset_factory(
     PurchaseRequisition,

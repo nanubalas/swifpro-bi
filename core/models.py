@@ -704,7 +704,8 @@ class PurchaseRequisition(models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     req_number = models.CharField(max_length=40)
-    department = models.CharField(max_length=100, blank=True, null=True)
+    department = models.ForeignKey("Department", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="requisitions")
     preferred_supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name="requisitions")
     needed_by = models.DateField(null=True, blank=True)
     justification = models.TextField(blank=True, null=True)

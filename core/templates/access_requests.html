@@ -37,6 +37,13 @@
                 <select name="role" class="form-select form-select-sm" style="max-width:160px;">
                   {% for code, label in roles %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
                 </select>
+                {% if departments %}
+                <select name="department" class="form-select form-select-sm" style="max-width:170px;"
+                        title="{% if r.team %}Requested team: {{ r.team }}{% else %}Assign a department{% endif %}">
+                  <option value="">No department{% if r.team %} (asked: {{ r.team }}){% endif %}</option>
+                  {% for d in departments %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+                </select>
+                {% endif %}
                 <button name="action" value="approve" class="btn btn-sm btn-primary">Approve</button>
                 <button name="action" value="reject" class="btn btn-sm btn-outline-danger">Reject</button>
               </form>
