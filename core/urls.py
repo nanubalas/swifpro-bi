@@ -18,6 +18,7 @@ urlpatterns = [
     path("select-site/", views.select_site, name="select_site"),
     path("switch-company/", views.switch_company, name="switch_company"),
     path("switch-site/", views.switch_site, name="switch_site"),
+    path("switch-workspace/", views.switch_workspace, name="switch_workspace"),
     path("no-site/", views.no_site, name="no_site"),
     path("onboarding/", views.onboarding, name="onboarding"),
     path("onboarding/finish/", views.onboarding_finish, name="onboarding_finish"),

@@ -4765,6 +4765,72 @@ class SiteContextTests(TestCase):
         self.assertContains(resp, "No site available")
 
 
+class WorkspaceSwitcherTests(TestCase):
+    """The two-pane workspace picker switches company + site atomically via
+    /switch-workspace/, validating access to both before applying either."""
+    client_class = Client
+
+    def setUp(self):
+        from core.models import OrgMembership, Tenant as T, Site
+        self.t1 = Tenant.objects.create(name="WS One")
+        self.t1_main = Site.objects.get(tenant=self.t1, is_default=True)
+        self.t1_leic = Site.objects.create(tenant=self.t1, name="Leicester", site_type=Site.Type.CITY_BRANCH)
+        self.t2 = T.objects.create(name="WS Two")
+        self.t2_main = Site.objects.get(tenant=self.t2, is_default=True)
+        self.user = User.objects.create_user("wsu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t1, role="ADMIN", is_default=True)
+        OrgMembership.objects.create(user=self.user, tenant=self.t2, role="ADMIN")
+        self.client.login(username="wsu", password="pw")
+        self._set_ctx(self.t1.id, self.t1_main.id)
+
+    def _set_ctx(self, tid, sid):
+        s = self.client.session
+        s["active_tenant_id"] = tid
+        s["active_site_id"] = sid
+        s.save()
+
+    def test_switch_both_company_and_site(self):
+        from core.models import AuditLog
+        resp = self.client.post("/switch-workspace/",
+                                {"tenant": self.t2.id, "site": self.t2_main.id, "next": "/"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.client.session["active_tenant_id"], self.t2.id)
+        self.assertEqual(self.client.session["active_site_id"], self.t2_main.id)
+        self.assertTrue(AuditLog.objects.filter(action="COMPANY_SWITCHED").exists())
+        self.assertTrue(AuditLog.objects.filter(action="SITE_SWITCHED").exists())
+
+    def test_switch_site_within_same_company(self):
+        from core.models import AuditLog
+        resp = self.client.post("/switch-workspace/",
+                                {"tenant": self.t1.id, "site": self.t1_leic.id, "next": "/inventory/"})
+        self.assertRedirects(resp, "/inventory/", fetch_redirect_response=False)
+        self.assertEqual(self.client.session["active_tenant_id"], self.t1.id)
+        self.assertEqual(self.client.session["active_site_id"], self.t1_leic.id)
+        # Company did not change -> no COMPANY_SWITCHED audit event.
+        self.assertFalse(AuditLog.objects.filter(action="COMPANY_SWITCHED").exists())
+
+    def test_unauthorised_company_403_and_no_change(self):
+        from core.models import Tenant as T, Site
+        other = T.objects.create(name="WS Stranger")
+        other_site = Site.objects.filter(tenant=other, is_default=True).first()
+        resp = self.client.post("/switch-workspace/", {"tenant": other.id, "site": other_site.id})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.client.session["active_tenant_id"], self.t1.id)  # unchanged
+
+    def test_site_outside_company_403_and_no_change(self):
+        # A site the user can access, but not within the posted company.
+        resp = self.client.post("/switch-workspace/", {"tenant": self.t1.id, "site": self.t2_main.id})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.client.session["active_site_id"], self.t1_main.id)  # unchanged
+
+    def test_context_lists_each_company_with_its_sites(self):
+        resp = self.client.get("/", follow=True)
+        wc = resp.context["workspace_companies"]
+        sites_by_company = {w["tenant"].id: {s.id for s in w["sites"]} for w in wc}
+        self.assertEqual(sites_by_company.get(self.t1.id), {self.t1_main.id, self.t1_leic.id})
+        self.assertEqual(sites_by_company.get(self.t2.id), {self.t2_main.id})
+
+
 class SiteDataScopingTests(TestCase):
     """Module lists show only the selected site's data; switching site swaps it.
     There is no combined view."""

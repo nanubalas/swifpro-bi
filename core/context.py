@@ -20,6 +20,12 @@ def nav(request):
         companies = [tenant]
     # Sites of the selected company the user may switch to (no 'all sites').
     sites = list(selectable_sites(user, tenant)) if tenant is not None else []
+    # Every accessible company paired with its selectable sites, for the
+    # two-pane workspace picker (company on the left, its sites on the right).
+    workspace_companies = [
+        {"tenant": c, "sites": list(selectable_sites(user, c))}
+        for c in companies
+    ]
     return {
         "active_role": role,
         "active_role_label": roles.ROLE_LABELS.get(role, role),
@@ -32,5 +38,6 @@ def nav(request):
         "active_site_id": getattr(site, "id", None),
         "switch_companies": companies,
         "switch_sites": sites,
+        "workspace_companies": workspace_companies,
         "perms": get_effective_permissions(request),
     }

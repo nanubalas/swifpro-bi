@@ -290,7 +290,7 @@ def can_access_location(user, tenant, location_id):
 # selection/onboarding endpoints themselves, etc.).
 _GATE_EXEMPT_PREFIXES = (
     "/login", "/logout", "/static/", "/media/", "/admin/", "/request-access",
-    "/select-org", "/select-site", "/switch-company", "/switch-site",
+    "/select-org", "/select-site", "/switch-company", "/switch-site", "/switch-workspace",
     "/no-site", "/change-password", "/healthz",
     # Setup / structure areas must be reachable before a site exists, so an
     # admin can create the org's first location(s).
