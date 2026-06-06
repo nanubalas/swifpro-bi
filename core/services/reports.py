@@ -37,14 +37,19 @@ def _q(amount):
     return (amount or ZERO)
 
 
-def account_balances(tenant, date_from=None, date_to=None):
+def account_balances(tenant, date_from=None, date_to=None, site_ids=None):
     """Return {account: signed_balance} for every account, within an optional
-    date window (inclusive). Signed per the account's natural side."""
+    date window (inclusive). Signed per the account's natural side.
+
+    When `site_ids` is given, only journal entries posted to those sites are
+    included (site-dimensioned P&L / balance sheet). None = company-wide."""
     lines = JournalLine.objects.filter(entry__tenant=tenant).select_related("account", "entry")
     if date_from:
         lines = lines.filter(entry__entry_date__gte=date_from)
     if date_to:
         lines = lines.filter(entry__entry_date__lte=date_to)
+    if site_ids is not None:
+        lines = lines.filter(entry__site_id__in=site_ids)
 
     agg = (
         lines.values("account")
@@ -65,8 +70,8 @@ def account_balances(tenant, date_from=None, date_to=None):
     return result
 
 
-def trial_balance(tenant, date_to=None):
-    balances = account_balances(tenant, date_to=date_to)
+def trial_balance(tenant, date_to=None, site_ids=None):
+    balances = account_balances(tenant, date_to=date_to, site_ids=site_ids)
     rows = []
     total_debit = total_credit = ZERO
     for acc, vals in balances.items():
@@ -89,8 +94,8 @@ def trial_balance(tenant, date_to=None):
     }
 
 
-def profit_and_loss(tenant, date_from=None, date_to=None):
-    balances = account_balances(tenant, date_from=date_from, date_to=date_to)
+def profit_and_loss(tenant, date_from=None, date_to=None, site_ids=None):
+    balances = account_balances(tenant, date_from=date_from, date_to=date_to, site_ids=site_ids)
     income, cogs, expense = [], [], []
     income_total = cogs_total = expense_total = ZERO
     for acc, vals in balances.items():
@@ -119,13 +124,13 @@ def profit_and_loss(tenant, date_from=None, date_to=None):
     }
 
 
-def net_income(tenant, date_to=None):
-    pnl = profit_and_loss(tenant, date_to=date_to)
+def net_income(tenant, date_to=None, site_ids=None):
+    pnl = profit_and_loss(tenant, date_to=date_to, site_ids=site_ids)
     return pnl["net_profit"]
 
 
-def balance_sheet(tenant, as_of=None):
-    balances = account_balances(tenant, date_to=as_of)
+def balance_sheet(tenant, as_of=None, site_ids=None):
+    balances = account_balances(tenant, date_to=as_of, site_ids=site_ids)
     assets, liabilities, equity = [], [], []
     asset_total = liability_total = equity_total = ZERO
     for acc, vals in balances.items():
@@ -140,7 +145,7 @@ def balance_sheet(tenant, as_of=None):
             equity.append({"account": acc, "amount": bal}); equity_total += bal
 
     # Current-period earnings roll into equity (retained earnings).
-    retained = net_income(tenant, date_to=as_of)
+    retained = net_income(tenant, date_to=as_of, site_ids=site_ids)
     equity_total_with_earnings = equity_total + retained
 
     return {

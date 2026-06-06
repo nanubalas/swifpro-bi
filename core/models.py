@@ -1780,6 +1780,10 @@ class GLAccount(models.Model):
 
 class JournalEntry(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    # The site this posting is attributable to (revenue/COGS/expense at a site).
+    # Null = a company-level entry (e.g. bank charges, VAT settlement, opening
+    # balances) that isn't tied to one site.
+    site = models.ForeignKey("Site", on_delete=models.SET_NULL, null=True, blank=True, related_name="journal_entries")
     entry_date = models.DateField(default=timezone.now)
     ref_type = models.CharField(max_length=50, blank=True, null=True)
     ref_id = models.CharField(max_length=100, blank=True, null=True)
@@ -1906,6 +1910,7 @@ class Expense(models.Model):
         OTHER = "OTHER", "Other"
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="expenses")
+    site = models.ForeignKey("Site", on_delete=models.SET_NULL, null=True, blank=True, related_name="expenses")
     expense_date = models.DateField(default=timezone.now)
     payee = models.CharField(max_length=200)  # merchant / who was paid
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True, related_name="expenses")
@@ -1929,6 +1934,11 @@ class Expense(models.Model):
     rejected_reason = models.CharField(max_length=255, blank=True, null=True)
     posted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     posted_at = models.DateTimeField(null=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        if self.site_id is None:
+            self.site_id = _derive_doc_site(self.tenant_id, None)  # company default site
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Expense {self.payee} {self.total}"

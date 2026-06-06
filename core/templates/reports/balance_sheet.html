@@ -13,10 +13,21 @@
       <label class="form-label mb-1">As of</label>
       <input type="date" name="as_of" value="{{ as_of|date:'Y-m-d' }}" class="form-control form-control-sm">
     </div>
+    <div>
+      <label class="form-label mb-1">Site</label>
+      <select name="site" class="form-select form-select-sm">
+        <option value="">All sites (company)</option>
+        {% for s in sites %}<option value="{{ s.id }}" {% if s.id == selected_site %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
     <button class="btn btn-primary btn-sm">Apply</button>
     {% include "_export_menu.html" %}
   </form>
 </div>
+
+{% if site_filtered %}
+<div class="alert alert-info py-2 small"><i class="bi bi-info-circle me-1"></i>Showing only postings attributed to this site. A single-site balance sheet won't necessarily balance, as company-level items (cash, VAT, inter-site) aren't split by site.</div>
+{% endif %}
 
 <div class="row g-4">
   <div class="col-lg-6">

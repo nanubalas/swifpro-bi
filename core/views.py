@@ -2054,7 +2054,8 @@ def receive_po(request, po_id):
                 # Accruals (landed) / +/- Purchase Price Variance (standard costing).
                 post_inventory_receipt(tenant, goods_total, receipt.grn_number, user=request.user,
                                        entry_date=received_at.date(), landed_value=landed_total,
-                                       inventory_value=inventory_value)
+                                       inventory_value=inventory_value,
+                                       site_id=getattr(dest_location, "site_id", None))
 
                 # Update PO status
                 if all((l.open_qty == Decimal("0.00") for l in po.lines.all())):
@@ -5095,13 +5096,31 @@ def reports_index(request):
     return render(request, "reports/index.html", {"tenant": tenant})
 
 
+def _report_site_filter(request, tenant):
+    """Resolve an optional Site filter for finance reports. Returns
+    (site_ids, selected_id, sites). Default (no ?site=) is company-wide
+    (site_ids=None) - a controlled consolidated report view. A chosen, accessible
+    site narrows to it. `sites` populates the dropdown."""
+    from core.access import accessible_site_ids
+    sites = list(selectable_sites(request.user, tenant)) if tenant is not None else []
+    raw = (request.GET.get("site") or "").strip()
+    if raw.isdigit():
+        sid = int(raw)
+        allowed = accessible_site_ids(request.user, tenant)
+        if allowed is None or sid in allowed:
+            return [sid], sid, sites
+    return None, None, sites
+
+
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def report_trial_balance(request):
     tenant = _get_default_tenant(request)
     as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()
-    data = reports_service.trial_balance(tenant, date_to=as_of)
+    site_ids, sel_site, sites = _report_site_filter(request, tenant)
+    data = reports_service.trial_balance(tenant, date_to=as_of, site_ids=site_ids)
     return render(request, "reports/trial_balance.html", {
         "tenant": tenant, "as_of": as_of, "data": data,
+        "sites": sites, "selected_site": sel_site,
         "export_kind": "trial-balance", "export_qs": f"?as_of={as_of}",
     })
 
@@ -5116,9 +5135,11 @@ def report_pnl(request):
         date_from, date_to = reports_service.current_financial_year(tenant)
     elif not date_to:
         date_to = timezone.localdate()
-    data = reports_service.profit_and_loss(tenant, date_from=date_from, date_to=date_to)
+    site_ids, sel_site, sites = _report_site_filter(request, tenant)
+    data = reports_service.profit_and_loss(tenant, date_from=date_from, date_to=date_to, site_ids=site_ids)
     return render(request, "reports/pnl.html", {
         "tenant": tenant, "date_from": date_from, "date_to": date_to, "data": data,
+        "sites": sites, "selected_site": sel_site,
         "export_kind": "profit-and-loss", "export_qs": f"?from={date_from}&to={date_to}",
     })
 
@@ -5127,9 +5148,11 @@ def report_pnl(request):
 def report_balance_sheet(request):
     tenant = _get_default_tenant(request)
     as_of = _parse_date(request.GET.get("as_of")) or timezone.localdate()
-    data = reports_service.balance_sheet(tenant, as_of=as_of)
+    site_ids, sel_site, sites = _report_site_filter(request, tenant)
+    data = reports_service.balance_sheet(tenant, as_of=as_of, site_ids=site_ids)
     return render(request, "reports/balance_sheet.html", {
         "tenant": tenant, "as_of": as_of, "data": data,
+        "sites": sites, "selected_site": sel_site, "site_filtered": bool(site_ids),
         "export_kind": "balance-sheet", "export_qs": f"?as_of={as_of}",
     })
 
@@ -5451,6 +5474,7 @@ def expense_create(request):
     if request.method == "POST" and form.is_valid():
         expense = form.save(commit=False)
         expense.tenant = tenant
+        expense.site = get_active_site(request)  # attribute the cost to the working site
         expense.currency_code = tenant.currency_code
         expense.save()
         action = request.POST.get("action") or "save"
