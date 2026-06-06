@@ -4377,3 +4377,92 @@ class DepartmentTests(TestCase):
         self.client.login(username="deptmember", password="pw")
         resp = self.client.post("/departments/new/", {"name": "Sneaky", "is_active": "on"})
         self.assertEqual(resp.status_code, 403)
+
+
+class SalesLocationTests(TestCase):
+    """Sales documents carry a location; fulfilment and reports honour it."""
+
+    def setUp(self):
+        from core.models import OrgMembership, InventoryMovement
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="SalesLoc Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.locA = Location.objects.create(tenant=self.tenant, name="Shop A", type=Location.Type.SHOP)
+        self.locB = Location.objects.create(tenant=self.tenant, name="Shop B", type=Location.Type.SHOP)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="SL1", name="Widget",
+                                           cost_method=Product.CostMethod.AVERAGE)
+        for loc in (self.locA, self.locB):
+            apply_movement(tenant=self.tenant, product=self.prod, location=loc,
+                           movement_type=InventoryMovement.MovementType.RECEIVE, qty_delta=Decimal("100"),
+                           ref_type="SEED", ref_id=f"OPEN-{loc.id}", unit_cost=Decimal("4.00"))
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.user = User.objects.create_user("sluser", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="sluser", password="pw")
+
+    def test_invoice_fulfils_from_its_location(self):
+        from core.models import InventoryBalance
+        from core.services.gl import post_customer_invoice
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer,
+                                             invoice_number="INV-SL1", location=self.locB)
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal("10"),
+                                           unit_price=Decimal("25.00"), tax_code=self.std)
+        post_customer_invoice(inv)
+        balA = InventoryBalance.objects.get(tenant=self.tenant, product=self.prod, location=self.locA)
+        balB = InventoryBalance.objects.get(tenant=self.tenant, product=self.prod, location=self.locB)
+        self.assertEqual(balA.on_hand, Decimal("100.00"))  # untouched
+        self.assertEqual(balB.on_hand, Decimal("90.00"))   # deducted here
+
+    def test_invoice_without_location_falls_back(self):
+        from core.models import InventoryBalance
+        from core.services.gl import post_customer_invoice
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer,
+                                             invoice_number="INV-SL2")  # no location
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal("5"),
+                                           unit_price=Decimal("25.00"), tax_code=self.std)
+        post_customer_invoice(inv)
+        # Falls back to first stock location (locA by id) - still deducts somewhere.
+        total = sum(b.on_hand for b in InventoryBalance.objects.filter(tenant=self.tenant, product=self.prod))
+        self.assertEqual(total, Decimal("195.00"))  # 200 - 5
+
+    def test_create_view_defaults_location(self):
+        resp = self.client.post("/ar/invoices/new/", {
+            "customer": self.customer.id, "invoice_date": "2026-01-01", "action": "save",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-product": self.prod.id, "lines-0-qty": "1", "lines-0-unit_price": "10",
+            "lines-0-tax_code": self.std.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        inv = CustomerInvoice.objects.get(tenant=self.tenant, customer=self.customer)
+        self.assertIsNotNone(inv.location_id)  # defaulted to a stock location
+
+    def test_order_to_invoice_carries_location(self):
+        from core.models import CustomerOrder, CustomerOrderLine
+        o = CustomerOrder.objects.create(tenant=self.tenant, customer=self.customer,
+                                         order_number="SO-SL1", location=self.locB,
+                                         status=CustomerOrder.Status.CONFIRMED)
+        CustomerOrderLine.objects.create(order=o, product=self.prod, qty=Decimal("3"),
+                                         unit_price=Decimal("10"), tax_code=self.std)
+        resp = self.client.post(f"/customer-orders/{o.id}/to-invoice/")
+        self.assertEqual(resp.status_code, 302)
+        inv = CustomerInvoice.objects.get(source_order=o)
+        self.assertEqual(inv.location_id, self.locB.id)
+
+    def test_sales_history_location_filter(self):
+        from core.services import sales_reports
+        from datetime import date
+        for n, loc in (("INV-A", self.locA), ("INV-B", self.locB)):
+            inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.customer,
+                                                 invoice_number=n, location=loc,
+                                                 status=CustomerInvoice.Status.ISSUED,
+                                                 invoice_date=date(2026, 1, 15))
+            CustomerInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal("1"),
+                                               unit_price=Decimal("50"), tax_code=self.std)
+        df, dt = date(2026, 1, 1), date(2026, 12, 31)
+        all_rows = sales_reports.sales_history(self.tenant, df, dt)["rows"]
+        b_rows = sales_reports.sales_history(self.tenant, df, dt, location_ids=[self.locB.id])["rows"]
+        self.assertEqual(len(all_rows), 2)
+        self.assertEqual(len(b_rows), 1)
+        self.assertEqual(b_rows[0]["invoice"].invoice_number, "INV-B")

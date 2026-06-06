@@ -3982,6 +3982,8 @@ def ar_invoice_create(request):
             inv = form.save(commit=False)
             inv.tenant = tenant
             inv.currency_code = tenant.currency_code
+            if not inv.location_id:
+                inv.location = _order_stock_location(tenant)  # default to the org's main stock location
             # Auto-generate the invoice number when the admin left it blank.
             if not (inv.invoice_number or "").strip():
                 from core.numbering import next_invoice_number
@@ -4269,7 +4271,8 @@ def _invoice_from_lines(tenant, customer, currency, notes, terms, src, line_attr
     from core.numbering import next_invoice_number
     inv = CustomerInvoice.objects.create(
         tenant=tenant, customer=customer, invoice_number=next_invoice_number(tenant),
-        currency_code=currency, notes=notes, terms=terms)
+        currency_code=currency, notes=notes, terms=terms,
+        location=getattr(src, "location", None))  # carry the order's fulfilling location
     if tenant.default_payment_terms_days:
         inv.due_date = inv.invoice_date + timezone.timedelta(days=tenant.default_payment_terms_days)
     setattr(inv, line_attr, src)
@@ -4335,6 +4338,8 @@ def corder_create(request):
             o = form.save(commit=False)
             o.tenant = tenant
             o.currency_code = tenant.currency_code
+            if not o.location_id:
+                o.location = _order_stock_location(tenant)  # default to the org's main stock location
             if not (o.order_number or "").strip():
                 from core.numbering import next_order_number
                 o.order_number = next_order_number(tenant)
@@ -4382,7 +4387,7 @@ def _reserve_customer_order(o):
     reservations so an edit reflects the latest lines)."""
     from core.services.inventory import reserve_stock, release_reservations
     tenant = o.tenant
-    loc = _order_stock_location(tenant)
+    loc = o.location or _order_stock_location(tenant)  # reserve from the order's own location when set
     release_reservations(tenant=tenant, ref_type="CUSTOMER_ORDER", ref_id=str(o.id))
     if loc is None:
         return
@@ -4671,6 +4676,27 @@ def _sales_period(request, tenant):
     return date_from, date_to
 
 
+def _sales_location_filter(request, tenant):
+    """Resolve the location filter for sales reports.
+
+    Returns (location_ids, selected_id, locations) where location_ids is what to
+    pass to the report service (None = no restriction), selected_id is the chosen
+    location for the dropdown, and locations is the list to populate it. Honours
+    the user's per-location access (a restricted user can't widen past their grants)."""
+    from core.access import accessible_location_ids, accessible_locations
+    allowed = accessible_location_ids(request.user, tenant)
+    locations = list(accessible_locations(request.user, tenant).order_by("name"))
+    selected_id = None
+    raw = (request.GET.get("location") or "").strip()
+    if raw.isdigit():
+        sid = int(raw)
+        if allowed is None or sid in allowed:
+            selected_id = sid
+    if selected_id is not None:
+        return [selected_id], selected_id, locations
+    return allowed, None, locations
+
+
 @role_required(SALES_DOC_READ, write_groups=SALES_DOC_ROLES)
 def sales_reports_index(request):
     tenant = _get_default_tenant(request)
@@ -4681,10 +4707,12 @@ def sales_reports_index(request):
 def report_sales_history(request):
     tenant = _get_default_tenant(request)
     date_from, date_to = _sales_period(request, tenant)
+    loc_ids, selected_loc, locations = _sales_location_filter(request, tenant)
     from core.services import sales_reports
-    data = sales_reports.sales_history(tenant, date_from, date_to)
+    data = sales_reports.sales_history(tenant, date_from, date_to, location_ids=loc_ids)
     return render(request, "sales/report_history.html", {
         "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to,
+        "locations": locations, "selected_loc": selected_loc,
         "export_kind": "sales-history", "export_qs": f"?from={date_from}&to={date_to}"})
 
 
@@ -4692,11 +4720,13 @@ def report_sales_history(request):
 def report_sales_by_product(request):
     tenant = _get_default_tenant(request)
     date_from, date_to = _sales_period(request, tenant)
+    loc_ids, selected_loc, locations = _sales_location_filter(request, tenant)
     from core.services import sales_reports
-    data = sales_reports.sales_by_product(tenant, date_from, date_to)
+    data = sales_reports.sales_by_product(tenant, date_from, date_to, location_ids=loc_ids)
     return render(request, "sales/report_grouped.html", {
         "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to,
         "title": "Sales by Product", "label": "Product", "show_qty": True,
+        "locations": locations, "selected_loc": selected_loc,
         "export_kind": "sales-by-product", "export_qs": f"?from={date_from}&to={date_to}"})
 
 
@@ -4704,11 +4734,13 @@ def report_sales_by_product(request):
 def report_sales_by_customer(request):
     tenant = _get_default_tenant(request)
     date_from, date_to = _sales_period(request, tenant)
+    loc_ids, selected_loc, locations = _sales_location_filter(request, tenant)
     from core.services import sales_reports
-    data = sales_reports.sales_by_customer(tenant, date_from, date_to)
+    data = sales_reports.sales_by_customer(tenant, date_from, date_to, location_ids=loc_ids)
     return render(request, "sales/report_grouped.html", {
         "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to,
         "title": "Sales by Customer", "label": "Customer", "show_count": True,
+        "locations": locations, "selected_loc": selected_loc,
         "export_kind": "sales-by-customer", "export_qs": f"?from={date_from}&to={date_to}"})
 
 

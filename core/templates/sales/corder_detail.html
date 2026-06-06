@@ -7,6 +7,7 @@
     <div>
       <h2 class="fw-bold mb-0">Sales Order {{ o.order_number }}</h2>
       <div class="text-muted">{{ o.customer.name }} &bull; <span class="badge text-bg-secondary">{{ o.get_status_display }}</span>
+        {% if o.location %} &bull; {{ o.location.name }}{% endif %}
         {% if o.quote %} &bull; from quote <a href="{% url 'quote_detail' o.quote.id %}">{{ o.quote.quote_number }}</a>{% endif %}
       </div>
     </div>

@@ -64,6 +64,7 @@
         <div><span class="text-muted">Invoice:</span> {{ inv.invoice_number }}</div>
         <div><span class="text-muted">Date:</span> {{ inv.invoice_date|date:'d M Y' }}</div>
         {% if inv.due_date %}<div><span class="text-muted">Due:</span> {{ inv.due_date|date:'d M Y' }}</div>{% endif %}
+        {% if inv.location %}<div><span class="text-muted">Location:</span> {{ inv.location.name }}</div>{% endif %}
       </div>
     </div>
     <div class="table-responsive">
