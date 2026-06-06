@@ -34,6 +34,7 @@ def post_customer_invoice(inv: CustomerInvoice, user=None) -> JournalEntry:
     tenant = inv.tenant
     je = JournalEntry.objects.create(
         tenant=tenant,
+        site_id=inv.site_id,
         entry_date=inv.invoice_date,
         ref_type="AR_INVOICE",
         ref_id=inv.invoice_number,
@@ -104,7 +105,8 @@ def _post_invoice_cogs(inv, user=None):
         cogs_total += -(movement.value or Decimal("0.00"))
 
     if cogs_total > Decimal("0.00"):
-        post_cogs(tenant, cogs_total, inv.invoice_number, user=user, entry_date=inv.invoice_date)
+        post_cogs(tenant, cogs_total, inv.invoice_number, user=user, entry_date=inv.invoice_date,
+                  site_id=inv.site_id)
     return cogs_total
 
 @transaction.atomic
@@ -122,8 +124,13 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
     tax = sum((l.tax_amount for l in lines), Decimal("0.00"))
     total = subtotal + tax
 
+    ap_site_id = getattr(inv.po, "site_id", None)
+    if ap_site_id is None:
+        receipt = getattr(inv, "receipt", None)
+        ap_site_id = getattr(getattr(receipt, "received_to", None), "site_id", None)
     je = JournalEntry.objects.create(
         tenant=tenant,
+        site_id=ap_site_id,
         entry_date=inv.invoice_date,
         ref_type="AP_INVOICE",
         ref_id=inv.invoice_number,
@@ -218,7 +225,7 @@ def post_payment(payment, user=None) -> JournalEntry:
 
 @transaction.atomic
 def post_inventory_receipt(tenant, value, ref_id, user=None, entry_date=None,
-                           landed_value=Decimal("0.00"), inventory_value=None):
+                           landed_value=Decimal("0.00"), inventory_value=None, site_id=None):
     """Capitalize received stock.
 
     CR GRNI (goods, = supplier liability) + CR Accruals (landed). DR Inventory
@@ -235,7 +242,7 @@ def post_inventory_receipt(tenant, value, ref_id, user=None, entry_date=None,
         return None
 
     je = JournalEntry.objects.create(
-        tenant=tenant, entry_date=entry_date or timezone.now().date(),
+        tenant=tenant, site_id=site_id, entry_date=entry_date or timezone.now().date(),
         ref_type="GRN", ref_id=str(ref_id), memo=f"Goods received {ref_id}",
         posted_by=user, posted_at=timezone.now(),
     )
@@ -275,7 +282,7 @@ def post_expense(expense, user=None) -> JournalEntry:
     total = net + tax
 
     je = JournalEntry.objects.create(
-        tenant=tenant, entry_date=expense.expense_date,
+        tenant=tenant, site_id=expense.site_id, entry_date=expense.expense_date,
         ref_type="EXPENSE", ref_id=str(expense.id),
         memo=f"Expense {expense.payee} {expense.reference or ''}".strip(),
         posted_by=user, posted_at=timezone.now(),
@@ -315,8 +322,9 @@ def post_credit_note(cn, user=None) -> JournalEntry:
     tax = sum((l.tax_amount for l in lines), Decimal("0.00"))
     total = cn.total
 
+    cn_site_id = getattr(getattr(cn, "customer_invoice", None), "site_id", None)
     je = JournalEntry.objects.create(
-        tenant=tenant, entry_date=cn.credit_note_date,
+        tenant=tenant, site_id=cn_site_id, entry_date=cn.credit_note_date,
         ref_type="CREDIT_NOTE", ref_id=str(cn.id),
         memo=f"Credit note {cn.credit_note_number}",
         posted_by=user, posted_at=timezone.now(),
@@ -375,7 +383,8 @@ def post_stock_adjustment(adj, value, user=None, entry_date=None):
         return existing
 
     je = JournalEntry.objects.create(
-        tenant=tenant, entry_date=entry_date or timezone.now().date(),
+        tenant=tenant, site_id=getattr(adj.location, "site_id", None),
+        entry_date=entry_date or timezone.now().date(),
         ref_type="STOCK_ADJ", ref_id=ref_id,
         memo=f"Stock adjustment {adj.product.sku} ({adj.get_reason_display()})",
         posted_by=user, posted_at=timezone.now(),
@@ -417,13 +426,13 @@ def reverse_payment(payment, user=None):
 
 
 @transaction.atomic
-def post_cogs(tenant, value, ref_id, user=None, entry_date=None):
+def post_cogs(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
     """Expense cost of goods sold: DR COGS / CR Inventory."""
     value = Decimal(value)
     if value <= Decimal("0.00"):
         return None
     je = JournalEntry.objects.create(
-        tenant=tenant, entry_date=entry_date or timezone.now().date(),
+        tenant=tenant, site_id=site_id, entry_date=entry_date or timezone.now().date(),
         ref_type="COGS", ref_id=str(ref_id), memo=f"COGS {ref_id}",
         posted_by=user, posted_at=timezone.now(),
     )

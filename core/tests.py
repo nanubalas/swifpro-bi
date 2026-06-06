@@ -5105,3 +5105,83 @@ class SiteAccessMatrixTests(TestCase):
         UserSiteAccess.objects.create(tenant=self.tenant, user=self.staff, site=self.leic)
         names = set(selectable_sites(self.staff, self.tenant).values_list("name", flat=True))
         self.assertEqual(names, {"Leicester"})  # restricted to the granted site
+
+
+class GLSiteDimensionTests(TestCase):
+    """Journal entries carry a Site (from their source document) so P&L /
+    balance sheet can be filtered by site; company-wide is the default."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site, InventoryMovement, GLAccount
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="GLS Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        Site.objects.filter(tenant=self.tenant).delete()
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.siteA = Site.objects.create(tenant=self.tenant, name="A Site", site_type=Site.Type.CITY_BRANCH, is_default=True)
+        self.siteB = Site.objects.create(tenant=self.tenant, name="B Site", site_type=Site.Type.CITY_BRANCH)
+        self.locA = Location.objects.create(tenant=self.tenant, site=self.siteA, name="A WH", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, site=self.siteB, name="B WH", type=Location.Type.WAREHOUSE)
+        self.cust = Customer.objects.create(tenant=self.tenant, name="C")
+        self.prod = Product.objects.create(tenant=self.tenant, sku="GLS1", name="W",
+                                            cost_method=Product.CostMethod.AVERAGE)
+        for loc in (self.locA, self.locB):
+            apply_movement(tenant=self.tenant, product=self.prod, location=loc,
+                           movement_type=InventoryMovement.MovementType.RECEIVE, qty_delta=Decimal("100"),
+                           ref_type="SEED", ref_id=f"O{loc.id}", unit_cost=Decimal("4.00"))
+
+    def _invoice(self, number, location, qty, price):
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust,
+                                             invoice_number=number, location=location)
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.prod, qty=Decimal(qty),
+                                           unit_price=Decimal(price), tax_code=self.std)
+        post_customer_invoice(inv)
+        return inv
+
+    def test_invoice_je_carries_site(self):
+        from core.models import JournalEntry
+        self._invoice("INV-A", self.locA, "10", "25")
+        for ref in ("AR_INVOICE", "COGS"):
+            je = JournalEntry.objects.get(tenant=self.tenant, ref_type=ref, ref_id="INV-A")
+            self.assertEqual(je.site_id, self.siteA.id)
+
+    def test_pnl_filtered_by_site(self):
+        from core.services import reports
+        self._invoice("INV-A", self.locA, "10", "25")  # site A: revenue 250, COGS 40
+        self._invoice("INV-B", self.locB, "4", "25")   # site B: revenue 100, COGS 16
+        company = reports.profit_and_loss(self.tenant)
+        self.assertEqual(company["income_total"], Decimal("350.00"))  # combined default
+        a = reports.profit_and_loss(self.tenant, site_ids=[self.siteA.id])
+        self.assertEqual(a["income_total"], Decimal("250.00"))
+        self.assertEqual(a["cogs_total"], Decimal("40.00"))
+        b = reports.profit_and_loss(self.tenant, site_ids=[self.siteB.id])
+        self.assertEqual(b["income_total"], Decimal("100.00"))
+
+    def test_expense_je_carries_site(self):
+        from core.models import Expense, GLAccount, JournalEntry
+        from core.services.gl import post_expense
+        acc = GLAccount.objects.filter(tenant=self.tenant, code="6100").first()
+        e = Expense.objects.create(tenant=self.tenant, site=self.siteB, payee="Rent Co",
+                                   category=acc, net_amount=Decimal("100.00"))
+        post_expense(e)
+        je = JournalEntry.objects.get(tenant=self.tenant, ref_type="EXPENSE", ref_id=str(e.id))
+        self.assertEqual(je.site_id, self.siteB.id)
+        from core.services import reports
+        b = reports.profit_and_loss(self.tenant, site_ids=[self.siteB.id])
+        self.assertEqual(b["expense_total"], Decimal("100.00"))
+        a = reports.profit_and_loss(self.tenant, site_ids=[self.siteA.id])
+        self.assertEqual(a["expense_total"], Decimal("0.00"))
+
+    def test_pnl_page_site_filter(self):
+        from core.models import OrgMembership
+        u = User.objects.create_user("glsu", password="pw")
+        OrgMembership.objects.create(user=u, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="glsu", password="pw")
+        self._invoice("INV-A", self.locA, "10", "25")
+        self._invoice("INV-B", self.locB, "4", "25")
+        # Company-wide (default).
+        resp = self.client.get("/reports/profit-and-loss/?from=2026-01-01&to=2026-12-31")
+        self.assertEqual(resp.context["data"]["income_total"], Decimal("350.00"))
+        # Filtered to site A.
+        resp = self.client.get(f"/reports/profit-and-loss/?from=2026-01-01&to=2026-12-31&site={self.siteA.id}")
+        self.assertEqual(resp.context["data"]["income_total"], Decimal("250.00"))

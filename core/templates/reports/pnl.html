@@ -17,6 +17,13 @@
       <label class="form-label mb-1">To</label>
       <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm">
     </div>
+    <div>
+      <label class="form-label mb-1">Site</label>
+      <select name="site" class="form-select form-select-sm">
+        <option value="">All sites (company)</option>
+        {% for s in sites %}<option value="{{ s.id }}" {% if s.id == selected_site %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
     <button class="btn btn-primary btn-sm">Apply</button>
     {% include "_export_menu.html" %}
   </form>
