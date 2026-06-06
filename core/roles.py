@@ -121,6 +121,7 @@ NAV = [
         ("Transfers", "/transfers/", "arrow-left-right", {ADMIN, MANAGER, WAREHOUSE}),
         ("Cycle Counts", "/cycle-counts/", "clipboard-check", {ADMIN, MANAGER, WAREHOUSE}),
         ("Sites", "/sites/", "buildings", {ADMIN, MANAGER, WAREHOUSE}),
+        ("Site Access", "/sites/access/", "diagram-3-fill", {ADMIN}),
         ("Locations", "/locations/", "geo-alt", {ADMIN, MANAGER, WAREHOUSE}),
         ("Bins", "/bins/", "grid-3x3-gap", {ADMIN, MANAGER, WAREHOUSE}),
         ("Location Access", "/locations/access/", "person-lock", {ADMIN}),

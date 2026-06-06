@@ -2848,6 +2848,45 @@ def location_access(request):
 
 
 @login_required
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+@transaction.atomic
+def site_access(request):
+    """Admin matrix to grant users access to specific Sites. A user with no ticks
+    may work in all sites (open by default); ticking any narrows them. Site access
+    gates the global Company+Site context, separate from inventory-location access."""
+    from core.models import OrgMembership, UserSiteAccess, Site
+    tenant = _get_default_tenant(request)
+    members = list(OrgMembership.objects.filter(tenant=tenant).select_related("user").order_by("user__username"))
+    sites = list(Site.objects.filter(tenant=tenant).order_by("name"))
+
+    if request.method == "POST":
+        UserSiteAccess.objects.filter(tenant=tenant).delete()
+        bulk = []
+        for m in members:
+            for site in sites:
+                if request.POST.get(f"grant_{m.user_id}_{site.id}"):
+                    bulk.append(UserSiteAccess(tenant=tenant, user=m.user, site=site))
+        if bulk:
+            UserSiteAccess.objects.bulk_create(bulk)
+        log_audit(action="SITE_ACCESS_CHANGED", request=request, user=request.user, tenant=tenant,
+                  detail=f"{len(bulk)} grant(s) across {len(members)} user(s)")
+        messages.success(request, "Site access updated.")
+        return redirect("site_access")
+
+    granted = set(UserSiteAccess.objects.filter(tenant=tenant).values_list("user_id", "site_id"))
+    rows = []
+    for m in members:
+        is_admin = (m.role == roles_mod.ADMIN)
+        rows.append({
+            "user": m.user, "role": m.role, "is_admin": is_admin,
+            "cells": [{"site": site, "checked": (m.user_id, site.id) in granted} for site in sites],
+            "unrestricted": is_admin or not any((m.user_id, site.id) in granted for site in sites),
+        })
+    return render(request, "locations/site_access.html", {
+        "tenant": tenant, "rows": rows, "sites": sites})
+
+
+@login_required
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_READONLY])
 def site_list(request):
     from core.models import Site

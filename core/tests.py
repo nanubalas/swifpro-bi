@@ -5070,3 +5070,38 @@ class UKSeedTests(TestCase):
         # Region sites carry the region type.
         self.assertEqual(Site.objects.get(tenant=uk, name="Scotland").site_type, Site.Type.REGION)
         self.assertEqual(leic.site_type, Site.Type.CITY_BRANCH)
+
+
+class SiteAccessMatrixTests(TestCase):
+    """Admin UI to grant per-site access (UserSiteAccess), with audit."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site
+        self.tenant = Tenant.objects.create(name="SAM Co")
+        self.main = Site.objects.get(tenant=self.tenant, is_default=True)
+        self.leic = Site.objects.create(tenant=self.tenant, name="Leicester", site_type=Site.Type.CITY_BRANCH)
+        self.admin = User.objects.create_user("samadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.staff = User.objects.create_user("samstaff", password="pw")
+        OrgMembership.objects.create(user=self.staff, tenant=self.tenant, role="WAREHOUSE")
+
+    def test_admin_saves_site_grants_and_audits(self):
+        from core.models import UserSiteAccess, AuditLog
+        self.client.login(username="samadmin", password="pw")
+        self.assertEqual(self.client.get("/sites/access/").status_code, 200)
+        resp = self.client.post("/sites/access/", {f"grant_{self.staff.id}_{self.leic.id}": "on"})
+        self.assertEqual(resp.status_code, 302)
+        grants = set(UserSiteAccess.objects.filter(tenant=self.tenant, user=self.staff).values_list("site_id", flat=True))
+        self.assertEqual(grants, {self.leic.id})
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="SITE_ACCESS_CHANGED").exists())
+
+    def test_non_admin_forbidden(self):
+        self.client.login(username="samstaff", password="pw")
+        self.assertEqual(self.client.get("/sites/access/").status_code, 403)
+
+    def test_grant_restricts_site_picker(self):
+        from core.models import UserSiteAccess
+        from core.access import selectable_sites
+        UserSiteAccess.objects.create(tenant=self.tenant, user=self.staff, site=self.leic)
+        names = set(selectable_sites(self.staff, self.tenant).values_list("name", flat=True))
+        self.assertEqual(names, {"Leicester"})  # restricted to the granted site
