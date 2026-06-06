@@ -4840,3 +4840,52 @@ class DefaultSiteTests(TestCase):
         from core.models import Site
         keys = set(dict(Site.Type.choices))
         self.assertEqual(keys, {"region", "country_division", "city_branch", "business_unit", "operating_site"})
+
+
+class SiteAccessTests(TestCase):
+    """UserSiteAccess gates which sites a user may work in (distinct from
+    location access)."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site
+        self.tenant = Tenant.objects.create(name="SA Co")
+        self.main = Site.objects.get(tenant=self.tenant, is_default=True)
+        self.leic = Site.objects.create(tenant=self.tenant, name="Leicester", site_type=Site.Type.CITY_BRANCH)
+        self.lon = Site.objects.create(tenant=self.tenant, name="London", site_type=Site.Type.CITY_BRANCH)
+        self.admin = User.objects.create_user("saadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.staff = User.objects.create_user("sastaff", password="pw")
+        OrgMembership.objects.create(user=self.staff, tenant=self.tenant, role="WAREHOUSE")
+
+    def test_no_grants_unrestricted(self):
+        from core.access import accessible_site_ids
+        self.assertIsNone(accessible_site_ids(self.staff, self.tenant))
+
+    def test_admin_unrestricted_even_with_grants(self):
+        from core.access import accessible_site_ids
+        from core.models import UserSiteAccess
+        UserSiteAccess.objects.create(tenant=self.tenant, user=self.admin, site=self.leic)
+        self.assertIsNone(accessible_site_ids(self.admin, self.tenant))
+
+    def test_grants_restrict_staff(self):
+        from core.access import accessible_site_ids, selectable_sites
+        from core.models import UserSiteAccess
+        UserSiteAccess.objects.create(tenant=self.tenant, user=self.staff, site=self.leic)
+        self.assertEqual(accessible_site_ids(self.staff, self.tenant), {self.leic.id})
+        names = set(selectable_sites(self.staff, self.tenant).values_list("name", flat=True))
+        self.assertEqual(names, {"Leicester"})
+
+    def test_selectable_sites_excludes_inactive(self):
+        from core.access import selectable_sites
+        self.lon.is_active = False
+        self.lon.save()
+        names = set(selectable_sites(self.admin, self.tenant).values_list("name", flat=True))
+        self.assertEqual(names, {"Main Site", "Leicester"})
+
+    def test_site_access_scoped_to_tenant(self):
+        from core.access import accessible_site_ids
+        from core.models import UserSiteAccess, Tenant as T
+        other = T.objects.create(name="SA Other")
+        # A grant in another tenant must not leak.
+        UserSiteAccess.objects.create(tenant=self.tenant, user=self.staff, site=self.leic)
+        self.assertIsNone(accessible_site_ids(self.staff, other))  # no grants there -> unrestricted in 'other'

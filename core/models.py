@@ -351,6 +351,19 @@ class UserLocationAccess(models.Model):
         unique_together = ("tenant", "user", "location")
 
 
+class UserSiteAccess(models.Model):
+    """Restricts a user to specific sites within a tenant. A user with NO rows
+    (or an Admin) may work in all sites; adding rows narrows them to that set.
+    Distinct from UserLocationAccess: site access gates the global Company+Site
+    context, location access gates inventory workflows."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="site_grants")
+    user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="site_grants")
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name="user_grants")
+
+    class Meta:
+        unique_together = ("tenant", "user", "site")
+
+
 class Department(models.Model):
     """A department / team within an organisation (e.g. Sales, Warehouse Ops,
     Finance). An optional organisational tier used to group people (and, later,
