@@ -154,6 +154,7 @@ class LocationProfileTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership
         self.tenant = Tenant.objects.create(name="Loc Co")
+        Location.objects.filter(tenant=self.tenant).delete()  # drop auto-seeded Main Location; this class manages its own
         self.user = User.objects.create_user("locu", password="pw")
         OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
         self.client.login(username="locu", password="pw")
@@ -2653,6 +2654,7 @@ class InvoiceInventoryCogsTests(TestCase):
         from core.models import Location, InventoryMovement, InventoryBalance
         from core.services.inventory import apply_movement
         self.tenant = Tenant.objects.create(name="COGS Co")
+        Location.objects.filter(tenant=self.tenant).delete()  # drop auto-seeded Main Location; this class manages its own
         self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
         self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
         self.loc = Location.objects.create(tenant=self.tenant, name="Main WH", type=Location.Type.WAREHOUSE)
@@ -3621,6 +3623,7 @@ class InventoryAnalyticsTests(TestCase):
         from core.services.inventory import apply_movement
         from django.utils import timezone
         self.tenant = Tenant.objects.create(name="IA Co")
+        Location.objects.filter(tenant=self.tenant).delete()  # drop auto-seeded Main Location; this class manages its own
         self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
         self.loc1 = Location.objects.create(tenant=self.tenant, name="WH1", type=Location.Type.WAREHOUSE)
         self.loc2 = Location.objects.create(tenant=self.tenant, name="WH2", type=Location.Type.WAREHOUSE)
@@ -3890,6 +3893,7 @@ class CustomerOrderReservationTests(TestCase):
     def setUp(self):
         from core.models import OrgMembership, InventoryBalance, CustomerOrder, CustomerOrderLine, Customer
         self.tenant = Tenant.objects.create(name="Resv Co")
+        Location.objects.filter(tenant=self.tenant).delete()  # drop auto-seeded Main Location; this class manages its own
         self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
         self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
         self.prod = Product.objects.create(tenant=self.tenant, sku="RV1", name="P")
@@ -4183,3 +4187,47 @@ class LowStockReorderTests(TestCase):
         from core.models import PurchaseRequisition
         self.client.post("/inventory/low-stock/reorder/", {})
         self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 0)
+
+
+class DefaultLocationTests(TestCase):
+    """A fresh organisation is provisioned with a single 'Main Location'."""
+
+    def test_new_tenant_gets_main_location(self):
+        from core.models import Location
+        t = Tenant.objects.create(name="Fresh Co")
+        locs = Location.objects.filter(tenant=t)
+        self.assertEqual(locs.count(), 1)
+        loc = locs.get()
+        self.assertEqual(loc.name, "Main Location")
+        self.assertEqual(loc.type, Location.Type.WAREHOUSE)
+        self.assertTrue(loc.holds_stock)
+        self.assertTrue(loc.is_active)
+
+    def test_seed_is_idempotent_on_resave(self):
+        from core.models import Location
+        t = Tenant.objects.create(name="Resave Co")
+        t.name = "Resave Co Ltd"
+        t.save()
+        self.assertEqual(Location.objects.filter(tenant=t).count(), 1)
+
+    def test_does_not_seed_when_locations_exist(self):
+        # Simulate a tenant that already had a location before the save signal
+        # re-fires: no duplicate Main Location is added.
+        from core.models import Location
+        t = Tenant.objects.create(name="Has Loc Co")
+        Location.objects.filter(tenant=t).delete()
+        Location.objects.create(tenant=t, name="Depot", type=Location.Type.WAREHOUSE)
+        t.save()
+        names = set(Location.objects.filter(tenant=t).values_list("name", flat=True))
+        self.assertEqual(names, {"Depot"})
+
+    def test_new_organisation_view_provisions_location(self):
+        from core.models import Location, OrgMembership
+        u = User.objects.create_user("orgcreator", password="pw")
+        self.client.login(username="orgcreator", password="pw")
+        resp = self.client.post("/onboarding/new-organisation/", {
+            "name": "View Co", "currency_code": "GBP", "country": "United Kingdom",
+        })
+        self.assertEqual(resp.status_code, 302)
+        t = Tenant.objects.get(name="View Co")
+        self.assertEqual(Location.objects.filter(tenant=t, name="Main Location").count(), 1)

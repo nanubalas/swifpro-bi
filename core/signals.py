@@ -3,7 +3,7 @@ from django.db.models.signals import post_save
 from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
 from django.dispatch import receiver
 
-from core.models import Tenant, TaxCode, GLAccount
+from core.models import Tenant, TaxCode, GLAccount, Location
 from core.audit import log_audit
 
 DEFAULT_TAX_CODES = [
@@ -54,6 +54,15 @@ def bootstrap_tenant_defaults(sender, instance: Tenant, created: bool, **kwargs)
     # GL accounts
     for code, name, acc_type in DEFAULT_ACCOUNTS:
         GLAccount.objects.get_or_create(tenant=instance, code=code, defaults={"name": name, "type": acc_type})
+
+    # Default stock location so a fresh organisation can receive stock, raise
+    # POs and fulfil sales without a manual setup step. Renameable later, and
+    # more locations can be added. Only ever seeded when the org has none.
+    if not Location.objects.filter(tenant=instance).exists():
+        Location.objects.create(
+            tenant=instance, name="Main Location",
+            type=Location.Type.WAREHOUSE, holds_stock=True, is_active=True,
+        )
 
 
 @receiver(post_save, sender="core.OrgMembership")
