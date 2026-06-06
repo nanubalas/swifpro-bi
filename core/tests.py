@@ -4297,3 +4297,83 @@ class LocationAccessEnforcementTests(TestCase):
         self.assertFalse(_can_access_location(_Req(), self.tenant, self.locB.id))
         self.assertFalse(_can_access_location(_Req(), self.tenant, self.locA.id, self.locB.id))
         self.assertTrue(_can_access_location(_Req(), self.tenant, None))  # None ignored
+
+
+class DepartmentTests(TestCase):
+    """Department/Team tier: model, CRUD pages, membership link, manager scoping."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Dept Co")
+        self.other = Tenant.objects.create(name="Other Co")
+        self.admin = User.objects.create_user("deptadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.member = User.objects.create_user("deptmember", password="pw")
+        OrgMembership.objects.create(user=self.member, tenant=self.tenant, role="WAREHOUSE")
+        # A user in another org only - must not appear as a manager option here.
+        self.outsider = User.objects.create_user("outsider", password="pw")
+        OrgMembership.objects.create(user=self.outsider, tenant=self.other, role="ADMIN")
+        self.client.login(username="deptadmin", password="pw")
+
+    def test_create_department_via_view(self):
+        from core.models import Department
+        resp = self.client.post("/departments/new/", {
+            "name": "Warehouse Ops", "code": "WHO", "manager": self.member.id, "is_active": "on",
+        })
+        self.assertEqual(resp.status_code, 302)
+        d = Department.objects.get(tenant=self.tenant, name="Warehouse Ops")
+        self.assertEqual(d.code, "WHO")
+        self.assertEqual(d.manager, self.member)
+        self.assertTrue(d.is_active)
+
+    def test_manager_choices_limited_to_org_members(self):
+        from core.forms import DepartmentForm
+        from core.current import set_current_tenant, clear_current_tenant
+        set_current_tenant(self.tenant)
+        try:
+            ids = set(DepartmentForm().fields["manager"].queryset.values_list("id", flat=True))
+        finally:
+            clear_current_tenant()
+        self.assertIn(self.admin.id, ids)
+        self.assertIn(self.member.id, ids)
+        self.assertNotIn(self.outsider.id, ids)
+
+    def test_membership_department_link(self):
+        from core.models import Department, OrgMembership
+        d = Department.objects.create(tenant=self.tenant, name="Sales")
+        m = OrgMembership.objects.get(user=self.member, tenant=self.tenant)
+        m.department = d
+        m.save()
+        self.assertEqual(d.members.count(), 1)
+        self.assertEqual(d.members.get(), m)
+
+    def test_delete_department_unassigns_members(self):
+        from core.models import Department, OrgMembership
+        d = Department.objects.create(tenant=self.tenant, name="Temp")
+        m = OrgMembership.objects.get(user=self.member, tenant=self.tenant)
+        m.department = d
+        m.save()
+        resp = self.client.post(f"/departments/{d.id}/delete/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Department.objects.filter(id=d.id).exists())
+        m.refresh_from_db()
+        self.assertIsNone(m.department_id)  # SET_NULL
+
+    def test_duplicate_name_rejected(self):
+        from core.models import Department
+        Department.objects.create(tenant=self.tenant, name="Finance")
+        resp = self.client.post("/departments/new/", {"name": "Finance", "is_active": "on"})
+        self.assertEqual(resp.status_code, 200)  # re-rendered with error
+        self.assertEqual(Department.objects.filter(tenant=self.tenant, name="Finance").count(), 1)
+
+    def test_list_page_renders(self):
+        from core.models import Department
+        Department.objects.create(tenant=self.tenant, name="Ops")
+        resp = self.client.get("/departments/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Ops")
+
+    def test_non_admin_cannot_create(self):
+        self.client.login(username="deptmember", password="pw")
+        resp = self.client.post("/departments/new/", {"name": "Sneaky", "is_active": "on"})
+        self.assertEqual(resp.status_code, 403)

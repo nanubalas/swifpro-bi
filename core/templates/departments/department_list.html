@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Departments - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Departments</h2>
+    <div class="text-muted">Teams within your organisation. Group people (and, later, spend) by department.</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'department_create' %}"><i class="bi bi-plus-lg me-1"></i> Create Department</a>
+</div>
+
+<div class="card"><div class="card-body p-0">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr><th>Name</th><th>Code</th><th>Site</th><th>Manager</th><th>Members</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+    <tbody>
+      {% for d in departments %}
+      <tr {% if not d.is_active %}class="text-muted"{% endif %}>
+        <td class="fw-semibold">{{ d.name }}</td>
+        <td>{{ d.code|default:'' }}</td>
+        <td class="small">{{ d.site.name|default:'—' }}</td>
+        <td class="small">{% if d.manager %}{{ d.manager.get_full_name|default:d.manager.username }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+        <td><span class="badge text-bg-light">{{ d.members.count }}</span></td>
+        <td>{% if d.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+        <td class="text-end"><div class="btn-group">
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'department_edit' d.id %}">Edit</a>
+          <a class="btn btn-sm btn-outline-danger" href="{% url 'department_delete' d.id %}">Delete</a>
+        </div></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="text-center text-muted py-5">No departments yet. Create one, then assign people to it from Users &amp; Roles.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

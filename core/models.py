@@ -148,6 +148,8 @@ class OrgMembership(models.Model):
     user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="memberships")
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="memberships")
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    department = models.ForeignKey("Department", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="members")
     is_default = models.BooleanField(default=False)  # preferred org at login
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -333,6 +335,26 @@ class UserLocationAccess(models.Model):
 
     class Meta:
         unique_together = ("tenant", "user", "location")
+
+
+class Department(models.Model):
+    """A department / team within an organisation (e.g. Sales, Warehouse Ops,
+    Finance). An optional organisational tier used to group people (and, later,
+    spend). A department may belong to a site or span the whole company."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="departments")
+    site = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name="departments")
+    name = models.CharField(max_length=200)
+    code = models.CharField(max_length=20, blank=True, null=True)
+    manager = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name="managed_departments")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ("tenant", "name")
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
 
 
 class Supplier(models.Model):
