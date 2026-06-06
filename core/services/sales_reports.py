@@ -10,17 +10,20 @@ ZERO = Decimal("0.00")
 SALE_STATES = ("ISSUED", "SENT", "PAID")
 
 
-def _invoices(tenant, date_from, date_to):
-    return (CustomerInvoice.objects
-            .filter(tenant=tenant, status__in=SALE_STATES,
-                    invoice_date__gte=date_from, invoice_date__lte=date_to)
-            .select_related("customer")
-            .prefetch_related("lines", "lines__tax_code", "lines__product"))
+def _invoices(tenant, date_from, date_to, location_ids=None):
+    qs = (CustomerInvoice.objects
+          .filter(tenant=tenant, status__in=SALE_STATES,
+                  invoice_date__gte=date_from, invoice_date__lte=date_to)
+          .select_related("customer")
+          .prefetch_related("lines", "lines__tax_code", "lines__product"))
+    if location_ids is not None:
+        qs = qs.filter(location_id__in=location_ids)
+    return qs
 
 
-def sales_history(tenant, date_from, date_to):
+def sales_history(tenant, date_from, date_to, location_ids=None):
     rows, net_total, vat_total, grand = [], ZERO, ZERO, ZERO
-    for inv in _invoices(tenant, date_from, date_to).order_by("invoice_date", "id"):
+    for inv in _invoices(tenant, date_from, date_to, location_ids).order_by("invoice_date", "id"):
         rows.append({"invoice": inv, "net": inv.subtotal, "vat": inv.tax_total, "total": inv.total})
         net_total += inv.subtotal
         vat_total += inv.tax_total
@@ -28,9 +31,9 @@ def sales_history(tenant, date_from, date_to):
     return {"rows": rows, "net_total": net_total, "vat_total": vat_total, "grand_total": grand}
 
 
-def sales_by_product(tenant, date_from, date_to):
+def sales_by_product(tenant, date_from, date_to, location_ids=None):
     buckets = {}
-    for inv in _invoices(tenant, date_from, date_to):
+    for inv in _invoices(tenant, date_from, date_to, location_ids):
         for l in inv.lines.all():
             key = l.product.sku if l.product_id else (l.description or "(unspecified)")
             name = l.product.name if l.product_id else (l.description or "(unspecified)")
@@ -43,9 +46,9 @@ def sales_by_product(tenant, date_from, date_to):
             "grand_total": sum((r["total"] for r in rows), ZERO)}
 
 
-def sales_by_customer(tenant, date_from, date_to):
+def sales_by_customer(tenant, date_from, date_to, location_ids=None):
     buckets = {}
-    for inv in _invoices(tenant, date_from, date_to):
+    for inv in _invoices(tenant, date_from, date_to, location_ids):
         b = buckets.setdefault(inv.customer_id, {"name": inv.customer.name, "count": 0, "net": ZERO, "total": ZERO})
         b["count"] += 1
         b["net"] += inv.subtotal

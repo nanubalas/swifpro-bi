@@ -79,8 +79,12 @@ def _post_invoice_cogs(inv, user=None):
     product_lines = [l for l in inv.lines.all() if l.product_id]
     if not product_lines:
         return None
-    location = (Location.objects.filter(tenant=tenant, type=Location.Type.WAREHOUSE).order_by("id").first()
-                or Location.objects.filter(tenant=tenant).order_by("id").first())
+    # Fulfil from the invoice's own location when set; otherwise fall back to the
+    # first stock-holding warehouse (legacy behaviour for invoices with no location).
+    location = inv.location if getattr(inv, "location_id", None) else None
+    if location is None:
+        location = (Location.objects.filter(tenant=tenant, type=Location.Type.WAREHOUSE).order_by("id").first()
+                    or Location.objects.filter(tenant=tenant).order_by("id").first())
     if location is None:
         return None  # no stock location configured -> treat as non-stock sale
 

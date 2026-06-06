@@ -1375,6 +1375,8 @@ class CustomerOrder(_SalesTotalsMixin, models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="customer_orders")
     customer = models.ForeignKey("Customer", on_delete=models.PROTECT, related_name="customer_orders")
+    location = models.ForeignKey("Location", on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="customer_orders")  # fulfilling shop/warehouse
     order_number = models.CharField(max_length=50)
     order_date = models.DateField(default=timezone.now)
     currency_code = models.CharField(max_length=3, default="GBP")
@@ -1565,6 +1567,8 @@ class CustomerInvoice(models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
+    location = models.ForeignKey("Location", on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="customer_invoices")  # shop/warehouse stock is fulfilled from
     invoice_number = models.CharField(max_length=50)
     invoice_date = models.DateField(default=timezone.now)
     due_date = models.DateField(blank=True, null=True)

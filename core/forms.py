@@ -555,19 +555,24 @@ class CustomerInvoiceForm(TenantModelForm):
     )
     class Meta:
         model = CustomerInvoice
-        fields = ["customer", "invoice_number", "invoice_date", "due_date", "notes", "terms"]
+        fields = ["customer", "location", "invoice_number", "invoice_date", "due_date", "notes", "terms"]
         widgets = {
             "invoice_date": forms.DateInput(attrs={"type": "date"}),
             "due_date": forms.DateInput(attrs={"type": "date"}),
             "notes": forms.Textarea(attrs={"rows": 2}),
             "terms": forms.Textarea(attrs={"rows": 2}),
         }
-        help_texts = {"invoice_number": "Leave blank to auto-generate (e.g. INV-0001)."}
+        help_texts = {
+            "invoice_number": "Leave blank to auto-generate (e.g. INV-0001).",
+            "location": "Shop / warehouse stock is fulfilled from.",
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Number is auto-generated when left blank, so it isn't required.
         self.fields["invoice_number"].required = False
+        self._limit_stock_locations("location")
+        self.fields["location"].required = False
 
 CustomerInvoiceLineFormSet = inlineformset_factory(
     CustomerInvoice,
@@ -739,17 +744,22 @@ SalesQuoteLineFormSet = inlineformset_factory(
 class CustomerOrderForm(TenantModelForm):
     class Meta:
         model = CustomerOrder
-        fields = ["customer", "order_number", "order_date", "notes", "terms"]
+        fields = ["customer", "location", "order_number", "order_date", "notes", "terms"]
         widgets = {
             "order_date": forms.DateInput(attrs={"type": "date"}),
             "notes": forms.Textarea(attrs={"rows": 2}),
             "terms": forms.Textarea(attrs={"rows": 2}),
         }
-        help_texts = {"order_number": "Leave blank to auto-generate (e.g. SO-0001)."}
+        help_texts = {
+            "order_number": "Leave blank to auto-generate (e.g. SO-0001).",
+            "location": "Shop / warehouse this order is fulfilled from.",
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["order_number"].required = False
+        self._limit_stock_locations("location")
+        self.fields["location"].required = False
 
 
 CustomerOrderLineFormSet = inlineformset_factory(
