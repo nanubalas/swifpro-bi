@@ -3481,6 +3481,7 @@ class LowStockAndLedgerTests(TestCase):
         from core.models import OrgMembership, Location, InventoryMovement
         from core.services.inventory import apply_movement
         self.tenant = Tenant.objects.create(name="LS Co")
+        Location.objects.filter(tenant=self.tenant).delete()  # WH is the only (auto-selected) site
         self.loc = Location.objects.create(tenant=self.tenant, name="WH", type=Location.Type.WAREHOUSE)
         self.user = User.objects.create_user("lsu", password="pw")
         OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
@@ -4330,15 +4331,20 @@ class LocationAccessEnforcementTests(TestCase):
         resp = self.client.post(f"/transfers/{self.trB.id}/post/")
         self.assertEqual(resp.status_code, 403)
 
-    def test_admin_sees_all_locations(self):
+    def test_admin_also_scoped_to_selected_site(self):
+        # Even an admin sees only the selected site - there is no combined view.
         from core.models import OrgMembership
         admin = User.objects.create_user("accadmin", password="pw")
         OrgMembership.objects.create(user=admin, tenant=self.tenant, role="ADMIN", is_default=True)
-        self.client.login(username="accadmin", password="pw")
-        resp = self.client.get("/inventory/adjustments/")
-        ids = [a.id for a in resp.context["adjustments"]]
+        self.client.login(username="accadmin", password="pw")  # auto-selects WH-A (first)
+        ids = [a.id for a in self.client.get("/inventory/adjustments/").context["adjustments"]]
         self.assertIn(self.adjA.id, ids)
+        self.assertNotIn(self.adjB.id, ids)
+        # Switching site reveals the other location's data (and hides the first).
+        self.client.post("/switch-site/", {"location": self.locB.id})
+        ids = [a.id for a in self.client.get("/inventory/adjustments/").context["adjustments"]]
         self.assertIn(self.adjB.id, ids)
+        self.assertNotIn(self.adjA.id, ids)
 
     def test_can_access_location_helper(self):
         from core.views import _can_access_location
@@ -4748,3 +4754,55 @@ class SiteContextTests(TestCase):
         self.client.login(username="ctxnos", password="pw")
         resp = self.client.get("/inventory/", follow=True)
         self.assertContains(resp, "No site available")
+
+
+class SiteDataScopingTests(TestCase):
+    """Module lists show only the selected site's data; switching site swaps it.
+    There is no combined view."""
+
+    def setUp(self):
+        from core.models import (OrgMembership, InventoryBalance, CustomerOrder,
+                                 CustomerOrderLine, Supplier)
+        self.tenant = Tenant.objects.create(name="Scope Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.locA = Location.objects.create(tenant=self.tenant, name="A-Site", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, name="B-Site", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="SC1", name="Widget")
+        self.cust = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Supp")
+        # Inventory at both sites.
+        InventoryBalance.objects.create(tenant=self.tenant, product=self.prod, location=self.locA, on_hand=Decimal("5"))
+        InventoryBalance.objects.create(tenant=self.tenant, product=self.prod, location=self.locB, on_hand=Decimal("9"))
+        # An invoice, order and PO at each site.
+        self.invA = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust, invoice_number="INV-A", location=self.locA)
+        self.invB = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust, invoice_number="INV-B", location=self.locB)
+        self.ordA = CustomerOrder.objects.create(tenant=self.tenant, customer=self.cust, order_number="SO-A", location=self.locA)
+        self.ordB = CustomerOrder.objects.create(tenant=self.tenant, customer=self.cust, order_number="SO-B", location=self.locB)
+        self.poA = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-A", supplier=self.supplier, receiving_location=self.locA)
+        self.poB = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-B", supplier=self.supplier, receiving_location=self.locB)
+        self.user = User.objects.create_user("scopeu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="scopeu", password="pw")  # auto-selects A-Site (first)
+
+    def _ctx_ids(self, url, key):
+        return [o.id for o in self.client.get(url).context[key]]
+
+    def test_lists_scoped_to_selected_site(self):
+        self.assertEqual(self.client.session["active_location_id"], self.locA.id)
+        # Inventory
+        bals = self.client.get("/inventory/").context["balances"]
+        self.assertEqual({b.location_id for b in bals}, {self.locA.id})
+        # Invoices / orders / POs
+        self.assertEqual(self._ctx_ids("/ar/invoices/", "invoices"), [self.invA.id])
+        self.assertEqual(self._ctx_ids("/customer-orders/", "orders"), [self.ordA.id])
+        self.assertEqual(self._ctx_ids("/po/", "pos"), [self.poA.id])
+
+    def test_switching_site_swaps_data(self):
+        self.client.post("/switch-site/", {"location": self.locB.id})
+        self.assertEqual(self.client.session["active_location_id"], self.locB.id)
+        bals = self.client.get("/inventory/").context["balances"]
+        self.assertEqual({b.location_id for b in bals}, {self.locB.id})
+        self.assertEqual(self._ctx_ids("/ar/invoices/", "invoices"), [self.invB.id])
+        self.assertEqual(self._ctx_ids("/customer-orders/", "orders"), [self.ordB.id])
+        self.assertEqual(self._ctx_ids("/po/", "pos"), [self.poB.id])

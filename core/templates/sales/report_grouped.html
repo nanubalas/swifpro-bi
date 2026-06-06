@@ -10,11 +10,7 @@
   <form method="get" class="d-flex align-items-end gap-2">
     <div><label class="form-label mb-1">From</label><input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
     <div><label class="form-label mb-1">To</label><input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control form-control-sm"></div>
-    <div><label class="form-label mb-1">Location</label>
-      <select name="location" class="form-select form-select-sm">
-        <option value="">All locations</option>
-        {% for l in locations %}<option value="{{ l.id }}" {% if l.id == selected_loc %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
-      </select></div>
+    <div class="align-self-end text-muted small pb-1"><i class="bi bi-geo-alt me-1"></i>{{ active_site_name }}</div>
     <button class="btn btn-primary btn-sm">Apply</button>
     {% include "_export_menu.html" %}
   </form>

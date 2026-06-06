@@ -183,6 +183,15 @@ def get_active_location(request):
     return selectable_locations(user, tenant).filter(id=lid).first()
 
 
+def active_location_ids(request):
+    """Location id(s) to scope module data to: exactly the selected site, as a
+    single-element list. Returns None only when no site is selected (e.g. on the
+    exempt setup pages), meaning 'do not narrow'. There is never an 'all' value
+    once a site is chosen - the gate guarantees one on every module page."""
+    loc = get_active_location(request)
+    return [loc.id] if loc is not None else None
+
+
 def can_access_company(user, tenant_id):
     """True if the user is a member of (or superuser over) the given company."""
     from core.models import OrgMembership
