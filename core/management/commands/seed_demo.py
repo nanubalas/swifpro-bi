@@ -239,9 +239,11 @@ class Command(BaseCommand):
             self.stdout.write("Created demo PO + inbound shipment.")
 
         # Purchase requisition (approved, awaiting conversion to PO)
+        from core.models import Department
+        ops_dept, _ = Department.objects.get_or_create(tenant=tenant, name="Operations")
         req, req_created = PurchaseRequisition.objects.get_or_create(
             tenant=tenant, req_number="PR-DEMO-0001",
-            defaults={"department": "Operations", "preferred_supplier": globex,
+            defaults={"department": ops_dept, "preferred_supplier": globex,
                       "needed_by": (timezone.now() + timezone.timedelta(days=21)).date(),
                       "justification": "Restock fast-moving SKUs ahead of peak season.",
                       "status": PurchaseRequisition.Status.APPROVED,

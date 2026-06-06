@@ -205,7 +205,10 @@ class LocationProfileTests(TestCase):
     def test_storage_unit_type_available(self):
         from core.models import Location
         self.assertIn("STORAGE", dict(Location.Type.choices))
-        self.assertEqual(dict(Location.Type.choices)["STORAGE"], "Storage unit")
+        self.assertEqual(dict(Location.Type.choices)["STORAGE"], "Storage room")
+        # New inventory-location types from the spec are available too.
+        for t in ["SHOP_FLOOR", "BACK_ROOM", "COLD_STORAGE", "DAMAGED"]:
+            self.assertIn(t, dict(Location.Type.choices))
 
     def test_create_with_all_fields(self):
         from core.models import Location
@@ -4991,3 +4994,79 @@ class StockSiteAndWorkflowTests(TestCase):
         to_ids = set(form.fields["to_location"].queryset.values_list("id", flat=True))
         self.assertEqual(from_ids, {self.locA.id})            # within the working site
         self.assertEqual(to_ids, {self.locA.id, self.locB.id})  # cross-site allowed
+
+
+class DocumentSiteScopingTests(TestCase):
+    """Sales orders/invoices and POs carry site_id (stamped from the active site
+    on create, or derived), and lists scope by it."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site, Supplier
+        self.tenant = Tenant.objects.create(name="Doc Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        Site.objects.filter(tenant=self.tenant).delete()
+        self.std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.siteA = Site.objects.create(tenant=self.tenant, name="A Site", site_type=Site.Type.CITY_BRANCH, is_default=True)
+        self.siteB = Site.objects.create(tenant=self.tenant, name="B Site", site_type=Site.Type.CITY_BRANCH)
+        self.locA = Location.objects.create(tenant=self.tenant, site=self.siteA, name="A WH", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, site=self.siteB, name="B WH", type=Location.Type.WAREHOUSE)
+        self.cust = Customer.objects.create(tenant=self.tenant, name="C")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="S")
+        self.prod = Product.objects.create(tenant=self.tenant, sku="DOC1", name="W")
+        self.user = User.objects.create_user("docu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="docu", password="pw")  # auto-selects A Site
+
+    def test_invoice_site_derived_from_location(self):
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust,
+                                             invoice_number="INV-1", location=self.locB)
+        self.assertEqual(inv.site_id, self.siteB.id)
+
+    def test_document_without_location_falls_back_to_default_site(self):
+        # No location -> default Site (A Site is default).
+        inv = CustomerInvoice.objects.create(tenant=self.tenant, customer=self.cust, invoice_number="INV-2")
+        self.assertEqual(inv.site_id, self.siteA.id)
+
+    def test_create_view_stamps_active_site(self):
+        # Switch to B Site, then create an invoice via the view -> stamped to B.
+        self.client.post("/switch-site/", {"site": self.siteB.id})
+        resp = self.client.post("/ar/invoices/new/", {
+            "customer": self.cust.id, "invoice_date": "2026-01-01", "action": "save",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-product": self.prod.id, "lines-0-qty": "1", "lines-0-unit_price": "10",
+            "lines-0-tax_code": self.std.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        inv = CustomerInvoice.objects.get(tenant=self.tenant, customer=self.cust)
+        self.assertEqual(inv.site_id, self.siteB.id)
+
+    def test_po_list_scoped_by_site(self):
+        poA = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-A", supplier=self.supplier, receiving_location=self.locA)
+        poB = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-B", supplier=self.supplier, receiving_location=self.locB)
+        ids = [p.id for p in self.client.get("/po/").context["pos"]]  # A Site active
+        self.assertEqual(ids, [poA.id])
+
+
+class UKSeedTests(TestCase):
+    """The seed_uk_demo command builds Company UK -> city/region Sites -> named
+    inventory locations, idempotently."""
+
+    def test_seed_creates_sites_and_locations(self):
+        from django.core.management import call_command
+        from core.models import Tenant, Site, Location
+        call_command("seed_uk_demo")
+        call_command("seed_uk_demo")  # idempotent
+        uk = Tenant.objects.get(name="UK")
+        names = set(Site.objects.filter(tenant=uk).values_list("name", flat=True))
+        for s in ["London", "Leicester", "Manchester", "Birmingham",
+                  "England", "Wales", "Scotland", "Northern Ireland"]:
+            self.assertIn(s, names)
+        leic = Site.objects.get(tenant=uk, name="Leicester")
+        leic_locs = set(Location.objects.filter(tenant=uk, site=leic).values_list("name", flat=True))
+        self.assertEqual(leic_locs, {
+            "Leicester Main Warehouse", "Leicester Shop Floor", "Leicester Back Room",
+            "Leicester Returns Area", "Leicester Delivery Van"})
+        # Region sites carry the region type.
+        self.assertEqual(Site.objects.get(tenant=uk, name="Scotland").site_type, Site.Type.REGION)
+        self.assertEqual(leic.site_type, Site.Type.CITY_BRANCH)

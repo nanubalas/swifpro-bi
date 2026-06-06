@@ -288,17 +288,34 @@ class Site(models.Model):
         return self.name
 
 
+def _derive_doc_site(tenant_id, location):
+    """Resolve the Site a document (order/invoice/PO) belongs to: the site of its
+    location when set, else the company's default Site. Keeps every document
+    site-stamped so Company+Site filtering is complete."""
+    if location is not None and getattr(location, "site_id", None):
+        return location.site_id
+    if not tenant_id:
+        return None
+    d = (Site.objects.filter(tenant_id=tenant_id, is_default=True).order_by("id").first()
+         or Site.objects.filter(tenant_id=tenant_id).order_by("id").first())
+    return d.id if d else None
+
+
 class Location(models.Model):
     class Type(models.TextChoices):
         WAREHOUSE = "WAREHOUSE", "Warehouse"
         SHOP = "STORE", "Shop / Store"
+        SHOP_FLOOR = "SHOP_FLOOR", "Shop floor"
+        BACK_ROOM = "BACK_ROOM", "Back room"
+        COLD_STORAGE = "COLD_STORAGE", "Cold storage"
         OFFICE = "OFFICE", "Office"
-        VAN = "VAN", "Van"
+        VAN = "VAN", "Delivery van"
         POPUP = "POPUP", "Pop-up location"
-        THREEPL = "THREEPL", "3PL"
-        STORAGE = "STORAGE", "Storage unit"
+        THREEPL = "THREEPL", "3PL warehouse"
+        STORAGE = "STORAGE", "Storage room"
         TRANSIT = "TRANSIT", "Transit"
-        RETURNS = "RETURNS", "Returns"
+        RETURNS = "RETURNS", "Returns area"
+        DAMAGED = "DAMAGED", "Damaged goods area"
         QUARANTINE = "QUARANTINE", "Quarantine"
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
@@ -626,6 +643,7 @@ class PurchaseOrder(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     po_number = models.CharField(max_length=40)
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
+    site = models.ForeignKey("Site", on_delete=models.SET_NULL, null=True, blank=True, related_name="purchase_orders")
     receiving_location = models.ForeignKey("Location", on_delete=models.SET_NULL, null=True, blank=True,
                                            related_name="purchase_orders")  # where stock is received
     delivery_address = models.TextField(blank=True, null=True)  # free-text delivery note (supplements receiving_location)
@@ -647,6 +665,11 @@ class PurchaseOrder(models.Model):
 
     class Meta:
         unique_together = ("tenant", "po_number")
+
+    def save(self, *args, **kwargs):
+        if self.site_id is None:
+            self.site_id = _derive_doc_site(self.tenant_id, self.receiving_location)  # PO sits at its receiving site
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.po_number
@@ -1417,6 +1440,7 @@ class CustomerOrder(_SalesTotalsMixin, models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="customer_orders")
     customer = models.ForeignKey("Customer", on_delete=models.PROTECT, related_name="customer_orders")
+    site = models.ForeignKey("Site", on_delete=models.SET_NULL, null=True, blank=True, related_name="customer_orders")
     location = models.ForeignKey("Location", on_delete=models.SET_NULL, null=True, blank=True,
                                  related_name="customer_orders")  # fulfilling shop/warehouse
     order_number = models.CharField(max_length=50)
@@ -1430,6 +1454,11 @@ class CustomerOrder(_SalesTotalsMixin, models.Model):
 
     class Meta:
         unique_together = ("tenant", "order_number")
+
+    def save(self, *args, **kwargs):
+        if self.site_id is None:
+            self.site_id = _derive_doc_site(self.tenant_id, self.location)  # order sits at its fulfilling site
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.order_number
@@ -1609,6 +1638,7 @@ class CustomerInvoice(models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
+    site = models.ForeignKey("Site", on_delete=models.SET_NULL, null=True, blank=True, related_name="customer_invoices")
     location = models.ForeignKey("Location", on_delete=models.SET_NULL, null=True, blank=True,
                                  related_name="customer_invoices")  # shop/warehouse stock is fulfilled from
     invoice_number = models.CharField(max_length=50)
@@ -1640,6 +1670,11 @@ class CustomerInvoice(models.Model):
 
     class Meta:
         unique_together = ("tenant", "invoice_number")
+
+    def save(self, *args, **kwargs):
+        if self.site_id is None:
+            self.site_id = _derive_doc_site(self.tenant_id, self.location)  # invoice sits at its fulfilling site
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.invoice_number

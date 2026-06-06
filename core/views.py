@@ -130,9 +130,9 @@ def _default_vat_rate(tenant):
 def po_list(request):
     tenant = _get_default_tenant(request)
     pos = PurchaseOrder.objects.filter(tenant=tenant).order_by("-created_at")
-    sel = active_location_ids(request)  # scope to the selected receiving site
-    if sel:
-        pos = pos.filter(receiving_location_id__in=sel)
+    site = active_site_id(request)  # scope to the selected site
+    if site:
+        pos = pos.filter(site_id=site)
     return render(request, "po_list.html", {"tenant": tenant, "pos": pos})
 
 @login_required
@@ -1436,8 +1436,9 @@ def po_create(request):
         if form.is_valid() and formset.is_valid():
             po = form.save(commit=False)
             po.tenant = tenant
+            po.site = get_active_site(request)  # PO belongs to the working site
             if not po.receiving_location_id:
-                po.receiving_location = _order_stock_location(tenant)  # default to the org's main stock location
+                po.receiving_location = _active_site_default_location(request, tenant)  # receive into the site
 
             action = form.cleaned_data.get("action") or "save"
             po.status = PurchaseOrder.Status.SUBMITTED if action == "submit" else PurchaseOrder.Status.DRAFT
@@ -4100,9 +4101,9 @@ def ar_invoice_list(request):
         .prefetch_related("lines", "lines__tax_code")
         .order_by("-invoice_date", "-id")
     )
-    sel = active_location_ids(request)  # scope to the selected site
-    if sel:
-        invoices = invoices.filter(location_id__in=sel)
+    site = active_site_id(request)  # scope to the selected site
+    if site:
+        invoices = invoices.filter(site_id=site)
     return render(request, "ar/ar_invoice_list.html", {"tenant": tenant, "invoices": invoices})
 
 @role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
@@ -4117,8 +4118,9 @@ def ar_invoice_create(request):
             inv = form.save(commit=False)
             inv.tenant = tenant
             inv.currency_code = tenant.currency_code
+            inv.site = get_active_site(request)  # sale belongs to the working site
             if not inv.location_id:
-                inv.location = _order_stock_location(tenant)  # default to the org's main stock location
+                inv.location = _active_site_default_location(request, tenant)  # fulfil from the site's location
             # Auto-generate the invoice number when the admin left it blank.
             if not (inv.invoice_number or "").strip():
                 from core.numbering import next_invoice_number
@@ -4407,7 +4409,8 @@ def _invoice_from_lines(tenant, customer, currency, notes, terms, src, line_attr
     inv = CustomerInvoice.objects.create(
         tenant=tenant, customer=customer, invoice_number=next_invoice_number(tenant),
         currency_code=currency, notes=notes, terms=terms,
-        location=getattr(src, "location", None))  # carry the order's fulfilling location
+        site=getattr(src, "site", None),  # carry the order's site
+        location=getattr(src, "location", None))  # and its fulfilling location
     if tenant.default_payment_terms_days:
         inv.due_date = inv.invoice_date + timezone.timedelta(days=tenant.default_payment_terms_days)
     setattr(inv, line_attr, src)
@@ -4458,9 +4461,9 @@ def quote_delete(request, quote_id):
 def corder_list(request):
     tenant = _get_default_tenant(request)
     orders = CustomerOrder.objects.filter(tenant=tenant).select_related("customer").prefetch_related("lines", "lines__tax_code").order_by("-order_date", "-id")
-    sel = active_location_ids(request)  # scope to the selected site
-    if sel:
-        orders = orders.filter(location_id__in=sel)
+    site = active_site_id(request)  # scope to the selected site
+    if site:
+        orders = orders.filter(site_id=site)
     return render(request, "sales/corder_list.html", {"tenant": tenant, "orders": orders})
 
 
@@ -4476,8 +4479,9 @@ def corder_create(request):
             o = form.save(commit=False)
             o.tenant = tenant
             o.currency_code = tenant.currency_code
+            o.site = get_active_site(request)  # sale belongs to the working site
             if not o.location_id:
-                o.location = _order_stock_location(tenant)  # default to the org's main stock location
+                o.location = _active_site_default_location(request, tenant)  # fulfil from the site's location
             if not (o.order_number or "").strip():
                 from core.numbering import next_order_number
                 o.order_number = next_order_number(tenant)
@@ -4518,6 +4522,19 @@ def corder_pdf(request, order_id):
 def _order_stock_location(tenant):
     return (Location.objects.filter(tenant=tenant, type=Location.Type.WAREHOUSE).order_by("id").first()
             or Location.objects.filter(tenant=tenant).order_by("id").first())
+
+
+def _active_site_default_location(request, tenant):
+    """A sensible default fulfilling/receiving location under the selected site:
+    first active stock-holding location in that site, else any in it, else the
+    company's first location."""
+    site = get_active_site(request)
+    if site is not None:
+        loc = (Location.objects.filter(tenant=tenant, site=site, is_active=True, holds_stock=True).order_by("id").first()
+               or Location.objects.filter(tenant=tenant, site=site).order_by("id").first())
+        if loc is not None:
+            return loc
+    return _order_stock_location(tenant)
 
 
 def _po_destination(po):
