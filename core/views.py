@@ -30,6 +30,8 @@ from django.core.exceptions import PermissionDenied
 from core import roles as roles_mod
 from core.access import (
     get_active_role, get_memberships, default_landing_url, SESSION_TENANT_KEY,
+    SESSION_LOCATION_KEY, get_active_location, selectable_locations,
+    can_access_company, can_access_site,
 )
 from core.audit import log_audit
 from core.forms import (
@@ -354,18 +356,110 @@ def landing(request):
     return redirect(default_landing_url(tenant, role))
 
 
+def _select_company(request, tid, *, switching):
+    """Set the active company, clearing any selected site (the user must pick a
+    site for the new company). Returns True on success; 403s are handled by the
+    caller. Audits the (un)authorised access."""
+    if not can_access_company(request.user, tid):
+        log_audit(action="UNAUTHORISED_COMPANY_ACCESS", request=request, user=request.user,
+                  detail=f"tenant_id={tid}")
+        return False
+    request.session[SESSION_TENANT_KEY] = int(tid)
+    request.session.pop(SESSION_LOCATION_KEY, None)  # switching company clears the site
+    tenant = OrgMembership.objects.filter(user=request.user, tenant_id=tid).first()
+    log_audit(action="COMPANY_SWITCHED" if switching else "COMPANY_SELECTED",
+              request=request, user=request.user, tenant=getattr(tenant, "tenant", None),
+              detail=f"tenant_id={tid}")
+    return True
+
+
 @login_required
 def select_org(request):
-    """Organisation chooser for users belonging to multiple organisations."""
+    """Company chooser for users belonging to multiple organisations."""
     memberships = get_memberships(request.user)
     if request.method == "POST":
         tid = request.POST.get("tenant")
-        m = OrgMembership.objects.filter(user=request.user, tenant_id=tid).first()
-        if m:
-            request.session[SESSION_TENANT_KEY] = m.tenant_id
-            return redirect("landing")
-        messages.error(request, "Please choose a valid organisation.")
+        if tid and _select_company(request, tid, switching=False):
+            return redirect("landing")  # landing then resolves the site
+        raise PermissionDenied("You do not have access to that company.")
     return render(request, "select_org.html", {"memberships": memberships})
+
+
+@login_required
+def select_site(request):
+    """Site (location) chooser - mandatory; there is no 'all sites' option."""
+    from core.access import get_active_tenant
+    tenant = get_active_tenant(request)
+    if tenant is None:
+        return redirect("landing")
+    locations = list(selectable_locations(request.user, tenant))
+    next_url = request.POST.get("next") or request.GET.get("next") or ""
+    if request.method == "POST":
+        lid = request.POST.get("location")
+        if lid and can_access_site(request.user, tenant, lid):
+            request.session[SESSION_LOCATION_KEY] = int(lid)
+            loc = next((l for l in locations if str(l.id) == str(lid)), None)
+            log_audit(action="SITE_SELECTED", request=request, user=request.user, tenant=tenant,
+                      detail=getattr(loc, "name", lid))
+            return redirect(_safe_next(next_url) or default_landing_url(tenant, get_active_role(request)))
+        log_audit(action="UNAUTHORISED_SITE_ACCESS", request=request, user=request.user, tenant=tenant,
+                  detail=f"location_id={lid}")
+        raise PermissionDenied("You do not have access to that site.")
+    if not locations:
+        return redirect("no_site")
+    if len(locations) == 1:  # nothing to choose - take it and move on
+        request.session[SESSION_LOCATION_KEY] = locations[0].id
+        return redirect("landing")
+    return render(request, "select_site.html", {
+        "tenant": tenant, "locations": locations, "next": next_url})
+
+
+@login_required
+def switch_company(request):
+    """Header company switcher: set company, clear site, force a site choice."""
+    if request.method == "POST":
+        tid = request.POST.get("tenant")
+        if tid and _select_company(request, tid, switching=True):
+            return redirect("landing")
+        raise PermissionDenied("You do not have access to that company.")
+    return redirect("landing")
+
+
+@login_required
+def switch_site(request):
+    """Header site switcher: change the working site, staying on the same page
+    when possible."""
+    from core.access import get_active_tenant
+    tenant = get_active_tenant(request)
+    if request.method == "POST" and tenant is not None:
+        lid = request.POST.get("location")
+        next_url = _safe_next(request.POST.get("next") or "")
+        if lid and can_access_site(request.user, tenant, lid):
+            request.session[SESSION_LOCATION_KEY] = int(lid)
+            loc = selectable_locations(request.user, tenant).filter(id=lid).first()
+            log_audit(action="SITE_SWITCHED", request=request, user=request.user, tenant=tenant,
+                      detail=getattr(loc, "name", lid))
+            return redirect(next_url or default_landing_url(tenant, get_active_role(request)))
+        log_audit(action="UNAUTHORISED_SITE_ACCESS", request=request, user=request.user, tenant=tenant,
+                  detail=f"location_id={lid}")
+        raise PermissionDenied("You do not have access to that site.")
+    return redirect("landing")
+
+
+@login_required
+def no_site(request):
+    """Shown when a user has no site they can work in (no accessible active
+    location in the selected company)."""
+    from core.access import get_active_tenant
+    tenant = get_active_tenant(request)
+    return render(request, "no_site.html", {"tenant": tenant})
+
+
+def _safe_next(url):
+    """Only allow same-site relative redirects (no open redirects)."""
+    if url and url.startswith("/") and not url.startswith("//"):
+        return url
+    return ""
 
 
 def _dashboard_kpis(tenant, role_code):

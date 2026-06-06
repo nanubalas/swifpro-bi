@@ -348,12 +348,53 @@
       <button class="skn-iconbtn" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle light / dark">
         <i class="bi bi-moon-stars"></i>
       </button>
-      {% if user.is_authenticated %}
-        {% if membership_count > 1 %}
-          <a class="btn btn-outline-secondary btn-sm" href="/select-org/" title="Switch organisation">
-            <i class="bi bi-building me-1"></i>{{ active_tenant_name }}
-          </a>
+      {% if user.is_authenticated and active_site_id %}
+        {# Company switcher (only when the user belongs to more than one) #}
+        {% if switch_companies|length > 1 %}
+        <div class="dropdown">
+          <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Switch company">
+            <i class="bi bi-building me-1"></i><span class="d-none d-md-inline">{{ active_tenant_name }}</span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><h6 class="dropdown-header">Company</h6></li>
+            {% for c in switch_companies %}
+            <li>
+              <form method="post" action="{% url 'switch_company' %}" class="d-inline">
+                {% csrf_token %}
+                <input type="hidden" name="tenant" value="{{ c.id }}">
+                <button type="submit" class="dropdown-item {% if c.id == active_tenant_id %}active{% endif %}">{{ c.name }}</button>
+              </form>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% else %}
+        <span class="badge text-bg-light border d-none d-md-inline"><i class="bi bi-building me-1"></i>{{ active_tenant_name }}</span>
         {% endif %}
+
+        {# Site switcher - mandatory single site, never 'all sites' #}
+        <div class="dropdown">
+          <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Switch site">
+            <i class="bi bi-geo-alt me-1"></i><span class="d-none d-md-inline">{{ active_site_name }}</span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end" style="max-height:60vh; overflow:auto;">
+            <li><h6 class="dropdown-header">Site</h6></li>
+            {% for s in switch_sites %}
+            <li>
+              <form method="post" action="{% url 'switch_site' %}" class="d-inline">
+                {% csrf_token %}
+                <input type="hidden" name="location" value="{{ s.id }}">
+                <input type="hidden" name="next" value="{{ request.path }}">
+                <button type="submit" class="dropdown-item {% if s.id == active_site_id %}active{% endif %}">
+                  {{ s.name }}{% if s.site %} <span class="text-muted small">({{ s.site.name }})</span>{% endif %}
+                </button>
+              </form>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+      {% if user.is_authenticated %}
         <span class="skn-userchip">
           <span class="skn-avatar">{{ user.username|first|upper }}</span>
           {{ user.username }}

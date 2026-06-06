@@ -11,6 +11,49 @@ from core.models import (
 from core.services.gl import post_customer_invoice
 
 
+class _CtxClient(Client):
+    """Test client that auto-selects the user's default company + first
+    accessible site on login, so the mandatory post-login context gate is
+    satisfied. Mirrors the real auto-selection for single-context users; tests
+    that exercise the gate/selection itself opt out via ``client_class = Client``.
+    """
+
+    def login(self, **credentials):
+        ok = super().login(**credentials)
+        if ok:
+            self._select_default_context()
+        return ok
+
+    def _select_default_context(self):
+        from core.access import (get_memberships, selectable_locations,
+                                 SESSION_TENANT_KEY, SESSION_LOCATION_KEY)
+        uid = self.session.get("_auth_user_id")
+        if not uid:
+            return
+        u = User.objects.filter(pk=uid).first()
+        if u is None:
+            return
+        memberships = get_memberships(u)
+        if memberships:
+            m = next((x for x in memberships if x.is_default), memberships[0])
+            tenant = m.tenant
+        else:
+            prof = UserProfile.objects.filter(user=u).first()
+            tenant = prof.tenant if prof else Tenant.objects.order_by("id").first()
+        if tenant is None:
+            return
+        loc = selectable_locations(u, tenant).first()
+        s = self.session
+        s[SESSION_TENANT_KEY] = tenant.id
+        if loc:
+            s[SESSION_LOCATION_KEY] = loc.id
+        s.save()
+
+
+# Apply suite-wide: every TestCase's self.client auto-selects a context on login.
+TestCase.client_class = _CtxClient
+
+
 class ReceivingFlowTests(TestCase):
     """Locks in the fix for the previously-broken PO receiving flow."""
 
@@ -513,9 +556,15 @@ class RoleDashboardTests(TestCase):
         t2 = Tenant.objects.create(name="Org Two")
         OrgMembership.objects.create(user=self.user, tenant=t2, role="ACCOUNTANT")
         self.client.login(username="salesuser", password="pw")
+        # Simulate a fresh login with no context chosen yet (the auto-context
+        # client pre-selects one; clear it to exercise the multi-company gate).
+        s = self.client.session
+        s.pop("active_tenant_id", None)
+        s.pop("active_location_id", None)
+        s.save()
         resp = self.client.get("/")
         self.assertEqual(resp.status_code, 302)
-        self.assertEqual(resp.url, "/select-org/")
+        self.assertIn("/select-org/", resp.url)
 
     def test_login_is_audited(self):
         from core.models import AuditLog
@@ -4586,3 +4635,116 @@ class RequisitionDepartmentFKTests(TestCase):
         ar.refresh_from_db()
         m = OrgMembership.objects.get(user=ar.created_user, tenant=self.tenant)
         self.assertIsNone(m.department_id)
+
+
+class SiteContextTests(TestCase):
+    """Mandatory company + site context: auto-select, gate, switching, 403, audit.
+    There is never an 'all sites' option."""
+    client_class = Client  # exercise the real gate, not the auto-context client
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Ctx Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        self.locA = Location.objects.create(tenant=self.tenant, name="Site A", type=Location.Type.WAREHOUSE)
+        self.user = User.objects.create_user("ctxu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+
+    def _login(self):
+        self.client.login(username="ctxu", password="pw")
+
+    def test_single_company_single_site_autoselects(self):
+        self._login()
+        resp = self.client.get("/inventory/")
+        self.assertEqual(resp.status_code, 200)  # no redirect - auto-selected
+        self.assertEqual(self.client.session["active_tenant_id"], self.tenant.id)
+        self.assertEqual(self.client.session["active_location_id"], self.locA.id)
+
+    def test_multiple_sites_force_selection(self):
+        from core.models import AuditLog
+        locB = Location.objects.create(tenant=self.tenant, name="Site B", type=Location.Type.WAREHOUSE)
+        self._login()
+        resp = self.client.get("/inventory/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/select-site/", resp["Location"])
+        # Pick a specific site -> proceeds, context set, audited.
+        resp2 = self.client.post("/select-site/", {"location": locB.id, "next": "/inventory/"})
+        self.assertRedirects(resp2, "/inventory/")
+        self.assertEqual(self.client.session["active_location_id"], locB.id)
+        self.assertTrue(AuditLog.objects.filter(tenant=self.tenant, action="SITE_SELECTED").exists())
+
+    def test_site_picker_has_no_all_sites_option(self):
+        Location.objects.create(tenant=self.tenant, name="Site B", type=Location.Type.WAREHOUSE)
+        self._login()
+        resp = self.client.get("/select-site/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, "All sites")
+        self.assertNotContains(resp, "All Sites")
+
+    def test_multiple_companies_force_company_then_site(self):
+        from core.models import OrgMembership, Tenant as T
+        t2 = T.objects.create(name="Ctx Co 2")  # gets its own Main Location via signal
+        OrgMembership.objects.create(user=self.user, tenant=t2, role="ADMIN")
+        self._login()
+        resp = self.client.get("/inventory/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/select-org/", resp["Location"])
+        # Choose company -> then site auto-resolves (each has one) -> dashboard reachable.
+        self.client.post("/select-org/", {"tenant": self.tenant.id})
+        self.assertEqual(self.client.session["active_tenant_id"], self.tenant.id)
+
+    def test_switch_company_clears_site(self):
+        from core.models import OrgMembership, Tenant as T, AuditLog
+        t2 = T.objects.create(name="Ctx Co 2")
+        OrgMembership.objects.create(user=self.user, tenant=t2, role="ADMIN")
+        self._login()
+        self.client.get("/inventory/")  # may redirect to select-org; set context explicitly
+        s = self.client.session
+        s["active_tenant_id"] = self.tenant.id
+        s["active_location_id"] = self.locA.id
+        s.save()
+        resp = self.client.post("/switch-company/", {"tenant": t2.id})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.client.session["active_tenant_id"], t2.id)
+        self.assertNotIn("active_location_id", self.client.session)  # site cleared
+        self.assertTrue(AuditLog.objects.filter(action="COMPANY_SWITCHED").exists())
+
+    def test_switch_site_stays_on_page(self):
+        from core.models import AuditLog
+        locB = Location.objects.create(tenant=self.tenant, name="Site B", type=Location.Type.WAREHOUSE)
+        self._login()
+        self.client.get("/inventory/")  # auto-selects locA
+        resp = self.client.post("/switch-site/", {"location": locB.id, "next": "/inventory/"})
+        self.assertRedirects(resp, "/inventory/")
+        self.assertEqual(self.client.session["active_location_id"], locB.id)
+        self.assertTrue(AuditLog.objects.filter(action="SITE_SWITCHED").exists())
+
+    def test_unauthorised_site_returns_403_and_audits(self):
+        from core.models import OrgMembership, Tenant as T, AuditLog
+        other = T.objects.create(name="Other Ctx")
+        other_loc = Location.objects.filter(tenant=other).first()
+        self._login()
+        self.client.get("/inventory/")  # establish context in self.tenant
+        resp = self.client.post("/switch-site/", {"location": other_loc.id})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(AuditLog.objects.filter(action="UNAUTHORISED_SITE_ACCESS").exists())
+
+    def test_unauthorised_company_returns_403(self):
+        from core.models import Tenant as T
+        other = T.objects.create(name="Other Ctx 2")  # user is not a member
+        self._login()
+        self.client.get("/inventory/")
+        resp = self.client.post("/switch-company/", {"tenant": other.id})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_restricted_user_no_site_shows_no_site_page(self):
+        from core.models import OrgMembership, UserLocationAccess
+        # A warehouse user with a grant to an inactive location only -> no selectable site.
+        self.locA.is_active = False
+        self.locA.save()
+        u2 = User.objects.create_user("ctxnos", password="pw")
+        OrgMembership.objects.create(user=u2, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        UserLocationAccess.objects.create(tenant=self.tenant, user=u2, location=self.locA)
+        self.client.login(username="ctxnos", password="pw")
+        resp = self.client.get("/inventory/", follow=True)
+        self.assertContains(resp, "No site available")
