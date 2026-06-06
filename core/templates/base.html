@@ -453,6 +453,11 @@
   </div>
 </main>
 
+{# Modals live here, outside <main>/.skn-page, so Bootstrap's fixed positioning
+   isn't trapped by the page's transform/animation (would hide them behind the
+   backdrop). #}
+{% block modals %}{% endblock %}
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>

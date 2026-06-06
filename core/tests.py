@@ -4830,6 +4830,13 @@ class WorkspaceSwitcherTests(TestCase):
         self.assertEqual(sites_by_company.get(self.t1.id), {self.t1_main.id, self.t1_leic.id})
         self.assertEqual(sites_by_company.get(self.t2.id), {self.t2_main.id})
 
+    def test_dashboard_renders_switcher_modal(self):
+        # The modal must render on the dashboard (in the body-level `modals`
+        # block, so Bootstrap's fixed positioning isn't trapped by .skn-page).
+        resp = self.client.get("/", follow=True)
+        self.assertContains(resp, 'id="workspaceSwitcher"')
+        self.assertContains(resp, 'action="/switch-workspace/"')
+
 
 class SiteDataScopingTests(TestCase):
     """Module lists show only the selected site's data; switching site swaps it.

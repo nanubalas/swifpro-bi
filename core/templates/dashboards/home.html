@@ -160,8 +160,10 @@
 {% empty %}
 <div class="text-muted">No modules are available for your role yet. Contact your administrator.</div>
 {% endfor %}
+{% endblock %}
 
 {# Workspace switcher: pick a company (left), then a site within it (right), then Switch. Dashboard-only. #}
+{% block modals %}
 <div class="modal fade skn-ctx-modal" id="workspaceSwitcher" tabindex="-1" aria-labelledby="wsLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
