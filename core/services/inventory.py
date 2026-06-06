@@ -54,9 +54,11 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
 
     bal, _ = InventoryBalance.objects.select_for_update().get_or_create(
         tenant=tenant, product=product, location=location,
-        defaults={"on_hand": Decimal("0.00"), "reserved": Decimal("0.00")}
+        defaults={"on_hand": Decimal("0.00"), "reserved": Decimal("0.00"), "site_id": location.site_id}
     )
     bal.on_hand = (bal.on_hand or Decimal("0.00")) + qty_delta
+    if bal.site_id is None:
+        bal.site_id = location.site_id  # keep stock site in sync with its location
     bal.save()
 
     # Lot-level balance (optional)
@@ -118,6 +120,7 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
 
     movement = InventoryMovement.objects.create(
         tenant=tenant,
+        site_id=location.site_id,
         product=product,
         location=location,
         bin=bin,

@@ -78,9 +78,22 @@ def _get_default_tenant(request=None):
 
 
 def _scope_location_fields(form, request, tenant, *field_names):
-    """Narrow a form's location dropdown(s) to the locations this user may use."""
+    """Narrow a form's location dropdown(s) to the locations the user may use
+    across the whole company (any site). Used for cross-site destinations."""
     from core.access import accessible_location_ids
     allowed = accessible_location_ids(getattr(request, "user", None), tenant)
+    if allowed is None:
+        return
+    for name in field_names:
+        field = form.fields.get(name)
+        if field is not None and getattr(field, "queryset", None) is not None:
+            field.queryset = field.queryset.filter(id__in=allowed)
+
+
+def _scope_location_fields_by_site(form, request, *field_names):
+    """Narrow a form's location dropdown(s) to the inventory locations under the
+    SELECTED site (the working context). Inventory workflows pick a location here."""
+    allowed = active_location_ids(request)  # accessible locations under the active site
     if allowed is None:
         return
     for name in field_names:
@@ -2155,7 +2168,7 @@ def adjustment_create(request):
     from core.forms import StockAdjustmentForm
     tenant = _get_default_tenant(request)
     form = StockAdjustmentForm(request.POST or None)
-    _scope_location_fields(form, request, tenant, "location")
+    _scope_location_fields_by_site(form, request, "location")
     if request.method == "POST" and form.is_valid():
         adj = form.save(commit=False)
         adj.tenant = tenant
@@ -2975,7 +2988,7 @@ def bin_create(request):
     from core.forms import BinForm
     tenant = _get_default_tenant(request)
     form = BinForm(request.POST or None)
-    _scope_location_fields(form, request, tenant, "location")
+    _scope_location_fields_by_site(form, request, "location")
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
         obj.tenant = tenant
@@ -2996,7 +3009,7 @@ def bin_edit(request, bin_id):
     tenant = _get_default_tenant(request)
     obj = get_object_or_404(Bin, id=bin_id, tenant=tenant)
     form = BinForm(request.POST or None, instance=obj)
-    _scope_location_fields(form, request, tenant, "location")
+    _scope_location_fields_by_site(form, request, "location")
     if request.method == "POST" and form.is_valid():
         try:
             form.save()
@@ -3506,7 +3519,7 @@ def cycle_count_create(request):
         form = CycleCountForm(instance=cc)
         formset = CycleCountLineFormSet(instance=cc)
 
-    _scope_location_fields(form, request, tenant, "location")
+    _scope_location_fields_by_site(form, request, "location")
     return render(request, "inventory/cycle_count_form.html", {
         "tenant": tenant, "form": form, "formset": formset
     })
@@ -3634,7 +3647,10 @@ def transfer_create(request):
         form = InventoryTransferForm(instance=transfer)
         formset = InventoryTransferLineFormSet(instance=transfer)
 
-    _scope_location_fields(form, request, tenant, "from_location", "to_location")
+    # From-location is within the working site; to-location may be any accessible
+    # location (cross-site transfers are allowed when permitted).
+    _scope_location_fields_by_site(form, request, "from_location")
+    _scope_location_fields(form, request, tenant, "to_location")
     return render(request, "transfers/transfer_form.html", {
         "tenant": tenant, "form": form, "formset": formset, "mode": "create"
     })

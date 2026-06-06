@@ -4943,3 +4943,51 @@ class ActiveSiteResolutionTests(TestCase):
         foreign = Site.objects.filter(tenant=other).first()
         req = self._request(**{SESSION_TENANT_KEY: self.tenant.id, SESSION_SITE_KEY: foreign.id})
         self.assertIsNone(get_active_site(req))  # not in this company -> not returned
+
+
+class StockSiteAndWorkflowTests(TestCase):
+    """Stock balances/movements carry site_id; inventory workflow location
+    pickers are scoped to the selected site (cross-site transfer destinations
+    stay open)."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site
+        self.tenant = Tenant.objects.create(name="S6 Co")
+        Location.objects.filter(tenant=self.tenant).delete()
+        Site.objects.filter(tenant=self.tenant).delete()
+        self.siteA = Site.objects.create(tenant=self.tenant, name="A Site", site_type=Site.Type.CITY_BRANCH, is_default=True)
+        self.siteB = Site.objects.create(tenant=self.tenant, name="B Site", site_type=Site.Type.CITY_BRANCH)
+        self.locA = Location.objects.create(tenant=self.tenant, site=self.siteA, name="A WH", type=Location.Type.WAREHOUSE)
+        self.locB = Location.objects.create(tenant=self.tenant, site=self.siteB, name="B WH", type=Location.Type.WAREHOUSE)
+        self.prod = Product.objects.create(tenant=self.tenant, sku="S6-1", name="Widget")
+        self.user = User.objects.create_user("s6u", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.client.login(username="s6u", password="pw")  # auto-selects A Site
+
+    def test_movement_and_balance_record_site(self):
+        from core.services.inventory import apply_movement
+        from core.models import InventoryBalance, InventoryMovement
+        apply_movement(tenant=self.tenant, product=self.prod, location=self.locB,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="SEED", ref_id="1",
+                       unit_cost=Decimal("2"))
+        bal = InventoryBalance.objects.get(tenant=self.tenant, product=self.prod, location=self.locB)
+        self.assertEqual(bal.site_id, self.siteB.id)  # derived from location.site
+        mv = InventoryMovement.objects.filter(tenant=self.tenant, location=self.locB).first()
+        self.assertEqual(mv.site_id, self.siteB.id)
+
+    def test_adjustment_location_picker_scoped_to_active_site(self):
+        from core.forms import StockAdjustmentForm
+        # Active site is A Site -> adjustment location options limited to A's locations.
+        resp = self.client.get("/inventory/adjustments/new/")
+        form = resp.context["form"]
+        ids = set(form.fields["location"].queryset.values_list("id", flat=True))
+        self.assertEqual(ids, {self.locA.id})
+
+    def test_transfer_from_is_site_scoped_to_is_open(self):
+        from core.forms import InventoryTransferForm
+        resp = self.client.get("/transfers/new/")
+        form = resp.context["form"]
+        from_ids = set(form.fields["from_location"].queryset.values_list("id", flat=True))
+        to_ids = set(form.fields["to_location"].queryset.values_list("id", flat=True))
+        self.assertEqual(from_ids, {self.locA.id})            # within the working site
+        self.assertEqual(to_ids, {self.locA.id, self.locB.id})  # cross-site allowed

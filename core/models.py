@@ -850,6 +850,7 @@ class ShipmentEvent(models.Model):
 
 class InventoryBalance(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True, blank=True, related_name="stock_balances")
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
     on_hand = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
@@ -954,6 +955,7 @@ class InventoryMovement(models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
 
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True, blank=True, related_name="stock_movements")
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
     bin = models.ForeignKey("Bin", on_delete=models.SET_NULL, null=True, blank=True, related_name="movements")
