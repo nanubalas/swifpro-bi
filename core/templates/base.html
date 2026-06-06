@@ -385,7 +385,7 @@
       {% if user.is_authenticated %}
         <span class="skn-userchip">
           <span class="skn-avatar">{{ user.username|first|upper }}</span>
-          {{ user.username }}
+          {{ user.username|capfirst }}
         </span>
         <form method="post" action="/logout/" class="d-inline">
           {% csrf_token %}

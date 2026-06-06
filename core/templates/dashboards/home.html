@@ -97,7 +97,7 @@
     <div class="flex-grow-1">
       <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
         <div>
-          <h1>{{ greeting|default:'Welcome back' }}, {{ user.get_username }}</h1>
+          <h1>{{ greeting|default:'Welcome back' }}, {{ user.get_username|capfirst }}</h1>
           <div class="skn-hero-sub mt-1">{{ now|date:'l, j F Y' }} · Choose where you'd like to go.</div>
         </div>
         <span class="skn-hero-role"><i class="bi bi-person-badge"></i> {{ role_label }}</span>
