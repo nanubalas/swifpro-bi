@@ -29,7 +29,7 @@
 
 <!-- Header (identity only - no business data) -->
 <div class="mb-4">
-  <div class="text-muted small">{{ tenant.name }} · {{ role_label }}</div>
+  <div class="text-muted small">{{ tenant.name }}{% if active_site %} · <i class="bi bi-geo-alt"></i> {{ active_site.name }}{% endif %} · {{ role_label }}</div>
   <h2 class="fw-bold mb-1">Welcome back, {{ user.get_username }}</h2>
   <div class="text-muted">Choose where you'd like to go.</div>
 </div>

@@ -188,10 +188,12 @@ def _aged(items, as_of):
     return {"rows": rows, "buckets": buckets, "total": total}
 
 
-def aged_receivables(tenant, as_of=None):
+def aged_receivables(tenant, as_of=None, site_ids=None):
     as_of = as_of or timezone.localdate()
     items = []
     qs = CustomerInvoice.objects.filter(tenant=tenant, status__in=("ISSUED", "SENT")).select_related("customer").prefetch_related("lines", "lines__tax_code", "payment_allocations", "credit_notes")
+    if site_ids is not None:
+        qs = qs.filter(site_id__in=site_ids)
     for inv in qs:
         outstanding = inv.outstanding
         if outstanding <= ZERO:
@@ -360,10 +362,12 @@ def cash_flow_summary(tenant, date_from=None, date_to=None):
     }
 
 
-def aged_payables(tenant, as_of=None):
+def aged_payables(tenant, as_of=None, site_ids=None):
     as_of = as_of or timezone.localdate()
     items = []
     qs = SupplierInvoice.objects.filter(tenant=tenant, status="POSTED").select_related("supplier").prefetch_related("lines", "lines__tax_code", "payment_allocations")
+    if site_ids is not None:
+        qs = qs.filter(po__site_id__in=site_ids)
     for inv in qs:
         outstanding = inv.outstanding
         if outstanding <= ZERO:

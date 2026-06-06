@@ -16,17 +16,25 @@ def get_user_agent(request):
     return (request.META.get("HTTP_USER_AGENT") or "")[:255] or None
 
 
-def log_audit(*, action, request=None, user=None, tenant=None, detail=None, username=None,
+def log_audit(*, action, request=None, user=None, tenant=None, site=None, detail=None, username=None,
               entity_type=None, entity_id=None, old_value=None, new_value=None):
     """Best-effort audit record; never raises into the request path.
 
     Captures who/what/when plus optional structured fields (entity + before/after
-    values) and the request's IP and browser/device (user-agent)."""
+    values) and the request's IP and browser/device (user-agent). The working
+    Site is captured too (from the thread-local context when not passed)."""
     from core.models import AuditLog
     try:
         real_user = user if (user is not None and getattr(user, "is_authenticated", False)) else None
+        if site is None:
+            try:
+                from core.current import get_current_site
+                site = get_current_site()
+            except Exception:
+                site = None
         AuditLog.objects.create(
             tenant=tenant,
+            site=site,
             user=real_user,
             username=username or getattr(user, "username", None),
             action=action,
