@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Delete Department - SwifPro BI{% endblock %}
+{% block body %}
+<div class="card"><div class="card-body p-4">
+  <h2 class="fw-bold mb-3">Delete department</h2>
+  <p>Delete <strong>{{ department.name }}</strong>? People assigned to it will be kept but unassigned from any department.</p>
+  <form method="post">
+    {% csrf_token %}
+    <div class="d-flex gap-2">
+      <button class="btn btn-danger" type="submit">Delete department</button>
+      <a class="btn btn-outline-secondary" href="{% url 'department_list' %}">Cancel</a>
+    </div>
+  </form>
+</div></div>
+{% endblock %}

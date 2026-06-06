@@ -2777,6 +2777,70 @@ def site_delete(request, site_id):
 
 
 @login_required
+@role_required([ROLE_ADMIN, ROLE_READONLY])
+def department_list(request):
+    from core.models import Department
+    tenant = _get_default_tenant(request)
+    departments = (Department.objects.filter(tenant=tenant)
+                   .select_related("site", "manager").prefetch_related("members")
+                   .order_by("name"))
+    return render(request, "departments/department_list.html", {"tenant": tenant, "departments": departments})
+
+
+@login_required
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def department_create(request):
+    from core.forms import DepartmentForm
+    tenant = _get_default_tenant(request)
+    form = DepartmentForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        obj = form.save(commit=False)
+        obj.tenant = tenant
+        try:
+            with transaction.atomic():
+                obj.save()
+            messages.success(request, "Department created.")
+            return redirect("department_list")
+        except IntegrityError:
+            form.add_error("name", "A department with this name already exists.")
+    return render(request, "departments/department_form.html", {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def department_edit(request, department_id):
+    from core.models import Department
+    from core.forms import DepartmentForm
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(Department, id=department_id, tenant=tenant)
+    form = DepartmentForm(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+            messages.success(request, "Department updated.")
+            return redirect("department_list")
+        except IntegrityError:
+            form.add_error("name", "A department with this name already exists.")
+    return render(request, "departments/department_form.html", {"tenant": tenant, "form": form, "mode": "edit"})
+
+
+@login_required
+@role_required([ROLE_ADMIN], [ROLE_ADMIN])
+def department_delete(request, department_id):
+    from core.models import Department
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(Department, id=department_id, tenant=tenant)
+    if request.method == "POST":
+        log_audit(action="RECORD_DELETED", request=request, user=request.user, tenant=tenant,
+                  detail=f"Department {obj.name}")
+        obj.delete()  # members' department FK is SET_NULL
+        messages.success(request, "Department deleted.")
+        return redirect("department_list")
+    return render(request, "departments/department_delete.html", {"tenant": tenant, "department": obj})
+
+
+@login_required
 @role_required([ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_READONLY])
 def bin_list(request):
     from core.models import Bin

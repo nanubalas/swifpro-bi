@@ -8,7 +8,7 @@ from core.models import (
     CycleCount, CycleCountLine, InventoryLotBalance, InventoryReservation,
     PurchaseOrder, PurchaseOrderLine, Shipment,
     PurchaseRequisition, PurchaseRequisitionLine,
-    Product, Supplier, Location, Site, Bin, ChannelConnection,
+    Product, Supplier, Location, Site, Bin, Department, OrgMembership, ChannelConnection,
     SalesOrder, SalesOrderLine, Tenant,
     UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine, ProductBarcode, ProductCategory,
     StockAdjustment,
@@ -229,6 +229,23 @@ class SiteForm(TenantModelForm):
         model = Site
         fields = ["name", "code", "address", "contact_person", "phone", "email", "is_active"]
         widgets = {"address": forms.Textarea(attrs={"rows": 2})}
+
+
+class DepartmentForm(TenantModelForm):
+    class Meta:
+        model = Department
+        fields = ["name", "code", "site", "manager", "is_active"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # `manager` is a User FK (no tenant field) so TenantModelForm can't scope
+        # it automatically; limit it to people who belong to this organisation.
+        tenant = get_current_tenant()
+        if tenant is not None and "manager" in self.fields:
+            from django.contrib.auth.models import User
+            member_ids = OrgMembership.objects.filter(tenant=tenant).values_list("user_id", flat=True)
+            self.fields["manager"].queryset = User.objects.filter(id__in=member_ids).order_by("username")
+            self.fields["manager"].required = False
 
 
 class BinForm(TenantModelForm):

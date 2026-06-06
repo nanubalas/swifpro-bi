@@ -157,6 +157,7 @@ NAV = [
         ("Company Profile", "/settings/tenant/", "building-gear", {ADMIN}),
         ("Company Group", "/settings/group/", "diagram-2", {ADMIN}),
         ("Users & Roles", "/users/", "people-fill", {ADMIN}),
+        ("Departments", "/departments/", "diagram-3", {ADMIN, MANAGER, READONLY}),
         ("Roles & Permissions", "/team/permissions/", "shield-check", {ADMIN}),
         ("Access Requests", "/access-requests/", "person-plus", {ADMIN}),
         ("Audit Log", "/audit/", "shield-lock", {ADMIN}),
