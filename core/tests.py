@@ -5352,3 +5352,182 @@ class DashboardSiteScopingTests(TestCase):
         resp = self.client.get("/dashboard/admin")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context["active_site"], self.siteA)
+
+
+class UkRetailDemoScenarioTests(TestCase):
+    """End-to-end proof that the ERP separates the three tiers using the
+    `seed_uk_retail_demo` data:
+
+        Company  = legal/business entity (UK Retail Group Ltd)
+        Site     = operating/reporting branch (London/Leicester/Manchester/Birmingham)
+        Inventory Location = physical stock storage (warehouse/shop/back-room/returns)
+
+    Covers the 10 required scenarios plus structural validation. The suite-wide
+    `_CtxClient` is the default client; raw-gate scenarios use `django.test.Client`.
+    """
+
+    def setUp(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from core.models import Site, OrgMembership
+        call_command("seed_uk_retail_demo", stdout=StringIO())
+        self.tenant = Tenant.objects.get(name="UK Retail Group Ltd")
+        self.london = Site.objects.get(tenant=self.tenant, name="London")
+        self.leicester = Site.objects.get(tenant=self.tenant, name="Leicester")
+        self.manchester = Site.objects.get(tenant=self.tenant, name="Manchester")
+        self.birmingham = Site.objects.get(tenant=self.tenant, name="Birmingham")
+        self.p1 = Product.objects.get(tenant=self.tenant, sku="UKR-001")
+        self.p2 = Product.objects.get(tenant=self.tenant, sku="UKR-002")
+        self.lon_wh = Location.objects.get(tenant=self.tenant, name="London Main Warehouse")
+        self.man_wh = Location.objects.get(tenant=self.tenant, name="Manchester Main Warehouse")
+        self.users = {m.role: m.user for m in OrgMembership.objects.filter(tenant=self.tenant)}
+
+    # -- helpers -------------------------------------------------------------
+    def _ctx(self, user, site, client=None):
+        """Log a user in and pin the active company + site."""
+        from core.access import SESSION_TENANT_KEY, SESSION_SITE_KEY
+        c = client or self.client
+        c.force_login(user)
+        s = c.session
+        s[SESSION_TENANT_KEY] = self.tenant.id
+        s[SESSION_SITE_KEY] = site.id
+        s.save()
+        return c
+
+    # === Structural validation =============================================
+    def test_company_sites_and_locations_structure(self):
+        from core.models import Site
+        self.assertEqual(Tenant.objects.filter(name="UK Retail Group Ltd").count(), 1)
+        self.assertTrue(self.tenant.vat_registered)
+        self.assertEqual(self.tenant.currency_code, "GBP")
+        active = Site.objects.filter(tenant=self.tenant, is_active=True)
+        self.assertEqual(set(active.values_list("name", flat=True)),
+                         {"London", "Leicester", "Manchester", "Birmingham"})
+        self.assertEqual(Site.objects.get(tenant=self.tenant, is_default=True).name, "London")
+        for site in active:
+            locs = Location.objects.filter(tenant=self.tenant, site=site)
+            self.assertEqual(locs.count(), 4)
+            self.assertEqual(set(locs.values_list("type", flat=True)),
+                             {Location.Type.WAREHOUSE, Location.Type.SHOP_FLOOR,
+                              Location.Type.BACK_ROOM, Location.Type.RETURNS})
+            for loc in locs:
+                self.assertEqual(loc.site_id, site.id)
+
+    def test_eight_role_users_with_explicit_site_access(self):
+        from core.models import OrgMembership, UserSiteAccess
+        self.assertEqual(OrgMembership.objects.filter(tenant=self.tenant).count(), 8)
+
+        def granted(role):
+            return set(UserSiteAccess.objects.filter(
+                tenant=self.tenant, user=self.users[role]).values_list("site__name", flat=True))
+
+        self.assertEqual(granted("SALES"), {"London"})
+        self.assertEqual(granted("WAREHOUSE"), {"Manchester"})
+        self.assertEqual(granted("MANAGER"), {"London", "Leicester"})
+        self.assertEqual(granted("PURCHASING"), {"Birmingham"})
+        for role in self.users:
+            self.assertTrue(UserSiteAccess.objects.filter(
+                tenant=self.tenant, user=self.users[role]).exists())
+
+    # === Scenario 1: log in and select Company + Site ======================
+    def test_scenario_01_login_selects_company_and_site(self):
+        from core.access import SESSION_TENANT_KEY, SESSION_SITE_KEY
+        c = Client()  # raw client -> exercise the real post-login context gate
+        c.force_login(self.users["SALES"])  # SALES has exactly one site (London)
+        resp = c.get("/", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(c.session.get(SESSION_TENANT_KEY), self.tenant.id)
+        self.assertEqual(c.session.get(SESSION_SITE_KEY), self.london.id)
+
+    # === Scenario 2: switch from Leicester to London =======================
+    def test_scenario_02_switch_leicester_to_london(self):
+        from core.access import SESSION_SITE_KEY
+        c = self._ctx(self.users["MANAGER"], self.leicester, client=Client())
+        self.assertEqual(c.session[SESSION_SITE_KEY], self.leicester.id)
+        resp = c.post("/switch-workspace/",
+                      {"tenant": self.tenant.id, "site": self.london.id, "next": "/"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(c.session[SESSION_SITE_KEY], self.london.id)
+
+    # === Scenario 3: products remain company-level =========================
+    def test_scenario_03_products_are_company_level(self):
+        from django.core.exceptions import FieldDoesNotExist
+        self.assertEqual(Product.objects.filter(tenant=self.tenant).count(), 2)
+        with self.assertRaises(FieldDoesNotExist):
+            Product._meta.get_field("site")  # no per-site product dimension
+
+    # === Scenario 4: stock changes only inside selected site + location ====
+    def test_scenario_04_stock_scoped_to_site_and_location(self):
+        lon = InventoryBalance.objects.get(tenant=self.tenant, product=self.p1, location=self.lon_wh)
+        man = InventoryBalance.objects.get(tenant=self.tenant, product=self.p1, location=self.man_wh)
+        self.assertEqual(lon.on_hand, Decimal("93.00"))   # 100 opening - 5 invoice - 2 adj
+        self.assertEqual(man.on_hand, Decimal("100.00"))  # untouched
+        self.assertEqual(lon.site_id, self.london.id)     # site auto-synced from location
+        self.assertEqual(man.site_id, self.manchester.id)
+
+    # === Scenario 5: sales filtered by selected site =======================
+    def test_scenario_05_sales_filtered_by_site(self):
+        self._ctx(self.users["ADMIN"], self.london)
+        invoices = [i.invoice_number for i in self.client.get("/ar/invoices/").context["invoices"]]
+        self.assertIn("INV-0001", invoices)
+        self._ctx(self.users["ADMIN"], self.manchester)
+        invoices = [i.invoice_number for i in self.client.get("/ar/invoices/").context["invoices"]]
+        self.assertNotIn("INV-0001", invoices)
+
+    # === Scenario 6: purchasing filtered by selected site ==================
+    def test_scenario_06_purchasing_filtered_by_site(self):
+        self._ctx(self.users["ADMIN"], self.london)
+        pos = [p.po_number for p in self.client.get("/po/").context["pos"]]
+        self.assertIn("PO-0001", pos)
+        self._ctx(self.users["ADMIN"], self.manchester)
+        pos = [p.po_number for p in self.client.get("/po/").context["pos"]]
+        self.assertNotIn("PO-0001", pos)
+
+    # === Scenario 7: reports show only selected company + site =============
+    def test_scenario_07_reports_filtered_by_site(self):
+        from core.services import reports
+        self.assertGreater(reports.net_income(self.tenant, site_ids=[self.london.id]), 0)
+        self.assertEqual(reports.net_income(self.tenant, site_ids=[self.manchester.id]), 0)
+
+    # === Scenario 8: warehouse user cannot access another site =============
+    def test_scenario_08_warehouse_user_cannot_access_other_site(self):
+        from core.access import selectable_sites
+        from core.models import AuditLog
+        wh = self.users["WAREHOUSE"]
+        self.assertEqual(set(selectable_sites(wh, self.tenant).values_list("name", flat=True)),
+                         {"Manchester"})
+        c = self._ctx(wh, self.manchester, client=Client())
+        resp = c.post("/switch-workspace/", {"tenant": self.tenant.id, "site": self.london.id})
+        self.assertEqual(resp.status_code, 403)  # London not granted to this user
+        self.assertTrue(AuditLog.objects.filter(
+            tenant=self.tenant, action="UNAUTHORISED_SITE_ACCESS").exists())
+
+    # === Scenario 9: inventory location chosen only inside inventory workflows
+    def test_scenario_09_inventory_location_only_in_inventory_workflows(self):
+        c = self._ctx(self.users["ADMIN"], self.london)
+        sess = c.session
+        self.assertIn("active_tenant_id", sess)
+        self.assertIn("active_site_id", sess)
+        self.assertIsNone(sess.get("active_location_id"))  # no global location in the context
+        resp = c.get("/inventory/")
+        self.assertEqual(resp.status_code, 200)
+        for bal in resp.context["balances"]:
+            self.assertEqual(bal.location.site_id, self.london.id)
+
+    # === Scenario 10: no "All Sites" option anywhere =======================
+    def test_scenario_10_no_all_sites_option(self):
+        from core.access import selectable_sites
+        names = set(selectable_sites(self.users["ADMIN"], self.tenant).values_list("name", flat=True))
+        self.assertEqual(names, {"London", "Leicester", "Manchester", "Birmingham"})
+        self._ctx(self.users["ADMIN"], self.london)
+        resp = self.client.get("/", follow=True)
+        self.assertNotContains(resp, "All Sites")
+        self.assertNotContains(resp, "All sites")
+
+    # === Bonus: inventory list scoped to a restricted warehouse user =======
+    def test_scenario_10b_inventory_scoped_for_warehouse_user(self):
+        c = self._ctx(self.users["WAREHOUSE"], self.manchester, client=Client())
+        resp = c.get("/inventory/")
+        self.assertEqual(resp.status_code, 200)
+        for bal in resp.context["balances"]:
+            self.assertEqual(bal.location.site_id, self.manchester.id)
