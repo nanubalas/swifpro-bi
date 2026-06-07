@@ -47,6 +47,8 @@
     h1,h2,h3,h4,h5,h6{ color:var(--bs-emphasis-color); font-weight:800; letter-spacing:-.02em; }
     .text-muted{ color:var(--muted)!important; }
     section{ scroll-margin-top:80px; }
+    html{ scroll-behavior:smooth; }
+    @media (prefers-reduced-motion:reduce){ html{ scroll-behavior:auto; } }
 
     .site-nav{ background:color-mix(in srgb,var(--surface) 88%,transparent); backdrop-filter:saturate(180%) blur(12px); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:1030; }
     .wm{ height:30px; } .wm-light{ display:none; } [data-bs-theme="dark"] .wm-dark{ display:none; } [data-bs-theme="dark"] .wm-light{ display:inline; }
@@ -156,7 +158,6 @@
     </div>
     <div class="ms-auto d-flex align-items-center gap-2">
       <button class="iconbtn" id="themeToggle" title="Toggle light / dark"><i class="bi bi-moon-stars"></i></button>
-      <a class="btn btn-ghost btn-sm d-none d-sm-inline-flex" href="https://app.swifprobi.com/login/">Sign in</a>
       <a class="btn btn-cta btn-sm" href="#contact">Request a demo</a>
     </div>
   </div>
@@ -423,7 +424,7 @@
         <p class="small mt-3 mb-0" style="max-width:320px;">Premium ERP &amp; business intelligence for growing SMEs - purchasing, inventory, finance, VAT and real-time reporting in one platform.</p>
       </div>
       <div class="col-6 col-lg-2"><h6>Product</h6><div class="d-grid gap-2 small"><a href="#features">Features</a><a href="#modules">Modules</a><a href="#preview">Platform</a><a href="#pricing">Pricing</a></div></div>
-      <div class="col-6 col-lg-2"><h6>Company</h6><div class="d-grid gap-2 small"><a href="#contact">Contact</a><a href="mailto:hello@swifprobi.com">Email us</a><a href="https://app.swifprobi.com/login/">Sign in</a></div></div>
+      <div class="col-6 col-lg-2"><h6>Company</h6><div class="d-grid gap-2 small"><a href="#contact">Contact</a><a href="mailto:hello@swifprobi.com">Email us</a></div></div>
       <div class="col-lg-4"><h6>Get started</h6><p class="small">Ready to simplify your operations?</p><a href="#contact" class="btn btn-cta btn-sm"><i class="bi bi-rocket-takeoff me-1"></i> Request a demo</a></div>
     </div>
     <hr class="my-4" style="border-color:rgba(255,255,255,.15);">
