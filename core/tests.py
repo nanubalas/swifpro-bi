@@ -5380,7 +5380,8 @@ class UkRetailDemoScenarioTests(TestCase):
         self.p2 = Product.objects.get(tenant=self.tenant, sku="UKR-002")
         self.lon_wh = Location.objects.get(tenant=self.tenant, name="London Main Warehouse")
         self.man_wh = Location.objects.get(tenant=self.tenant, name="Manchester Main Warehouse")
-        self.users = {m.role: m.user for m in OrgMembership.objects.filter(tenant=self.tenant)}
+        self.users = {m.role: m.user for m in OrgMembership.objects.filter(
+            tenant=self.tenant, user__username__endswith="@ukretail.demo")}
 
     # -- helpers -------------------------------------------------------------
     def _ctx(self, user, site, client=None):
@@ -5415,7 +5416,8 @@ class UkRetailDemoScenarioTests(TestCase):
 
     def test_eight_role_users_with_explicit_site_access(self):
         from core.models import OrgMembership, UserSiteAccess
-        self.assertEqual(OrgMembership.objects.filter(tenant=self.tenant).count(), 8)
+        self.assertEqual(OrgMembership.objects.filter(
+            tenant=self.tenant, user__username__endswith="@ukretail.demo").count(), 8)
 
         def granted(role):
             return set(UserSiteAccess.objects.filter(

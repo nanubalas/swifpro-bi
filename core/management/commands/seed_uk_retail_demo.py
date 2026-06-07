@@ -88,6 +88,7 @@ class Command(BaseCommand):
         p1, p2 = self._products(tenant, std_tax)
         self._opening_stock(tenant, sites, locations, [p1, p2], users)
         self._transactions(tenant, sites, locations, p1, p2, std_tax, users)
+        self._grant_existing_admins(tenant, sites)
         self._summary(tenant)
 
     # --- Company (legal/business entity) -------------------------------------
@@ -177,6 +178,25 @@ class Command(BaseCommand):
             location=locations[("Manchester", "Main Warehouse")])
         self.stdout.write(f"  Users: {len(users)} (each with explicit UserSiteAccess)")
         return users
+
+    # --- Make the data visible to existing admins / superusers --------------
+    def _grant_existing_admins(self, tenant, sites):
+        """Give existing superusers (and any user named 'admin') membership +
+        full site access to this company, so the seeded data is browsable in the
+        app right after seeding - no need to use the demo logins. Their existing
+        default company is left unchanged; they can switch to UK Retail Group via
+        the dashboard workspace switcher."""
+        from django.db.models import Q
+        admins = list(User.objects.filter(Q(is_superuser=True) | Q(username="admin")).distinct())
+        for u in admins:
+            OrgMembership.objects.get_or_create(
+                user=u, tenant=tenant, defaults=dict(role=roles.ADMIN))
+            for s in sites.values():
+                UserSiteAccess.objects.get_or_create(tenant=tenant, user=u, site=s)
+        if admins:
+            self.stdout.write(
+                f"  Granted {len(admins)} existing admin/superuser(s) access to {tenant.name}: "
+                + ", ".join(u.username for u in admins))
 
     # --- Products (company level - Product has NO site FK) ------------------
     def _products(self, tenant, std_tax):
