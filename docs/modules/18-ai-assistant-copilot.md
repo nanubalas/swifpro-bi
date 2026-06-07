@@ -3,7 +3,7 @@
 > **STATUS: PROPOSED — NOT YET IMPLEMENTED.** There is no AI assistant, copilot, LLM, or natural-language layer anywhere in `core/` today. A full-text search for `copilot`, `assistant`, `openai`, `anthropic`, `llm`, `gpt` returns zero source hits (only incidental `uom` substring matches in migrations). No `/copilot/` URL, no `CopilotConversation`/`CopilotMessage`/`CopilotAction` models, and no copilot service exist. Everything below is a design proposal grounded in the app's *real* services, models, roles and URLs so it can be built on top of them.
 
 ### Purpose
-A read-mostly natural-language layer that lets a UK SME owner or finance user ask plain-English questions over existing SKUNOW data ("what's my P&L this quarter?", "who's the most overdue customer?", "which products are below reorder?") and get answers sourced directly from the existing report services. It can also draft documents (sales invoices, POs, chase emails) and surface proactive insight alerts (overdue debtors, low stock, margin dips), but never posts to the ledger or sends anything without explicit human confirmation.
+A read-mostly natural-language layer that lets a UK SME owner or finance user ask plain-English questions over existing SwifPro BI data ("what's my P&L this quarter?", "who's the most overdue customer?", "which products are below reorder?") and get answers sourced directly from the existing report services. It can also draft documents (sales invoices, POs, chase emails) and surface proactive insight alerts (overdue debtors, low stock, margin dips), but never posts to the ledger or sends anything without explicit human confirmation.
 
 ### Roles involved
 - **Admin** — full copilot access; only role that can see cross-module/admin insights (audit, users); manages copilot enablement.
@@ -95,7 +95,7 @@ flowchart TD
     DISCARD --> AUDIT
 ```
 
-Relevant files inspected: `d:\skunow_webapp\core\roles.py`, `d:\skunow_webapp\core\audit.py`, `d:\skunow_webapp\core\services\reports.py`, `d:\skunow_webapp\core\services\sales_reports.py`, `d:\skunow_webapp\core\models.py`, `d:\skunow_webapp\core\urls.py` (no copilot routes present).
+Relevant files inspected: `d:\swifpro_bi\core\roles.py`, `d:\swifpro_bi\core\audit.py`, `d:\swifpro_bi\core\services\reports.py`, `d:\swifpro_bi\core\services\sales_reports.py`, `d:\swifpro_bi\core\models.py`, `d:\swifpro_bi\core\urls.py` (no copilot routes present).
 
 ---
 

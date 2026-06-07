@@ -1,7 +1,7 @@
 # 1. Company Setup
 
 ### Purpose
-Establishes the legal, financial and locale identity of each company (Tenant) on the SKUNOW platform, and optionally groups several companies under a parent CompanyGroup for consolidated reporting. Creating a Tenant auto-seeds a UK chart of accounts and standard VAT codes, and a guided onboarding checklist walks a new Admin through completing setup. Tenant-level settings (approval thresholds, payment terms, financial year, dunning) drive behaviour across every other module.
+Establishes the legal, financial and locale identity of each company (Tenant) on the SwifPro BI platform, and optionally groups several companies under a parent CompanyGroup for consolidated reporting. Creating a Tenant auto-seeds a UK chart of accounts and standard VAT codes, and a guided onboarding checklist walks a new Admin through completing setup. Tenant-level settings (approval thresholds, payment terms, financial year, dunning) drive behaviour across every other module.
 
 ### Roles involved
 - **Admin (Owner/Admin)** — the only role with access. All Company Setup pages and onboarding actions are gated by `@role_required([ROLE_ADMIN], [ROLE_ADMIN])`. Any logged-in user may create a brand-new organisation (`new_organisation`), becoming its Admin.

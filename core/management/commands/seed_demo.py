@@ -94,7 +94,7 @@ class Command(BaseCommand):
             UserProfile.objects.update_or_create(user=admin, defaults={"tenant": tenant})
             OrgMembership.objects.get_or_create(user=admin, tenant=tenant, defaults={"role": roles_mod.ADMIN, "is_default": True})
 
-        # Sample users, one per role (password: Skunow@2026)
+        # Sample users, one per role (password: SwifPro@2026)
         role_users = [
             ("owner", roles_mod.ADMIN),
             ("accountant", roles_mod.ACCOUNTANT),
@@ -108,7 +108,7 @@ class Command(BaseCommand):
         for username, role in role_users:
             u, created = User.objects.get_or_create(username=username, defaults={"email": f"{username}@swifpro-demo.co.uk"})
             if created:
-                u.set_password("Skunow@2026")
+                u.set_password("SwifPro@2026")
                 u.save()
             UserProfile.objects.update_or_create(user=u, defaults={"tenant": tenant})
             OrgMembership.objects.get_or_create(user=u, tenant=tenant, defaults={"role": role, "is_default": True})

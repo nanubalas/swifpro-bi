@@ -1,7 +1,7 @@
 # 17. Integrations
 
 ### Purpose
-Connects SKUNOW to external sales channels (Shopify, Amazon) and outbound systems so a UK SME can pull channel orders/stock and reconcile them against internal inventory, and prepare HMRC MTD VAT returns. In the current build the channel sync and HMRC filing are deliberately mocked/stubbed seams: order sync runs from a management command with fake data, and VAT "submission" is recorded locally only. Email is the one genuinely live outbound integration, via Django's mail framework.
+Connects SwifPro BI to external sales channels (Shopify, Amazon) and outbound systems so a UK SME can pull channel orders/stock and reconcile them against internal inventory, and prepare HMRC MTD VAT returns. In the current build the channel sync and HMRC filing are deliberately mocked/stubbed seams: order sync runs from a management command with fake data, and VAT "submission" is recorded locally only. Email is the one genuinely live outbound integration, via Django's mail framework.
 
 ### Roles involved
 - **Admin** — full access to channel connections, reconcile, VAT, channel sales orders.
@@ -31,7 +31,7 @@ Connects SKUNOW to external sales channels (Shopify, Amazon) and outbound system
 - `SyncRun` record (status RUNNING/SUCCESS/FAILED, detail line).
 - `ChannelOrder` rows + inventory `StockMovement`s (type SALE) + COGS GL posting via `post_cogs`.
 - `ChannelSnapshot` rows.
-- Reconcile drift table (`channel_qty − skunow_qty`) — view-only, no auto-adjustment.
+- Reconcile drift table (`channel_qty − swifpro_qty`) — view-only, no auto-adjustment.
 - `VatReturn` (9 boxes), with `hmrc_reference` = `LOCAL-STUB-<id>` on submit. Audit events `VAT_RETURN_SAVED` / `VAT_RETURN_SUBMITTED`, `RECORD_DELETED` on channel delete.
 - Outbound emails via `django.core.mail` (`send_mail` / `EmailMessage`) for quotes, invoices, statements, access requests.
 

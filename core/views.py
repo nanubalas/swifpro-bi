@@ -2451,18 +2451,18 @@ def reconcile(request):
             latest[s.sku] = s
 
     # SwifPro BI totals per SKU (sum across locations)
-    skunow_totals = {}
+    swifpro_totals = {}
     for b in InventoryBalance.objects.filter(tenant=tenant).select_related("product"):
-        skunow_totals.setdefault(b.product.sku, Decimal("0.00"))
-        skunow_totals[b.product.sku] += (b.on_hand or Decimal("0.00"))
+        swifpro_totals.setdefault(b.product.sku, Decimal("0.00"))
+        swifpro_totals[b.product.sku] += (b.on_hand or Decimal("0.00"))
 
     rows = []
-    all_skus = sorted(set(list(skunow_totals.keys()) + list(latest.keys())))
+    all_skus = sorted(set(list(swifpro_totals.keys()) + list(latest.keys())))
     for sku in all_skus:
-        sk_qty = skunow_totals.get(sku, Decimal("0.00"))
+        sk_qty = swifpro_totals.get(sku, Decimal("0.00"))
         ch_qty = latest.get(sku).quantity if sku in latest else Decimal("0.00")
         drift = ch_qty - sk_qty
-        rows.append({"sku": sku, "skunow_qty": sk_qty, "channel_qty": ch_qty, "drift": drift})
+        rows.append({"sku": sku, "swifpro_qty": sk_qty, "channel_qty": ch_qty, "drift": drift})
 
     return render(request, "reconcile.html", {"tenant": tenant, "rows": rows})
 

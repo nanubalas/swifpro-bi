@@ -1,7 +1,7 @@
 # 2. User Roles and Permissions
 
 ### Purpose
-Controls who can access the SKUNOW app and what each person may do within a given company (tenant). Access is governed per-organisation: a single login can belong to multiple companies with a different role in each, and an Admin can fine-tune individual users with per-permission overrides and per-location restrictions. All sensitive changes are recorded in an append-only audit trail.
+Controls who can access the SwifPro BI app and what each person may do within a given company (tenant). Access is governed per-organisation: a single login can belong to multiple companies with a different role in each, and an Admin can fine-tune individual users with per-permission overrides and per-location restrictions. All sensitive changes are recorded in an append-only audit trail.
 
 ### Roles involved
 - **Admin** (Owner/Admin): full access; the only role that can manage users, roles, permissions, location access, access requests and the audit log.

@@ -1,6 +1,6 @@
-# SKUNOW ERP — Module Workflows
+# SwifPro BI ERP — Module Workflows
 
-Module-wise workflow & architecture specification for the SKUNOW multi-tenant ERP (Django 5).
+Module-wise workflow & architecture specification for the SwifPro BI multi-tenant ERP (Django 5).
 Each file follows the same structure: Purpose, Roles, Workflow, Input data, Output, Related modules,
 Validations & rules, Database entities, API/page requirements, and a Mermaid flow diagram.
 

@@ -47,7 +47,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = "skunow.urls"
+ROOT_URLCONF = "swifpro_bi.urls"
 
 TEMPLATES = [
     {
@@ -66,7 +66,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "skunow.wsgi.application"
+WSGI_APPLICATION = "swifpro_bi.wsgi.application"
 
 # DB: default SQLite for dev. Switch to Postgres via DATABASE_URL if needed later.
 DATABASES = {

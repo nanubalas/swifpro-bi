@@ -101,7 +101,7 @@ flowchart TD
     L -->|ok| N[Allow sale]
 ```
 
-Key files: `d:\skunow_webapp\core\models.py` (Customer at line 1444), `d:\skunow_webapp\core\views.py` (customer views at lines 3726-5068), `d:\skunow_webapp\core\forms.py` (CustomerForm at line 517), `d:\skunow_webapp\core\services\statements.py`, `d:\skunow_webapp\core\urls.py` (lines 208-215), `d:\skunow_webapp\core\roles.py`.
+Key files: `d:\swifpro_bi\core\models.py` (Customer at line 1444), `d:\swifpro_bi\core\views.py` (customer views at lines 3726-5068), `d:\swifpro_bi\core\forms.py` (CustomerForm at line 517), `d:\swifpro_bi\core\services\statements.py`, `d:\swifpro_bi\core\urls.py` (lines 208-215), `d:\swifpro_bi\core\roles.py`.
 
 ---
 

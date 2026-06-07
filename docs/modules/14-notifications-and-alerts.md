@@ -1,7 +1,7 @@
 # 14. Notifications and Alerts
 
 ### Purpose
-SKUNOW has no dedicated notification model or inbox; instead it combines best-effort transactional emails (invoices, quotes, dunning reminders, access-request and credential emails), an in-app low-stock alerts page, and Django's `messages` framework for toast feedback. All email sends are fire-and-forget (`fail_silently=True`) so a mail-server problem never breaks the underlying business flow. Overdue-payment dunning and quote-expiry alerts run via a once-a-day housekeeping pass, either opportunistically on page load or from a scheduled management command.
+SwifPro BI has no dedicated notification model or inbox; instead it combines best-effort transactional emails (invoices, quotes, dunning reminders, access-request and credential emails), an in-app low-stock alerts page, and Django's `messages` framework for toast feedback. All email sends are fire-and-forget (`fail_silently=True`) so a mail-server problem never breaks the underlying business flow. Overdue-payment dunning and quote-expiry alerts run via a once-a-day housekeeping pass, either opportunistically on page load or from a scheduled management command.
 
 ### Roles involved
 - **Admin** — receives new access-request emails (`notify_admins_new_request`); configures dunning on the tenant; sees all alert pages.

@@ -1,6 +1,6 @@
-# SKUNOW ERP — Module Workflow & Architecture Specification
+# SwifPro BI ERP — Module Workflow & Architecture Specification
 
-> Developer-facing specification for the SKUNOW multi-tenant ERP (Django 5, server-rendered, Bootstrap 5).
+> Developer-facing specification for the SwifPro BI multi-tenant ERP (Django 5, server-rendered, Bootstrap 5).
 > Every module below is grounded in the actual codebase (`core/` app): real model names, URL paths and service
 > functions. Intended as input for product specs, database design and application architecture.
 >
@@ -35,7 +35,7 @@
 ## 1. Company Setup
 
 ### Purpose
-Establishes the legal, financial and locale identity of each company (Tenant) on the SKUNOW platform, and optionally groups several companies under a parent CompanyGroup for consolidated reporting. Creating a Tenant auto-seeds a UK chart of accounts and standard VAT codes, and a guided onboarding checklist walks a new Admin through completing setup. Tenant-level settings (approval thresholds, payment terms, financial year, dunning) drive behaviour across every other module.
+Establishes the legal, financial and locale identity of each company (Tenant) on the SwifPro BI platform, and optionally groups several companies under a parent CompanyGroup for consolidated reporting. Creating a Tenant auto-seeds a UK chart of accounts and standard VAT codes, and a guided onboarding checklist walks a new Admin through completing setup. Tenant-level settings (approval thresholds, payment terms, financial year, dunning) drive behaviour across every other module.
 
 ### Roles involved
 - **Admin (Owner/Admin)** — the only role with access. All Company Setup pages and onboarding actions are gated by `@role_required([ROLE_ADMIN], [ROLE_ADMIN])`. Any logged-in user may create a brand-new organisation (`new_organisation`), becoming its Admin.
@@ -137,7 +137,7 @@ flowchart TD
 ## 2. User Roles and Permissions
 
 ### Purpose
-Controls who can access the SKUNOW app and what each person may do within a given company (tenant). Access is governed per-organisation: a single login can belong to multiple companies with a different role in each, and an Admin can fine-tune individual users with per-permission overrides and per-location restrictions. All sensitive changes are recorded in an append-only audit trail.
+Controls who can access the SwifPro BI app and what each person may do within a given company (tenant). Access is governed per-organisation: a single login can belong to multiple companies with a different role in each, and an Admin can fine-tune individual users with per-permission overrides and per-location restrictions. All sensitive changes are recorded in an append-only audit trail.
 
 ### Roles involved
 - **Admin** (Owner/Admin): full access; the only role that can manage users, roles, permissions, location access, access requests and the audit log.
@@ -352,7 +352,7 @@ flowchart TD
     L -->|ok| N[Allow sale]
 ```
 
-Key files: `d:\skunow_webapp\core\models.py` (Customer at line 1444), `d:\skunow_webapp\core\views.py` (customer views at lines 3726-5068), `d:\skunow_webapp\core\forms.py` (CustomerForm at line 517), `d:\skunow_webapp\core\services\statements.py`, `d:\skunow_webapp\core\urls.py` (lines 208-215), `d:\skunow_webapp\core\roles.py`.
+Key files: `d:\swifpro_bi\core\models.py` (Customer at line 1444), `d:\swifpro_bi\core\views.py` (customer views at lines 3726-5068), `d:\swifpro_bi\core\forms.py` (CustomerForm at line 517), `d:\swifpro_bi\core\services\statements.py`, `d:\swifpro_bi\core\urls.py` (lines 208-215), `d:\swifpro_bi\core\roles.py`.
 
 ---
 
@@ -1392,7 +1392,7 @@ flowchart TD
 ## 14. Notifications and Alerts
 
 ### Purpose
-SKUNOW has no dedicated notification model or inbox; instead it combines best-effort transactional emails (invoices, quotes, dunning reminders, access-request and credential emails), an in-app low-stock alerts page, and Django's `messages` framework for toast feedback. All email sends are fire-and-forget (`fail_silently=True`) so a mail-server problem never breaks the underlying business flow. Overdue-payment dunning and quote-expiry alerts run via a once-a-day housekeeping pass, either opportunistically on page load or from a scheduled management command.
+SwifPro BI has no dedicated notification model or inbox; instead it combines best-effort transactional emails (invoices, quotes, dunning reminders, access-request and credential emails), an in-app low-stock alerts page, and Django's `messages` framework for toast feedback. All email sends are fire-and-forget (`fail_silently=True`) so a mail-server problem never breaks the underlying business flow. Overdue-payment dunning and quote-expiry alerts run via a once-a-day housekeeping pass, either opportunistically on page load or from a scheduled management command.
 
 ### Roles involved
 - **Admin** — receives new access-request emails (`notify_admins_new_request`); configures dunning on the tenant; sees all alert pages.
@@ -1672,7 +1672,7 @@ flowchart TD
 ## 17. Integrations
 
 ### Purpose
-Connects SKUNOW to external sales channels (Shopify, Amazon) and outbound systems so a UK SME can pull channel orders/stock and reconcile them against internal inventory, and prepare HMRC MTD VAT returns. In the current build the channel sync and HMRC filing are deliberately mocked/stubbed seams: order sync runs from a management command with fake data, and VAT "submission" is recorded locally only. Email is the one genuinely live outbound integration, via Django's mail framework.
+Connects SwifPro BI to external sales channels (Shopify, Amazon) and outbound systems so a UK SME can pull channel orders/stock and reconcile them against internal inventory, and prepare HMRC MTD VAT returns. In the current build the channel sync and HMRC filing are deliberately mocked/stubbed seams: order sync runs from a management command with fake data, and VAT "submission" is recorded locally only. Email is the one genuinely live outbound integration, via Django's mail framework.
 
 ### Roles involved
 - **Admin** — full access to channel connections, reconcile, VAT, channel sales orders.
@@ -1702,7 +1702,7 @@ Connects SKUNOW to external sales channels (Shopify, Amazon) and outbound system
 - `SyncRun` record (status RUNNING/SUCCESS/FAILED, detail line).
 - `ChannelOrder` rows + inventory `StockMovement`s (type SALE) + COGS GL posting via `post_cogs`.
 - `ChannelSnapshot` rows.
-- Reconcile drift table (`channel_qty − skunow_qty`) — view-only, no auto-adjustment.
+- Reconcile drift table (`channel_qty − swifpro_qty`) — view-only, no auto-adjustment.
 - `VatReturn` (9 boxes), with `hmrc_reference` = `LOCAL-STUB-<id>` on submit. Audit events `VAT_RETURN_SAVED` / `VAT_RETURN_SUBMITTED`, `RECORD_DELETED` on channel delete.
 - Outbound emails via `django.core.mail` (`send_mail` / `EmailMessage`) for quotes, invoices, statements, access requests.
 
@@ -1767,7 +1767,7 @@ flowchart TD
 > **STATUS: PROPOSED — NOT YET IMPLEMENTED.** There is no AI assistant, copilot, LLM, or natural-language layer anywhere in `core/` today. A full-text search for `copilot`, `assistant`, `openai`, `anthropic`, `llm`, `gpt` returns zero source hits (only incidental `uom` substring matches in migrations). No `/copilot/` URL, no `CopilotConversation`/`CopilotMessage`/`CopilotAction` models, and no copilot service exist. Everything below is a design proposal grounded in the app's *real* services, models, roles and URLs so it can be built on top of them.
 
 ### Purpose
-A read-mostly natural-language layer that lets a UK SME owner or finance user ask plain-English questions over existing SKUNOW data ("what's my P&L this quarter?", "who's the most overdue customer?", "which products are below reorder?") and get answers sourced directly from the existing report services. It can also draft documents (sales invoices, POs, chase emails) and surface proactive insight alerts (overdue debtors, low stock, margin dips), but never posts to the ledger or sends anything without explicit human confirmation.
+A read-mostly natural-language layer that lets a UK SME owner or finance user ask plain-English questions over existing SwifPro BI data ("what's my P&L this quarter?", "who's the most overdue customer?", "which products are below reorder?") and get answers sourced directly from the existing report services. It can also draft documents (sales invoices, POs, chase emails) and surface proactive insight alerts (overdue debtors, low stock, margin dips), but never posts to the ledger or sends anything without explicit human confirmation.
 
 ### Roles involved
 - **Admin** — full copilot access; only role that can see cross-module/admin insights (audit, users); manages copilot enablement.
@@ -1859,7 +1859,7 @@ flowchart TD
     DISCARD --> AUDIT
 ```
 
-Relevant files inspected: `d:\skunow_webapp\core\roles.py`, `d:\skunow_webapp\core\audit.py`, `d:\skunow_webapp\core\services\reports.py`, `d:\skunow_webapp\core\services\sales_reports.py`, `d:\skunow_webapp\core\models.py`, `d:\skunow_webapp\core\urls.py` (no copilot routes present).
+Relevant files inspected: `d:\swifpro_bi\core\roles.py`, `d:\swifpro_bi\core\audit.py`, `d:\swifpro_bi\core\services\reports.py`, `d:\swifpro_bi\core\services\sales_reports.py`, `d:\swifpro_bi\core\models.py`, `d:\swifpro_bi\core\urls.py` (no copilot routes present).
 
 ---
 

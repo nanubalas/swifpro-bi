@@ -153,5 +153,5 @@ core/
   services/          # business logic: inventory, gl, vat, reports, bom, sync
   templates/         # Bootstrap 5 templates
   management/commands/seed_demo.py
-skunow/settings.py   # configuration
+swifpro_bi/settings.py   # configuration
 ```
