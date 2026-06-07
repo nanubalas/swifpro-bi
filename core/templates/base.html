@@ -353,6 +353,8 @@
     .logo-dark { display: none; }
     [data-bs-theme="dark"] .logo-light { display: none; }
     [data-bs-theme="dark"] .logo-dark { display: inline; }
+    /* the dark logo has a solid near-black background; round it so it reads as a clean panel (the small nav/sidebar logos keep their inline radius) */
+    [data-bs-theme="dark"] img.logo-dark { border-radius: 16px; }
   </style>
 </head>
 
