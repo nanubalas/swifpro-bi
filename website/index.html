@@ -314,8 +314,10 @@
       </div>
       <div class="col-lg-7 reveal">
         <div class="card-soft p-4 p-md-5">
-          <!-- TODO: set the form action to your form handler (e.g. Formspree) - see website/README.md -->
-          <form action="https://formspree.io/f/your-form-id" method="POST">
+          <!-- Demo request - handled by Netlify Forms. Submissions appear in Netlify dashboard (Forms) and are emailed to hello@swifprobi.com once a notification is configured there. See website/README.md -->
+          <form name="demo" method="POST" data-netlify="true" netlify-honeypot="bot-field" action="thank-you.html">
+            <input type="hidden" name="form-name" value="demo">
+            <p hidden><label>Leave this empty: <input name="bot-field"></label></p>
             <div class="row g-3">
               <div class="col-md-6"><label class="form-label fw-semibold">Name</label><input class="form-control" name="name" required></div>
               <div class="col-md-6"><label class="form-label fw-semibold">Company</label><input class="form-control" name="company"></div>

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Thank you - SwifPro BI</title>
+  <meta name="robots" content="noindex" />
+
+  <link rel="icon" type="image/png" href="assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+
+  <script>
+    (function(){ try { var t=localStorage.getItem("swifpro-site-theme"); if(t) document.documentElement.setAttribute("data-bs-theme",t);}catch(e){} })();
+  </script>
+
+  <style>
+    :root{
+      --brand-navy:#071F49; --brand-teal:#00AFA6; --brand-gold:#D9A129;
+      --bg:#F7F9FC; --surface:#FFFFFF; --border:#DDE6F0;
+      --text:#071F49; --muted:#5D6B7C; --brand:#00AFA6; --brand-strong:#00908A;
+      --brand-soft:#E1F5F3;
+      --cta-shadow:0 8px 20px -8px rgba(0,175,166,.45);
+      --shadow:0 4px 6px -2px rgba(7,31,73,.05), 0 14px 34px -8px rgba(7,31,73,.12);
+      --bs-body-font-family:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+      --bs-body-bg:var(--bg); --bs-body-color:var(--text);
+      --bs-link-color:var(--brand); --bs-link-hover-color:var(--brand-strong);
+      --bs-emphasis-color:var(--brand-navy); --bs-border-color:var(--border);
+    }
+    [data-bs-theme="dark"]{
+      --bg:#020817; --surface:#102B4E; --border:#1E3A63;
+      --text:#EAF2FF; --muted:#AAB8CC; --brand:#18D6C9; --brand-strong:#00AFA6;
+      --brand-soft:#0E3A55;
+      --cta-shadow:0 0 28px rgba(24,214,201,.38);
+      --shadow:0 18px 44px -14px rgba(0,0,0,.7);
+      --bs-body-bg:var(--bg); --bs-body-color:var(--text);
+      --bs-emphasis-color:#FFFFFF; --bs-border-color:var(--border);
+    }
+    body{ background:
+        radial-gradient(1200px 600px at 100% -12%, color-mix(in srgb, var(--brand) 9%, transparent), transparent 60%),
+        var(--bg); color:var(--text); min-height:100vh; display:grid; place-items:center; }
+    h1{ color:var(--bs-emphasis-color); font-weight:800; letter-spacing:-.02em; }
+    .text-muted{ color:var(--muted)!important; }
+    .card-soft{ background:var(--surface); border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); }
+    .btn{ border-radius:11px; font-weight:700; }
+    .btn-cta{ background:var(--brand); color:#fff; border:0; box-shadow:var(--cta-shadow); }
+    .btn-cta:hover{ background:var(--brand-strong); color:#fff; transform:translateY(-1px); }
+    [data-bs-theme="dark"] .btn-cta{ color:#020817; }
+    .tick{ width:84px; height:84px; border-radius:50%; background:var(--brand-soft); color:var(--brand); display:grid; place-items:center; font-size:2.4rem; margin:0 auto 1.25rem; }
+  </style>
+</head>
+<body>
+  <main class="container py-5">
+    <div class="row justify-content-center">
+      <div class="col-lg-6 col-md-8">
+        <div class="card-soft p-4 p-md-5 text-center">
+          <div class="tick"><i class="bi bi-check-lg"></i></div>
+          <h1 class="h3 mb-3">Thank you - we've got your request</h1>
+          <p class="text-muted mb-4">
+            Your demo request has reached the SwifPro BI team. We'll get back to you
+            shortly at the email you provided. For anything urgent, reach us at
+            <a href="mailto:hello@swifprobi.com">hello@swifprobi.com</a>.
+          </p>
+          <a href="/" class="btn btn-cta btn-lg"><i class="bi bi-arrow-left me-1"></i> Back to homepage</a>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

@@ -26,9 +26,13 @@ It's just static files - host them anywhere:
 Then set the domain's DNS at Namecheap to your host.
 
 ## Two things to wire up
-1. **Demo/contact form** - `index.html` posts to a placeholder. Create a free
-   endpoint (e.g. https://formspree.io) and replace `https://formspree.io/f/your-form-id`
-   in the `<form action=...>`. (Or swap it for your own backend.)
+1. **Demo/contact form** - `index.html` uses **Netlify Forms** (`data-netlify="true"`,
+   form name `demo`), so it works automatically when deployed on Netlify - no third-party
+   service or form ID needed. Submissions appear under **Netlify dashboard -> Forms** and
+   redirect to `thank-you.html`. To get them emailed to `hello@swifprobi.com`:
+   Netlify -> Site -> **Forms -> Form notifications -> Add notification -> Email notification**.
+   (Form detection is on by default; if a deploy doesn't pick it up, enable
+   **Forms -> Form detection** and redeploy.)
 2. **"Sign in" links** - they point to `https://app.swifprobi.com/login/`. Change
    these to wherever you host the ERP app (e.g. a subdomain `app.swifprobi.com`,
    or `swifprobi.com/login/` if the app shares the domain).
