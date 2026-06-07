@@ -128,8 +128,17 @@
       #features .card-soft:hover, #modules .card-soft:hover, #pricing .price-card:hover{ transform:none; }
     }
 
-    .site-footer{ background:var(--brand-navy); color:#cdd9ec; }
-    .site-footer h6{ color:#fff; } .site-footer a{ color:#cdd9ec; text-decoration:none; } .site-footer a:hover{ color:var(--brand-teal-bright); }
+    /* footer - light by default, navy in dark mode */
+    .site-footer{ background:var(--surface-2); color:var(--muted); border-top:1px solid var(--border); }
+    .site-footer h6{ color:var(--bs-emphasis-color); }
+    .site-footer a{ color:var(--muted); text-decoration:none; }
+    .site-footer a:hover{ color:var(--brand); }
+    .site-footer hr{ border-color:var(--border); opacity:1; }
+    [data-bs-theme="dark"] .site-footer{ background:var(--brand-navy); color:#cdd9ec; border-top-color:rgba(255,255,255,.06); }
+    [data-bs-theme="dark"] .site-footer h6{ color:#fff; }
+    [data-bs-theme="dark"] .site-footer a{ color:#cdd9ec; }
+    [data-bs-theme="dark"] .site-footer a:hover{ color:var(--brand-teal-bright); }
+    [data-bs-theme="dark"] .site-footer hr{ border-color:rgba(255,255,255,.15); }
 
     .form-control{ background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:11px; padding:.65rem .85rem; }
     .form-control:focus{ border-color:var(--brand); box-shadow:0 0 0 .22rem color-mix(in srgb,var(--brand) 22%,transparent); }
@@ -420,14 +429,15 @@
   <div class="container">
     <div class="row g-4">
       <div class="col-lg-4">
-        <img src="assets/wordmark-light.png" alt="SwifPro BI" style="height:30px;">
+        <img src="assets/wordmark.png" class="wm-dark" alt="SwifPro BI" style="height:30px;">
+        <img src="assets/wordmark-light.png" class="wm-light" alt="SwifPro BI" style="height:30px;">
         <p class="small mt-3 mb-0" style="max-width:320px;">Premium ERP &amp; business intelligence for growing SMEs - purchasing, inventory, finance, VAT and real-time reporting in one platform.</p>
       </div>
       <div class="col-6 col-lg-2"><h6>Product</h6><div class="d-grid gap-2 small"><a href="#features">Features</a><a href="#modules">Modules</a><a href="#preview">Platform</a><a href="#pricing">Pricing</a></div></div>
       <div class="col-6 col-lg-2"><h6>Company</h6><div class="d-grid gap-2 small"><a href="#top">About Us</a><a href="mailto:hello@swifprobi.com">Email us</a></div></div>
       <div class="col-lg-4"><h6>Get started</h6><p class="small">Ready to simplify your operations?</p><a href="#contact" class="btn btn-cta btn-sm"><i class="bi bi-rocket-takeoff me-1"></i> Request a demo</a></div>
     </div>
-    <hr class="my-4" style="border-color:rgba(255,255,255,.15);">
+    <hr class="my-4">
     <div class="d-flex flex-wrap justify-content-between small">
       <span>© <span id="year"></span> SwifPro BI. All rights reserved.</span>
       <span>Made for SMEs · ERP · BI · POS · Finance</span>
