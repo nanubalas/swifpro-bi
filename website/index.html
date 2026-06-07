@@ -79,9 +79,17 @@
     .dot{ width:10px;height:10px;border-radius:50%; }
     .mock-kpi{ border:1px solid var(--border); border-radius:12px; padding:14px; }
     .mock-bar{ height:8px;border-radius:6px;background:var(--surface-2); }
-    .mock-bar > span{ display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--brand),var(--brand-teal-bright)); }
+    .mock-bar > span{ display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--brand),var(--brand-teal-bright)); transition:width .8s cubic-bezier(.22,1,.36,1); }
     .bars{ display:flex; align-items:flex-end; gap:8px; height:90px; }
-    .bars i{ flex:1; border-radius:6px 6px 0 0; background:linear-gradient(180deg,var(--brand-teal-bright),var(--brand)); display:block; }
+    .bars i{ flex:1; border-radius:6px 6px 0 0; background:linear-gradient(180deg,var(--brand-teal-bright),var(--brand)); display:block; transition:height .7s cubic-bezier(.22,1,.36,1), filter .15s ease; cursor:pointer; }
+    .bars i:hover{ filter:brightness(1.12); }
+    .mock-ctrl{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+    .seg{ display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; background:var(--surface); }
+    .seg button{ border:0; background:transparent; color:var(--muted); font-weight:700; font-size:.72rem; line-height:1; padding:.34rem .62rem; cursor:pointer; transition:background .15s ease, color .15s ease; }
+    .seg button + button{ border-left:1px solid var(--border); }
+    .seg button.active{ background:var(--brand); color:#fff; }
+    [data-bs-theme="dark"] .seg button.active{ color:#020817; }
+    .bar-tip{ position:absolute; transform:translate(-50%,-100%); background:var(--brand-navy); color:#fff; font-size:.7rem; font-weight:700; padding:.2rem .45rem; border-radius:6px; pointer-events:none; white-space:nowrap; opacity:0; transition:opacity .12s ease; z-index:5; }
 
     .price-card{ background:var(--surface); border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); }
     .price-card.featured{ border-color:var(--brand); box-shadow:0 0 0 2px var(--brand) inset, var(--shadow); }
@@ -219,29 +227,38 @@
         </ul>
       </div>
       <div class="col-lg-6 reveal">
-        <div class="mock">
+        <div class="mock" id="previewMock">
           <div class="mock-top"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span></div>
           <div class="p-3">
-            <div class="row g-2 mb-2">
-              <div class="col-4"><div class="mock-kpi"><div class="text-muted small">Cash</div><div class="fw-bold">●●●</div></div></div>
-              <div class="col-4"><div class="mock-kpi"><div class="text-muted small">Revenue</div><div class="fw-bold">●●●</div></div></div>
-              <div class="col-4"><div class="mock-kpi" style="border-color:var(--gold);"><div class="small" style="color:var(--gold);">Net profit</div><div class="fw-bold">●●●</div></div></div>
-            </div>
-            <div class="mock-kpi mb-2">
-              <div class="d-flex justify-content-between"><span class="text-muted small">Sales trend</span><span class="text-muted small">12 mo</span></div>
-              <div class="bars mt-2">
-                <i style="height:40%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:70%"></i>
-                <i style="height:62%"></i><i style="height:85%"></i><i style="height:74%"></i><i style="height:95%"></i>
+            <div class="mock-ctrl">
+              <div class="seg" role="group" aria-label="Scope">
+                <button type="button" data-scope="company" class="active">This company</button>
+                <button type="button" data-scope="group">Group</button>
               </div>
+              <div class="seg" role="group" aria-label="Period">
+                <button type="button" data-months="3">3M</button>
+                <button type="button" data-months="6">6M</button>
+                <button type="button" data-months="12" class="active">12M</button>
+              </div>
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col-4"><div class="mock-kpi"><div class="text-muted small">Cash</div><div class="fw-bold" id="kpiCash">£0</div></div></div>
+              <div class="col-4"><div class="mock-kpi"><div class="text-muted small">Revenue</div><div class="fw-bold" id="kpiRev">£0</div></div></div>
+              <div class="col-4"><div class="mock-kpi" style="border-color:var(--gold);"><div class="small" style="color:var(--gold);">Net profit</div><div class="fw-bold" id="kpiProf">£0</div></div></div>
+            </div>
+            <div class="mock-kpi mb-2" id="salesBox" style="position:relative;">
+              <div class="d-flex justify-content-between"><span class="text-muted small">Sales trend</span><span class="text-muted small" id="salesLabel">12 mo · monthly</span></div>
+              <div class="bars mt-2" id="previewBars"></div>
+              <div class="bar-tip" id="barTip"></div>
             </div>
             <div class="mock-kpi">
               <div class="text-muted small mb-2">Inventory health</div>
-              <div class="mock-bar mb-2"><span style="width:78%"></span></div>
-              <div class="mock-bar"><span style="width:54%"></span></div>
+              <div class="mock-bar mb-2"><span style="width:0%"></span></div>
+              <div class="mock-bar"><span style="width:0%"></span></div>
             </div>
           </div>
         </div>
-        <div class="text-center text-muted small mt-2">Illustrative preview.</div>
+        <div class="text-center text-muted small mt-2">Illustrative preview - try the toggles.</div>
       </div>
     </div>
   </div>
@@ -362,6 +379,70 @@
     document.getElementById("year").textContent=new Date().getFullYear();
     var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)e.target.classList.add("in");});},{threshold:.12});
     document.querySelectorAll(".reveal").forEach(function(el){io.observe(el);});
+  })();
+
+  // Interactive dashboard preview (vanilla JS, no deps; illustrative data only)
+  (function(){
+    var mock=document.getElementById("previewMock");
+    if(!mock) return;
+    var DATA={
+      company:{ cash:128000, margin:.18, sales:[22,28,25,31,27,35,30,38,34,41,37,44], inv:[78,54] },
+      group:{   cash:540000, margin:.18, sales:[82,96,90,110,102,128,118,140,131,156,148,172], inv:[86,63] }
+    };
+    var scope="company", months=12, started=false;
+    var elCash=document.getElementById("kpiCash"), elRev=document.getElementById("kpiRev"),
+        elProf=document.getElementById("kpiProf"), barsEl=document.getElementById("previewBars"),
+        label=document.getElementById("salesLabel"), box=document.getElementById("salesBox"),
+        tip=document.getElementById("barTip"), invEls=mock.querySelectorAll(".mock-bar > span");
+
+    function fmt(n){
+      if(n>=1000000) return "£"+(n/1000000).toFixed(2).replace(/\.?0+$/,"")+"M";
+      if(n>=1000) return "£"+Math.round(n/1000)+"k";
+      return "£"+n;
+    }
+    function win(){ var s=DATA[scope].sales; return s.slice(s.length-months); }
+    function countUp(el,to){
+      var t0=null, dur=900;
+      function step(ts){ if(!t0)t0=ts; var p=Math.min(1,(ts-t0)/dur);
+        el.textContent=fmt(Math.round(to*(1-Math.pow(1-p,3)))); if(p<1)requestAnimationFrame(step); }
+      requestAnimationFrame(step);
+    }
+    function render(animate){
+      var w=win(), rev=w.reduce(function(a,b){return a+b;},0)*1000,
+          prof=Math.round(rev*DATA[scope].margin), cash=DATA[scope].cash;
+      if(animate){ countUp(elCash,cash); countUp(elRev,rev); countUp(elProf,prof); }
+      else { elCash.textContent=fmt(cash); elRev.textContent=fmt(rev); elProf.textContent=fmt(prof); }
+      label.textContent=months+" mo · monthly";
+      var max=Math.max.apply(null,w);
+      barsEl.innerHTML="";
+      w.forEach(function(v){
+        var b=document.createElement("i");
+        b.style.height="0%"; b.setAttribute("data-v",fmt(v*1000));
+        barsEl.appendChild(b);
+        requestAnimationFrame(function(){ requestAnimationFrame(function(){ b.style.height=Math.round(v/max*100)+"%"; }); });
+      });
+      var inv=DATA[scope].inv;
+      invEls.forEach(function(sp,i){ sp.style.width=(inv[i]||0)+"%"; });
+    }
+    barsEl.addEventListener("mouseover",function(e){
+      if(e.target.tagName==="I"){ tip.textContent=e.target.getAttribute("data-v"); tip.style.opacity="1";
+        var r=e.target.getBoundingClientRect(), pr=box.getBoundingClientRect();
+        tip.style.left=(r.left-pr.left+r.width/2)+"px"; tip.style.top=(r.top-pr.top-6)+"px"; }
+    });
+    barsEl.addEventListener("mouseout",function(){ tip.style.opacity="0"; });
+    mock.querySelectorAll("[data-scope]").forEach(function(b){ b.addEventListener("click",function(){
+      scope=b.getAttribute("data-scope");
+      mock.querySelectorAll("[data-scope]").forEach(function(x){ x.classList.toggle("active",x===b); });
+      render(true);
+    }); });
+    mock.querySelectorAll("[data-months]").forEach(function(b){ b.addEventListener("click",function(){
+      months=+b.getAttribute("data-months");
+      mock.querySelectorAll("[data-months]").forEach(function(x){ x.classList.toggle("active",x===b); });
+      render(true);
+    }); });
+    new IntersectionObserver(function(es){ es.forEach(function(e){
+      if(e.isIntersecting && !started){ started=true; render(true); }
+    }); },{threshold:.3}).observe(mock);
   })();
 </script>
 </body>
