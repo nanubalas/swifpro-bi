@@ -4836,6 +4836,9 @@ class WorkspaceSwitcherTests(TestCase):
         resp = self.client.get("/", follow=True)
         self.assertContains(resp, 'id="workspaceSwitcher"')
         self.assertContains(resp, 'action="/switch-workspace/"')
+        # No leaked Django template comments (e.g. a multi-line {# #} that the
+        # lexer fails to parse and renders as literal text).
+        self.assertNotContains(resp, "{#")
 
 
 class SiteDataScopingTests(TestCase):
