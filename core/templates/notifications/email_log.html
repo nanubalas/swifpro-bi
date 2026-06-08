@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Email log - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0"><i class="bi bi-envelope-paper me-2"></i>Email log</h4>
+</div>
+<p class="text-muted">A record of outbound emails this organisation has sent (most recent 300).</p>
+
+<div class="card-soft p-0">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead>
+        <tr><th>Sent</th><th>To</th><th>Subject</th><th>Type</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for l in logs %}
+        <tr>
+          <td class="small text-nowrap">{{ l.created_at|date:"d M Y, H:i" }}</td>
+          <td class="small">{{ l.to_email }}</td>
+          <td class="small">{{ l.subject }}</td>
+          <td><span class="badge text-bg-secondary">{{ l.get_category_display }}</span></td>
+          <td>
+            {% if l.status == "SENT" %}
+              <span class="badge text-bg-success">Sent</span>
+            {% else %}
+              <span class="badge text-bg-danger" title="{{ l.error }}">Failed</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-muted text-center py-5">No emails logged yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

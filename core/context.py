@@ -26,6 +26,14 @@ def nav(request):
         {"tenant": c, "sites": list(selectable_sites(user, c))}
         for c in companies
     ]
+    # In-app notifications for the header bell (unread count + most recent few).
+    try:
+        from core.models import Notification
+        notif_qs = Notification.objects.filter(recipient=user)
+        unread_notifications = notif_qs.filter(is_read=False).count()
+        recent_notifications = list(notif_qs[:8])
+    except Exception:
+        unread_notifications, recent_notifications = 0, []
     return {
         "active_role": role,
         "active_role_label": roles.ROLE_LABELS.get(role, role),
@@ -40,4 +48,6 @@ def nav(request):
         "switch_sites": sites,
         "workspace_companies": workspace_companies,
         "perms": get_effective_permissions(request),
+        "unread_notifications": unread_notifications,
+        "recent_notifications": recent_notifications,
     }

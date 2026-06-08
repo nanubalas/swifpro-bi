@@ -1653,6 +1653,18 @@ def po_submit(request, po_id):
     po.status = PurchaseOrder.Status.APPROVAL_PENDING if po.approval_required else PurchaseOrder.Status.SUBMITTED
     po.save()
 
+    if po.approval_required:
+        from core import notify
+        from django.urls import reverse
+        notify.notify_roles(
+            tenant, [roles_mod.ADMIN, roles_mod.MANAGER, roles_mod.PURCHASING],
+            exclude_user=request.user, category="APPROVAL_REQUEST", actor=request.user,
+            url=reverse("po_detail", kwargs={"po_id": po.id}),
+            title=f"PO awaiting approval: {po.po_number}",
+            message=f"{request.user.username} submitted PO {po.po_number} ({po.currency_code} {total:.2f}) to {po.supplier.name} for approval.",
+            request=request,
+        )
+
     # Record the agreed supplier prices for this PO's lines.
     from core.services.purchasing import record_po_prices
     record_po_prices(po)
@@ -5603,6 +5615,16 @@ def expense_submit(request, expense_id):
         expense.save(update_fields=["status", "submitted_by"])
         log_audit(action="expense_submit", request=request, user=request.user, tenant=tenant,
                   detail=f"{expense.payee} {expense.total}")
+        from core import notify
+        from django.urls import reverse
+        notify.notify_roles(
+            tenant, [roles_mod.ADMIN, roles_mod.FINANCE, roles_mod.ACCOUNTANT, roles_mod.MANAGER],
+            exclude_user=request.user, category="APPROVAL_REQUEST", actor=request.user,
+            url=reverse("expense_detail", kwargs={"expense_id": expense.id}),
+            title=f"Expense awaiting approval: {expense.payee}",
+            message=f"{request.user.username} submitted an expense of {expense.currency_code} {expense.total} for approval.",
+            request=request,
+        )
         messages.success(request, "Expense submitted for approval.")
     return redirect("expense_detail", expense_id=expense.id)
 
@@ -5623,6 +5645,15 @@ def expense_approve(request, expense_id):
     expense.save(update_fields=["approved_by", "approved_at"])
     log_audit(action="expense_approve", request=request, user=request.user, tenant=tenant,
               detail=f"{expense.payee} {expense.total}")
+    from core import notify
+    from django.urls import reverse
+    notify.notify_user(
+        expense.submitted_by, tenant=tenant, category="APPROVAL_RESULT", actor=request.user,
+        url=reverse("expense_detail", kwargs={"expense_id": expense.id}),
+        title=f"Expense approved: {expense.payee}",
+        message=f"Your expense of {expense.currency_code} {expense.total} was approved by {request.user.username}.",
+        request=request,
+    )
     messages.success(request, f"Expense approved and posted ({expense.total}).")
     return redirect("expense_detail", expense_id=expense.id)
 
@@ -5644,6 +5675,16 @@ def expense_reject(request, expense_id):
     expense.save(update_fields=["status", "rejected_reason", "approved_by", "approved_at"])
     log_audit(action="expense_reject", request=request, user=request.user, tenant=tenant,
               detail=f"{expense.payee}: {expense.rejected_reason or ''}")
+    from core import notify
+    from django.urls import reverse
+    notify.notify_user(
+        expense.submitted_by, tenant=tenant, category="APPROVAL_RESULT", actor=request.user,
+        url=reverse("expense_detail", kwargs={"expense_id": expense.id}),
+        title=f"Expense rejected: {expense.payee}",
+        message=f"Your expense of {expense.currency_code} {expense.total} was rejected by {request.user.username}."
+                + (f" Reason: {expense.rejected_reason}" if expense.rejected_reason else ""),
+        request=request,
+    )
     messages.success(request, "Expense rejected.")
     return redirect("expense_detail", expense_id=expense.id)
 
@@ -5996,4 +6037,72 @@ def vat_records(request):
         "tenant": tenant, "records": records, "date_from": date_from, "date_to": date_to,
         "export_qs": f"?from={date_from}&to={date_to}",
     })
+
+
+# ============================
+# Notifications & email log
+# ============================
+
+@login_required
+def notifications_list(request):
+    """Every notification for the signed-in user (newest first)."""
+    from core.models import Notification
+    notes = Notification.objects.filter(recipient=request.user)[:200]
+    unread = sum(1 for n in notes if not n.is_read)
+    return render(request, "notifications/list.html", {"notes": notes, "unread": unread})
+
+
+@login_required
+def notification_open(request, note_id):
+    """Mark a notification read and bounce to its linked page (or the list)."""
+    from core.models import Notification
+    note = get_object_or_404(Notification, id=note_id, recipient=request.user)
+    note.mark_read()
+    return redirect(note.url or "notifications_list")
+
+
+@login_required
+def notification_mark_all_read(request):
+    from core.models import Notification
+    if request.method == "POST":
+        Notification.objects.filter(recipient=request.user, is_read=False).update(
+            is_read=True, read_at=timezone.now())
+        messages.success(request, "All notifications marked as read.")
+    return redirect("notifications_list")
+
+
+@login_required
+def notification_preferences(request):
+    """Per-category in-app / email channel toggles for the signed-in user."""
+    from core.models import Notification, NotificationPreference
+    tenant = _get_default_tenant(request)
+    categories = Notification.Category.choices
+    if request.method == "POST":
+        for code, _label in categories:
+            in_app = bool(request.POST.get(f"in_app_{code}"))
+            email = bool(request.POST.get(f"email_{code}"))
+            NotificationPreference.objects.update_or_create(
+                user=request.user, tenant=tenant, category=code,
+                defaults={"in_app": in_app, "email": email},
+            )
+        messages.success(request, "Notification preferences saved.")
+        return redirect("notification_preferences")
+    existing = {p.category: p for p in NotificationPreference.objects.filter(
+        user=request.user, tenant=tenant)}
+    rows = []
+    for code, label in categories:
+        p = existing.get(code)
+        rows.append({"code": code, "label": label,
+                     "in_app": p.in_app if p else True,
+                     "email": p.email if p else True})
+    return render(request, "notifications/preferences.html", {"rows": rows})
+
+
+@role_required([ROLE_ADMIN, ROLE_FINANCE], [ROLE_ADMIN, ROLE_FINANCE])
+def email_log(request):
+    """Audit trail of outbound emails for this organisation."""
+    from core.models import EmailLog
+    tenant = _get_default_tenant(request)
+    logs = EmailLog.objects.filter(tenant=tenant)[:300]
+    return render(request, "notifications/email_log.html", {"logs": logs})
 

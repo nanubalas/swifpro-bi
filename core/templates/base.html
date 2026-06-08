@@ -381,6 +381,45 @@
         <i class="bi bi-arrow-left"></i><span class="skn-back-label">Back</span>
       </button>
       {% endif %}
+      {% if user.is_authenticated %}
+      <div class="dropdown">
+        <button class="skn-iconbtn position-relative" type="button" id="notifBell"
+                data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Notifications">
+          <i class="bi bi-bell"></i>
+          {% if unread_notifications %}
+          <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                style="font-size:.6rem;">{{ unread_notifications }}<span class="visually-hidden">unread</span></span>
+          {% endif %}
+        </button>
+        <div class="dropdown-menu dropdown-menu-end p-0" aria-labelledby="notifBell" style="width:340px;max-width:92vw;">
+          <div class="d-flex align-items-center justify-content-between px-3 py-2 border-bottom">
+            <strong class="small">Notifications</strong>
+            {% if unread_notifications %}
+            <form method="post" action="{% url 'notification_mark_all_read' %}" class="m-0">{% csrf_token %}
+              <button class="btn btn-link btn-sm p-0 text-decoration-none" type="submit">Mark all read</button>
+            </form>
+            {% endif %}
+          </div>
+          <div style="max-height:360px;overflow:auto;">
+            {% for n in recent_notifications %}
+            <a href="{% url 'notification_open' n.id %}"
+               class="dropdown-item d-flex flex-column py-2 {% if not n.is_read %}fw-semibold{% endif %}" style="white-space:normal;">
+              <span class="small">{{ n.title }}</span>
+              {% if n.message %}<span class="text-muted" style="font-size:.78rem;">{{ n.message|truncatechars:90 }}</span>{% endif %}
+              <span class="text-muted" style="font-size:.7rem;">{{ n.created_at|timesince }} ago</span>
+            </a>
+            {% empty %}
+            <div class="text-muted small text-center py-4">You're all caught up.</div>
+            {% endfor %}
+          </div>
+          <div class="border-top text-center py-2 small">
+            <a href="{% url 'notifications_list' %}" class="text-decoration-none">View all</a>
+            <span class="text-muted">·</span>
+            <a href="{% url 'notification_preferences' %}" class="text-decoration-none">Preferences</a>
+          </div>
+        </div>
+      </div>
+      {% endif %}
       <button class="skn-iconbtn" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle light / dark">
         <i class="bi bi-moon-stars"></i>
       </button>

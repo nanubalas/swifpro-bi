@@ -302,4 +302,9 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("reports/inventory-analytics/", views.report_inventory_analytics, name="report_inventory_analytics"),
     path("reports/consolidated/", views.consolidated_reports, name="consolidated_reports"),
     path("intercompany/", views.intercompany_list, name="intercompany_list"),
+    path("notifications/", views.notifications_list, name="notifications_list"),
+    path("notifications/<int:note_id>/open/", views.notification_open, name="notification_open"),
+    path("notifications/read-all/", views.notification_mark_all_read, name="notification_mark_all_read"),
+    path("notifications/preferences/", views.notification_preferences, name="notification_preferences"),
+    path("email-log/", views.email_log, name="email_log"),
 ]

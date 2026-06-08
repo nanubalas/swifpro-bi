@@ -1252,6 +1252,87 @@ class AccessRequestTests(TestCase):
         self.assertIn("Temporary password", applicant_mails[-1].body)
 
 
+class NotificationTests(TestCase):
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Notify Co")
+        self.admin = User.objects.create_user("nadmin", password="pw", email="nadmin@notify.test")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.member = User.objects.create_user("nmember", password="pw", email="nmember@notify.test")
+        OrgMembership.objects.create(user=self.member, tenant=self.tenant, role="SALES", is_default=True)
+
+    def test_notify_user_creates_in_app_and_email(self):
+        from django.core import mail
+        from core import notify
+        from core.models import Notification, EmailLog
+        note = notify.notify_user(self.member, tenant=self.tenant, category="GENERAL",
+                                  title="Hello", message="A message", url="/dashboard/")
+        self.assertIsNotNone(note)
+        self.assertTrue(Notification.objects.filter(recipient=self.member, title="Hello").exists())
+        self.assertTrue(any("nmember@notify.test" in m.to for m in mail.outbox))
+        self.assertTrue(EmailLog.objects.filter(to_email="nmember@notify.test", status="SENT").exists())
+
+    def test_email_preference_suppresses_email_only(self):
+        from django.core import mail
+        from core import notify
+        from core.models import Notification, NotificationPreference
+        NotificationPreference.objects.create(user=self.member, tenant=self.tenant,
+                                              category="GENERAL", in_app=True, email=False)
+        notify.notify_user(self.member, tenant=self.tenant, category="GENERAL", title="No email")
+        self.assertTrue(Notification.objects.filter(recipient=self.member, title="No email").exists())
+        self.assertFalse(any("nmember@notify.test" in m.to for m in mail.outbox))
+
+    def test_in_app_preference_suppresses_notification(self):
+        from core import notify
+        from core.models import Notification, NotificationPreference
+        NotificationPreference.objects.create(user=self.member, tenant=self.tenant,
+                                              category="GENERAL", in_app=False, email=True)
+        note = notify.notify_user(self.member, tenant=self.tenant, category="GENERAL", title="Email only")
+        self.assertIsNone(note)
+        self.assertFalse(Notification.objects.filter(recipient=self.member, title="Email only").exists())
+
+    def test_open_marks_read_and_redirects(self):
+        from core import notify
+        from core.models import Notification
+        note = notify.notify_user(self.member, tenant=self.tenant, category="GENERAL",
+                                  title="Open me", url="/dashboard/")
+        self.client.login(username="nmember", password="pw")
+        resp = self.client.get(f"/notifications/{note.id}/open/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, "/dashboard/")
+        note.refresh_from_db()
+        self.assertTrue(note.is_read)
+
+    def test_mark_all_read(self):
+        from core import notify
+        from core.models import Notification
+        for i in range(3):
+            notify.notify_user(self.member, tenant=self.tenant, category="GENERAL", title=f"N{i}")
+        self.client.login(username="nmember", password="pw")
+        self.client.post("/notifications/read-all/")
+        self.assertEqual(Notification.objects.filter(recipient=self.member, is_read=False).count(), 0)
+
+    def test_bell_context_shows_unread_count(self):
+        from core import notify
+        notify.notify_user(self.member, tenant=self.tenant, category="GENERAL", title="Unread one")
+        self.client.login(username="nmember", password="pw")
+        resp = self.client.get("/dashboard/sales")
+        self.assertEqual(resp.context["unread_notifications"], 1)
+        self.assertEqual(len(resp.context["recent_notifications"]), 1)
+
+    def test_email_log_requires_admin_or_finance(self):
+        self.client.login(username="nmember", password="pw")
+        self.assertEqual(self.client.get("/email-log/").status_code, 403)
+        self.client.login(username="nadmin", password="pw")
+        self.assertEqual(self.client.get("/email-log/").status_code, 200)
+
+    def test_only_recipient_can_open_notification(self):
+        from core import notify
+        note = notify.notify_user(self.admin, tenant=self.tenant, category="GENERAL", title="Admin only")
+        self.client.login(username="nmember", password="pw")
+        self.assertEqual(self.client.get(f"/notifications/{note.id}/open/").status_code, 404)
+
+
 class PerOrgEnforcementTests(TestCase):
     """A multi-org user's module access must follow their ACTIVE org's role."""
     def setUp(self):

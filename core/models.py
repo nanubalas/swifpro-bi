@@ -2098,3 +2098,83 @@ class VatReturn(models.Model):
 
     def __str__(self):
         return f"VAT {self.period_from} to {self.period_to}"
+
+
+class Notification(models.Model):
+    """An in-app notification for a user, optionally also delivered by email."""
+    class Category(models.TextChoices):
+        APPROVAL_REQUEST = "APPROVAL_REQUEST", "Approval requested"
+        APPROVAL_RESULT = "APPROVAL_RESULT", "Approval decision"
+        DOCUMENT_SENT = "DOCUMENT_SENT", "Document sent"
+        ACCESS_REQUEST = "ACCESS_REQUEST", "Access request"
+        OVERDUE = "OVERDUE", "Overdue reminder"
+        GENERAL = "GENERAL", "General"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="notifications", null=True, blank=True)
+    recipient = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="notifications")
+    actor = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.GENERAL)
+    title = models.CharField(max_length=200)
+    message = models.TextField(blank=True)
+    url = models.CharField(max_length=300, blank=True)  # in-app link to the related object
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["recipient", "is_read"]),
+            models.Index(fields=["tenant", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_category_display()} -> {self.recipient}: {self.title}"
+
+    def mark_read(self):
+        if not self.is_read:
+            self.is_read = True
+            self.read_at = timezone.now()
+            self.save(update_fields=["is_read", "read_at"])
+
+
+class EmailLog(models.Model):
+    """Audit trail of every outbound email the system attempts to send."""
+    class Status(models.TextChoices):
+        SENT = "SENT", "Sent"
+        FAILED = "FAILED", "Failed"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.SET_NULL, null=True, blank=True, related_name="email_logs")
+    to_email = models.EmailField()
+    subject = models.CharField(max_length=255)
+    category = models.CharField(max_length=20, choices=Notification.Category.choices,
+                                default=Notification.Category.GENERAL)
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.SENT)
+    error = models.CharField(max_length=255, blank=True)
+    related_kind = models.CharField(max_length=50, blank=True)   # e.g. "CustomerInvoice"
+    related_id = models.PositiveIntegerField(null=True, blank=True)
+    created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["tenant", "created_at"])]
+
+    def __str__(self):
+        return f"{self.subject} -> {self.to_email} ({self.status})"
+
+
+class NotificationPreference(models.Model):
+    """Per-user, per-tenant channel toggle for one notification category.
+    Absence of a row means both channels are on (the default)."""
+    user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="notification_prefs")
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="notification_prefs")
+    category = models.CharField(max_length=20, choices=Notification.Category.choices)
+    in_app = models.BooleanField(default=True)
+    email = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ("user", "tenant", "category")
+
+    def __str__(self):
+        return f"{self.user} {self.category} (app={self.in_app}, email={self.email})"

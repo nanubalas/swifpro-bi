@@ -162,6 +162,7 @@ NAV = [
         ("Roles & Permissions", "/team/permissions/", "shield-check", {ADMIN}),
         ("Access Requests", "/access-requests/", "person-plus", {ADMIN}),
         ("Audit Log", "/audit/", "shield-lock", {ADMIN}),
+        ("Email Log", "/email-log/", "envelope-paper", {ADMIN, FINANCE}),
     ]),
 ]
 

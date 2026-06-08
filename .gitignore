@@ -8,3 +8,5 @@ node_modules/
 .claude/
 staticfiles/
 media/
+# Claude Code personal settings (permission allowlist)
+.claude/settings.local.json

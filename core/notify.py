@@ -53,6 +53,8 @@ def notify_admins_new_request(req, request=None):
         f"Review it here: {request.build_absolute_uri('/access-requests/') if request else '/access-requests/'}\n"
     )
     send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, recipients, fail_silently=True)
+    for _r in recipients:
+        log_email(_r, subject, category="ACCESS_REQUEST", tenant=req.tenant, related=req)
 
 
 def notify_applicant_approved(req, username, temp_password, request=None):
@@ -110,13 +112,15 @@ def notify_invoice(inv, request=None, attachment=None):
         + (f"View it online: {link}\n\n" if link else "")
         + "Thank you for your business.\n"
     )
+    subject = f"Invoice {inv.invoice_number} from {tenant.name}"
     msg = EmailMessage(
-        subject=f"Invoice {inv.invoice_number} from {tenant.name}",
+        subject=subject,
         body=body, from_email=settings.DEFAULT_FROM_EMAIL, to=[email],
     )
     if attachment:
         msg.attach(*attachment)
     msg.send(fail_silently=True)
+    log_email(email, subject, category="DOCUMENT_SENT", tenant=tenant, related=inv)
     return True
 
 
@@ -147,13 +151,15 @@ def notify_overdue_invoice(inv, request=None, attachment=None):
         + "If payment has already been made, please disregard this reminder.\n"
         + "Thank you.\n"
     )
+    subject = f"Payment reminder: invoice {inv.invoice_number} from {tenant.name}"
     msg = EmailMessage(
-        subject=f"Payment reminder: invoice {inv.invoice_number} from {tenant.name}",
+        subject=subject,
         body=body, from_email=settings.DEFAULT_FROM_EMAIL, to=[email],
     )
     if attachment:
         msg.attach(*attachment)
     msg.send(fail_silently=True)
+    log_email(email, subject, category="OVERDUE", tenant=tenant, related=inv)
     return True
 
 
@@ -170,13 +176,15 @@ def notify_sales_document(doc, label, number, request=None, attachment=None):
         f"Total: {doc.currency_code} {doc.total:.2f}\n\n"
         "Thank you for your business.\n"
     )
+    subject = f"{label} {number} from {tenant.name}"
     msg = EmailMessage(
-        subject=f"{label} {number} from {tenant.name}",
+        subject=subject,
         body=body, from_email=settings.DEFAULT_FROM_EMAIL, to=[email],
     )
     if attachment:
         msg.attach(*attachment)
     msg.send(fail_silently=True)
+    log_email(email, subject, category="DOCUMENT_SENT", tenant=tenant, related=doc)
     return True
 
 
@@ -190,3 +198,97 @@ def notify_applicant_rejected(req, request=None):
         f"Please contact your administrator if you believe this is a mistake.\n"
     )
     send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [req.email], fail_silently=True)
+    log_email(req.email, subject, category="ACCESS_REQUEST", tenant=getattr(req, "tenant", None), related=req)
+
+
+# ---------------------------------------------------------------------------
+# In-app notifications + outbound-email audit log
+# ---------------------------------------------------------------------------
+
+def log_email(to_email, subject, category="GENERAL", status="SENT", error="",
+              tenant=None, related=None, created_by=None):
+    """Record one outbound email in the EmailLog audit trail. Best-effort."""
+    if not to_email:
+        return None
+    from core.models import EmailLog
+    kind, rid = "", None
+    if related is not None:
+        kind = related.__class__.__name__
+        rid = getattr(related, "id", None)
+    try:
+        return EmailLog.objects.create(
+            tenant=tenant, to_email=to_email, subject=(subject or "")[:255], category=category,
+            status=status, error=(error or "")[:255], related_kind=kind, related_id=rid,
+            created_by=created_by,
+        )
+    except Exception:
+        return None
+
+
+def _channel_prefs(user, tenant, category):
+    """(in_app, email) channel preference for this user/tenant/category. Missing
+    row => both channels on (the default)."""
+    if user is None:
+        return (True, True)
+    from core.models import NotificationPreference
+    try:
+        p = NotificationPreference.objects.filter(user=user, tenant=tenant, category=category).first()
+    except Exception:
+        p = None
+    return (True, True) if p is None else (p.in_app, p.email)
+
+
+def notify_user(recipient, tenant=None, category="GENERAL", title="", message="", url="",
+                actor=None, email_subject=None, email_body=None, request=None):
+    """Create an in-app notification for ``recipient`` and, when their preference
+    allows it, also email them. Honours per-category channel preferences and is
+    best-effort (never raises)."""
+    if recipient is None:
+        return None
+    from core.models import Notification
+    in_app, want_email = _channel_prefs(recipient, tenant, category)
+    note = None
+    if in_app:
+        try:
+            note = Notification.objects.create(
+                tenant=tenant, recipient=recipient, actor=actor, category=category,
+                title=(title or "")[:200], message=message or "", url=url or "",
+            )
+        except Exception:
+            note = None
+    if want_email and getattr(recipient, "email", ""):
+        subject = email_subject or f"[SwifPro BI] {title}"
+        body = email_body or (message or title)
+        if url:
+            full = url
+            if request is not None and url.startswith("/"):
+                try:
+                    full = request.build_absolute_uri(url)
+                except Exception:
+                    full = url
+            body = f"{body}\n\nOpen: {full}\n"
+        try:
+            send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [recipient.email], fail_silently=True)
+            log_email(recipient.email, subject, category=category, status="SENT", tenant=tenant, created_by=actor)
+        except Exception as e:  # pragma: no cover - send_mail already fail_silently
+            log_email(recipient.email, subject, category=category, status="FAILED", error=str(e),
+                      tenant=tenant, created_by=actor)
+    return note
+
+
+def notify_roles(tenant, roles, exclude_user=None, **kwargs):
+    """Notify every active user holding one of ``roles`` in ``tenant`` (plus active
+    superusers). Extra kwargs are passed through to ``notify_user``."""
+    from django.contrib.auth.models import User
+    from core.models import OrgMembership
+    user_ids = set(
+        OrgMembership.objects.filter(tenant=tenant, role__in=list(roles)).values_list("user_id", flat=True)
+    )
+    qs = (User.objects.filter(is_active=True, id__in=user_ids)
+          | User.objects.filter(is_active=True, is_superuser=True)).distinct()
+    notes = []
+    for u in qs:
+        if exclude_user is not None and u.id == exclude_user.id:
+            continue
+        notes.append(notify_user(u, tenant=tenant, **kwargs))
+    return notes

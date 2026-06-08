@@ -97,3 +97,25 @@ admin.site.register(CustomerInvoiceLine)
 admin.site.register(GLAccount)
 admin.site.register(JournalEntry)
 admin.site.register(JournalLine)
+
+from core.models import Notification, EmailLog, NotificationPreference
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "recipient", "category", "title", "is_read", "tenant")
+    list_filter = ("category", "is_read")
+    search_fields = ("title", "message", "recipient__username")
+
+
+@admin.register(EmailLog)
+class EmailLogAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "to_email", "subject", "category", "status", "tenant")
+    list_filter = ("category", "status")
+    search_fields = ("to_email", "subject")
+
+
+@admin.register(NotificationPreference)
+class NotificationPreferenceAdmin(admin.ModelAdmin):
+    list_display = ("user", "tenant", "category", "in_app", "email")
+    list_filter = ("category", "in_app", "email")
