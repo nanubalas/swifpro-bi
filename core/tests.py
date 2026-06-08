@@ -1332,6 +1332,23 @@ class NotificationTests(TestCase):
         self.client.login(username="nmember", password="pw")
         self.assertEqual(self.client.get(f"/notifications/{note.id}/open/").status_code, 404)
 
+    def test_expense_create_with_submit_notifies_approvers(self):
+        """Submitting an expense straight from the create form (action=submit)
+        must notify approvers, just like the draft-then-submit path."""
+        from core.models import Notification, GLAccount, TaxCode
+        category = GLAccount.objects.get(tenant=self.tenant, code="6100")
+        std = TaxCode.objects.get(tenant=self.tenant, code="STD")
+        self.client.login(username="nmember", password="pw")
+        resp = self.client.post("/expenses/new/", {
+            "expense_date": "2026-05-30", "payee": "Cab Co", "category": category.id,
+            "description": "Taxi", "net_amount": "50.00", "tax_code": std.id,
+            "method": "BANK", "reference": "T-1", "action": "submit",
+        })
+        self.assertEqual(resp.status_code, 302)
+        notes = Notification.objects.filter(recipient=self.admin, category="APPROVAL_REQUEST")
+        self.assertTrue(notes.exists(), "approver should be notified when an expense is submitted via the create form")
+        self.assertIn("Cab Co", notes.first().title)
+
 
 class PerOrgEnforcementTests(TestCase):
     """A multi-org user's module access must follow their ACTIVE org's role."""

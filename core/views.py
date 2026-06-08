@@ -5556,6 +5556,22 @@ def expense_list(request):
         "can_approve": _can_approve_expenses(request)})
 
 
+def _notify_expense_submitted(request, tenant, expense):
+    """Notify expense approvers that ``expense`` is awaiting their approval.
+    Shared by the create form and the draft-submit action so both paths emit
+    the same notification."""
+    from core import notify
+    from django.urls import reverse
+    notify.notify_roles(
+        tenant, [roles_mod.ADMIN, roles_mod.FINANCE, roles_mod.ACCOUNTANT, roles_mod.MANAGER],
+        exclude_user=request.user, category="APPROVAL_REQUEST", actor=request.user,
+        url=reverse("expense_detail", kwargs={"expense_id": expense.id}),
+        title=f"Expense awaiting approval: {expense.payee}",
+        message=f"{request.user.username} submitted an expense of {expense.currency_code} {expense.total} for approval.",
+        request=request,
+    )
+
+
 @role_required(EXPENSE_STAFF, write_groups=EXPENSE_STAFF)
 @transaction.atomic
 def expense_create(request):
@@ -5583,6 +5599,7 @@ def expense_create(request):
             expense.save(update_fields=["status", "submitted_by"])
             log_audit(action="expense_submit", request=request, user=request.user, tenant=tenant,
                       detail=f"{expense.payee} {expense.total}")
+            _notify_expense_submitted(request, tenant, expense)
             if action == "post" and is_approver and needs_approval:
                 messages.warning(request, f"Expense submitted — approval required (total {expense.total} ≥ threshold {threshold}).")
             else:
@@ -5615,16 +5632,7 @@ def expense_submit(request, expense_id):
         expense.save(update_fields=["status", "submitted_by"])
         log_audit(action="expense_submit", request=request, user=request.user, tenant=tenant,
                   detail=f"{expense.payee} {expense.total}")
-        from core import notify
-        from django.urls import reverse
-        notify.notify_roles(
-            tenant, [roles_mod.ADMIN, roles_mod.FINANCE, roles_mod.ACCOUNTANT, roles_mod.MANAGER],
-            exclude_user=request.user, category="APPROVAL_REQUEST", actor=request.user,
-            url=reverse("expense_detail", kwargs={"expense_id": expense.id}),
-            title=f"Expense awaiting approval: {expense.payee}",
-            message=f"{request.user.username} submitted an expense of {expense.currency_code} {expense.total} for approval.",
-            request=request,
-        )
+        _notify_expense_submitted(request, tenant, expense)
         messages.success(request, "Expense submitted for approval.")
     return redirect("expense_detail", expense_id=expense.id)
 
