@@ -93,12 +93,15 @@ def _post_invoice_cogs(inv, user=None):
     if JournalEntry.objects.filter(tenant=tenant, ref_type="COGS", ref_id=inv.invoice_number).exists():
         return None
 
+    from core.services.uom import to_base_qty
     cogs_total = Decimal("0.00")
     for line in product_lines:
+        # Relieve stock in the product's base unit (line qty may be in a sell UOM).
+        base_qty = to_base_qty(line.product, line.qty or Decimal("0.00"), getattr(line, "uom", None))
         movement = apply_movement(
             tenant=tenant, product=line.product, location=location,
             movement_type=InventoryMovement.MovementType.SALE,
-            qty_delta=(line.qty or Decimal("0.00")) * Decimal("-1"),
+            qty_delta=base_qty * Decimal("-1"),
             ref_type="AR_INVOICE", ref_id=inv.invoice_number,
             notes=f"Invoice {inv.invoice_number}", user=user,
         )

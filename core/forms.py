@@ -81,7 +81,7 @@ PurchaseOrderLineFormSet = inlineformset_factory(
     PurchaseOrder,
     PurchaseOrderLine,
     form=TenantModelForm,
-    fields=("product", "ordered_qty", "unit_cost", "tax_code"),
+    fields=("product", "ordered_qty", "uom", "unit_cost", "tax_code"),
     extra=1,
     can_delete=True
 )
@@ -299,7 +299,7 @@ SalesOrderLineFormSet = inlineformset_factory(
     SalesOrder,
     SalesOrderLine,
     form=TenantModelForm,
-    fields=("product", "ship_from_location", "qty", "unit_price", "lot_code", "serial_number", "expiry_date"),
+    fields=("product", "ship_from_location", "qty", "uom", "unit_price", "lot_code", "serial_number", "expiry_date"),
     extra=1,
     can_delete=True
 )
@@ -591,7 +591,7 @@ CustomerInvoiceLineFormSet = inlineformset_factory(
     CustomerInvoice,
     CustomerInvoiceLine,
     form=TenantModelForm,
-    fields=("product", "description", "qty", "unit_price", "discount_pct", "tax_code"),
+    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code"),
     extra=1,
     can_delete=True
 )
@@ -749,7 +749,7 @@ class SalesQuoteForm(TenantModelForm):
 
 SalesQuoteLineFormSet = inlineformset_factory(
     SalesQuote, SalesQuoteLine, form=TenantModelForm,
-    fields=("product", "description", "qty", "unit_price", "discount_pct", "tax_code"),
+    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code"),
     extra=1, can_delete=True,
 )
 
@@ -777,7 +777,7 @@ class CustomerOrderForm(TenantModelForm):
 
 CustomerOrderLineFormSet = inlineformset_factory(
     CustomerOrder, CustomerOrderLine, form=TenantModelForm,
-    fields=("product", "description", "qty", "unit_price", "discount_pct", "tax_code"),
+    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code"),
     extra=1, can_delete=True,
 )
 
@@ -813,7 +813,7 @@ class RecurringInvoiceForm(TenantModelForm):
 
 RecurringInvoiceLineFormSet = inlineformset_factory(
     RecurringInvoice, RecurringInvoiceLine, form=TenantModelForm,
-    fields=("product", "description", "qty", "unit_price", "discount_pct", "tax_code"),
+    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code"),
     extra=1, can_delete=True,
 )
 

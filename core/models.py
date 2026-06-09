@@ -702,6 +702,9 @@ class PurchaseOrder(models.Model):
 class PurchaseOrderLine(models.Model):
     po = models.ForeignKey(PurchaseOrder, related_name="lines", on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    # Purchase UOM the ordered_qty/unit_cost are expressed in; null = product base
+    # unit. Quantities convert to base when goods are received into stock.
+    uom = models.ForeignKey("UnitOfMeasure", on_delete=models.PROTECT, null=True, blank=True)
     ordered_qty = models.DecimalField(max_digits=12, decimal_places=2)
     # NON-AUTHORITATIVE CACHE. The source of truth for received quantity is the
     # set of POSTED GoodsReceiptLines linked to this line's stable identity
@@ -1240,6 +1243,8 @@ class SalesOrderLine(models.Model):
     serial_number = models.CharField(max_length=100, blank=True, null=True)
     expiry_date = models.DateField(blank=True, null=True)
     qty = models.DecimalField(max_digits=12, decimal_places=2)
+    # Transaction UOM (null = product base unit); converted to base on stock relief.
+    uom = models.ForeignKey("UnitOfMeasure", on_delete=models.PROTECT, null=True, blank=True)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     class Meta:
@@ -1473,6 +1478,9 @@ class _SalesLine(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT, blank=True, null=True)
     description = models.CharField(max_length=255, blank=True, null=True)
     qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1.00"))
+    # Transaction UOM the qty/price are expressed in; null = the product's base
+    # unit. Converted to base when stock is relieved (qty only; money is unchanged).
+    uom = models.ForeignKey("UnitOfMeasure", on_delete=models.PROTECT, blank=True, null=True)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"), blank=True)
     tax_code = models.ForeignKey("TaxCode", on_delete=models.PROTECT, blank=True, null=True)
@@ -1836,6 +1844,8 @@ class CustomerInvoiceLine(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT, blank=True, null=True)
     description = models.CharField(max_length=255, blank=True, null=True)
     qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1.00"))
+    # Transaction UOM (null = product base unit); converted to base on stock relief.
+    uom = models.ForeignKey("UnitOfMeasure", on_delete=models.PROTECT, blank=True, null=True)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"), blank=True)  # % off this line
     tax_code = models.ForeignKey(TaxCode, on_delete=models.PROTECT, blank=True, null=True)

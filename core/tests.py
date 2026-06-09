@@ -2435,6 +2435,133 @@ class CycleCountValuationCatchupTests(TestCase):
         self.assertEqual(CycleCountValuationCorrection.objects.count(), 0)
 
 
+class UomConversionServiceTests(TestCase):
+    """Conversion engine: stock is kept in base units; lines may use other UOMs."""
+
+    def setUp(self):
+        from core.models import UnitOfMeasure
+        self.t = Tenant.objects.create(name="UOM Svc Co")
+        self.each = UnitOfMeasure.objects.create(tenant=self.t, code="EACH")
+        self.case = UnitOfMeasure.objects.create(tenant=self.t, code="CASE")
+        self.p = Product.objects.create(tenant=self.t, sku="U1", name="P", base_uom=self.each)
+
+    def test_identity_when_no_or_base_uom(self):
+        from core.services.uom import to_base_qty
+        self.assertEqual(to_base_qty(self.p, Decimal("5"), None), Decimal("5.00"))
+        self.assertEqual(to_base_qty(self.p, Decimal("5"), self.each), Decimal("5.00"))
+
+    def test_global_conversion_qty_and_cost(self):
+        from core.models import UOMConversion
+        from core.services.uom import to_base_qty, base_unit_cost
+        UOMConversion.objects.create(tenant=self.t, product=None, from_uom=self.case,
+                                     to_uom=self.each, multiplier=Decimal("12"))
+        self.assertEqual(to_base_qty(self.p, Decimal("5"), self.case), Decimal("60.00"))
+        # Money preserved: 24/case -> 2/each.
+        self.assertEqual(base_unit_cost(self.p, Decimal("24.00"), self.case), Decimal("2.0000"))
+
+    def test_product_specific_overrides_global(self):
+        from core.models import UOMConversion
+        from core.services.uom import to_base_qty
+        UOMConversion.objects.create(tenant=self.t, product=None, from_uom=self.case,
+                                     to_uom=self.each, multiplier=Decimal("12"))
+        UOMConversion.objects.create(tenant=self.t, product=self.p, from_uom=self.case,
+                                     to_uom=self.each, multiplier=Decimal("6"))
+        self.assertEqual(to_base_qty(self.p, Decimal("2"), self.case), Decimal("12.00"))  # uses 6
+
+    def test_reverse_rule_is_inverted(self):
+        from core.models import UOMConversion
+        from core.services.uom import to_base_qty
+        # Only the base->case rule exists: 1 EACH = 0.5 CASE => 1 CASE = 2 EACH.
+        UOMConversion.objects.create(tenant=self.t, product=None, from_uom=self.each,
+                                     to_uom=self.case, multiplier=Decimal("0.5"))
+        self.assertEqual(to_base_qty(self.p, Decimal("3"), self.case), Decimal("6.00"))
+
+    def test_missing_rule_raises(self):
+        from django.core.exceptions import ValidationError
+        from core.services.uom import to_base_qty
+        with self.assertRaises(ValidationError):
+            to_base_qty(self.p, Decimal("5"), self.case)  # no conversion configured
+
+
+class UomPurchasingTests(TestCase):
+    """Buying in a purchase UOM stores/cost stock in the product's base unit."""
+
+    def setUp(self):
+        from core.models import UnitOfMeasure, UOMConversion
+        self.tenant = Tenant.objects.create(name="UOM Buy Co")
+        self.each = UnitOfMeasure.objects.create(tenant=self.tenant, code="EACH")
+        self.case = UnitOfMeasure.objects.create(tenant=self.tenant, code="CASE")
+        UOMConversion.objects.create(tenant=self.tenant, product=None, from_uom=self.case,
+                                     to_uom=self.each, multiplier=Decimal("12"))
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="S")
+        self.product = Product.objects.create(tenant=self.tenant, sku="SKU-UB", name="P", base_uom=self.each)
+        self.po = PurchaseOrder.objects.create(tenant=self.tenant, po_number="PO-UB", supplier=self.supplier,
+                                               status=PurchaseOrder.Status.SUBMITTED)
+        # 5 CASE @ 24/CASE.
+        self.pol = PurchaseOrderLine.objects.create(po=self.po, product=self.product, uom=self.case,
+                                                    ordered_qty=Decimal("5"), unit_cost=Decimal("24.00"))
+        self.shipment = Shipment.objects.create(tenant=self.tenant, po=self.po, from_supplier=self.supplier, destination=self.loc)
+        self.sl = ShipmentLine.objects.create(shipment=self.shipment, po_line=self.pol, expected_qty=Decimal("5"))
+        self.user = User.objects.create_user("ubu", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Warehouse")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="ubu", password="pw")
+
+    def test_receive_in_cases_stores_base_eaches(self):
+        from core.models import JournalEntry
+        from django.urls import reverse
+        resp = self.client.post(reverse("receive_po", args=[self.po.id]),
+                                {"grn_number": "GRN-UB", f"recv_{self.sl.id}": "5"})
+        self.assertEqual(resp.status_code, 302)
+        # 5 CASE x 12 = 60 EACH on hand, costed at 2.00/each.
+        bal = InventoryBalance.objects.get(tenant=self.tenant, product=self.product, location=self.loc)
+        self.assertEqual(bal.on_hand, Decimal("60.00"))
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.average_cost, Decimal("2.0000"))
+        # Money is unchanged: GRN capitalises 5 x 24 = 120 and balances.
+        je = JournalEntry.objects.get(tenant=self.tenant, ref_type="GRN")
+        self.assertEqual(je.total_debit, je.total_credit)
+        self.assertEqual(je.total_debit, Decimal("120.00"))
+        # PO received/open stay in the purchase UOM (cases).
+        self.pol.refresh_from_db()
+        self.assertEqual(self.pol.received_qty, Decimal("5.00"))
+        self.assertEqual(self.pol.open_qty, Decimal("0.00"))
+
+
+class UomSalesTests(TestCase):
+    """Selling in a UOM relieves stock and books COGS in the base unit."""
+
+    def setUp(self):
+        from core.models import UnitOfMeasure, UOMConversion
+        self.t = Tenant.objects.create(name="UOM Sell Co")
+        self.each = UnitOfMeasure.objects.create(tenant=self.t, code="EACH")
+        self.case = UnitOfMeasure.objects.create(tenant=self.t, code="CASE")
+        UOMConversion.objects.create(tenant=self.t, product=None, from_uom=self.case,
+                                     to_uom=self.each, multiplier=Decimal("12"))
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.product = Product.objects.create(tenant=self.t, sku="SKU-US", name="P", base_uom=self.each)
+
+    def test_invoice_in_cases_relieves_base_eaches_and_costs_at_base(self):
+        from core.services.inventory import apply_movement
+        from core.models import JournalEntry, GLAccount, Customer
+        # 100 EACH on hand @ 3.00 (base).
+        apply_movement(tenant=self.t, product=self.product, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("100"), ref_type="T", ref_id="r", unit_cost=Decimal("3.00"))
+        cust = Customer.objects.create(tenant=self.t, name="C")
+        inv = CustomerInvoice.objects.create(tenant=self.t, customer=cust, invoice_number="INV-US", location=self.loc)
+        std = TaxCode.objects.get(tenant=self.t, code="STD")
+        # Sell 2 CASE = 24 EACH.
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.product, description="P",
+                                           qty=Decimal("2"), uom=self.case, unit_price=Decimal("50.00"), tax_code=std)
+        post_customer_invoice(inv)
+
+        bal = InventoryBalance.objects.get(tenant=self.t, product=self.product, location=self.loc)
+        self.assertEqual(bal.on_hand, Decimal("76.00"))  # 100 - 24 EACH relieved
+        cogs = JournalEntry.objects.get(tenant=self.t, ref_type="COGS")
+        self.assertEqual(cogs.total_debit, Decimal("72.00"))  # 24 EACH @ 3.00
+
+
 class LandedCostTests(TestCase):
     def setUp(self):
         from core.models import Location

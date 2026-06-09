@@ -2125,28 +2125,35 @@ def receive_po(request, po_id):
 
                 # Pass 2: create GRN lines, apply costed movements.
                 from core.services.purchasing import sync_po_line_received
+                from core.services.uom import to_base_qty, base_unit_cost
                 inventory_value = Decimal("0.00")
                 touched_lines = []
                 for item in received_lines:
                     sl = item["sl"]
-                    qty = item["qty"]
-                    base_cost = sl.po_line.unit_cost
+                    qty = item["qty"]                       # in the PO line's purchase UOM
+                    product = sl.po_line.product
+                    po_uom = sl.po_line.uom
+                    # Convert to the base unit for the stock ledger: quantity and a
+                    # per-base unit cost (so the money value is unchanged). The GRN
+                    # line keeps the purchase-UOM qty/cost for PO matching (M17).
+                    base_qty = to_base_qty(product, qty, po_uom)
+                    base_cost = base_unit_cost(product, sl.po_line.unit_cost, po_uom)
                     landed_unit_cost = (base_cost * (Decimal("1") + ratio)).quantize(Decimal("0.0001"))
 
                     GoodsReceiptLine.objects.create(
-                        receipt=receipt, po_line=sl.po_line, product=sl.po_line.product,
+                        receipt=receipt, po_line=sl.po_line, product=product,
                         # Link to the stable PO-line identity so this receipt
                         # counts toward the current version's open/received (M17).
                         root_line_id=(sl.po_line.root_line_id or sl.po_line_id),
-                        qty_received=qty, unit_cost=base_cost,
+                        qty_received=qty, unit_cost=sl.po_line.unit_cost,
                         lot_code=item["lot_code"], serial_number=item["serial"], expiry_date=item["expiry"],
                     )
                     movement = apply_movement(
                         tenant=tenant,
-                        product=sl.po_line.product,
+                        product=product,
                         location=dest_location,
                         movement_type=InventoryMovement.MovementType.RECEIVE,
-                        qty_delta=qty,
+                        qty_delta=base_qty,
                         ref_type="GRN",
                         ref_id=receipt.grn_number,
                         notes=f"Receipt against PO {po.po_number}", user=request.user,
@@ -3361,7 +3368,10 @@ def _post_sales_order(order: SalesOrder):
         if not ship_loc:
             continue
 
-        qty = Decimal(line.qty)
+        # Convert the ordered qty to the product's base unit before exploding/
+        # relieving stock (the stock ledger is always in base units).
+        from core.services.uom import to_base_qty
+        qty = to_base_qty(line.product, line.qty, line.uom)
         if qty <= 0:
             continue
 
@@ -4502,8 +4512,8 @@ def _copy_sales_lines(src, dest, line_model, fk_name):
     for l in src.lines.all():
         line_model.objects.create(**{
             fk_name: dest, "product": l.product, "description": l.description,
-            "qty": l.qty, "unit_price": l.unit_price, "discount_pct": l.discount_pct,
-            "tax_code": l.tax_code,
+            "qty": l.qty, "uom": getattr(l, "uom", None), "unit_price": l.unit_price,
+            "discount_pct": l.discount_pct, "tax_code": l.tax_code,
         })
 
 
@@ -4637,6 +4647,7 @@ def _invoice_from_lines(tenant, customer, currency, notes, terms, src, line_attr
     for l in src.lines.all():
         CustomerInvoiceLine.objects.create(
             invoice=inv, product=l.product, description=l.description, qty=l.qty,
+            uom=getattr(l, "uom", None),
             unit_price=l.unit_price, discount_pct=l.discount_pct, tax_code=l.tax_code)
     return inv
 
@@ -4766,6 +4777,7 @@ def _reserve_customer_order(o):
     """Reserve stock for a confirmed order's product lines (re-syncs existing
     reservations so an edit reflects the latest lines)."""
     from core.services.inventory import reserve_stock, release_reservations
+    from core.services.uom import to_base_qty
     tenant = o.tenant
     loc = o.location or _order_stock_location(tenant)  # reserve from the order's own location when set
     release_reservations(tenant=tenant, ref_type="CUSTOMER_ORDER", ref_id=str(o.id))
@@ -4773,7 +4785,9 @@ def _reserve_customer_order(o):
         return
     for line in o.lines.all():
         if line.product_id and line.qty and line.qty > 0:
-            reserve_stock(tenant=tenant, product=line.product, location=loc, qty=line.qty,
+            # Reserve in base units so ATP/relief stay in one unit system.
+            base_qty = to_base_qty(line.product, line.qty, line.uom)
+            reserve_stock(tenant=tenant, product=line.product, location=loc, qty=base_qty,
                           ref_type="CUSTOMER_ORDER", ref_id=str(o.id))
 
 
