@@ -2,8 +2,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.db.models import Sum, F
 from core.models import (
-    InventoryBalance, InventoryLotBalance, InventoryMovement, InventoryReservation,
-    InventoryCostLayer, InventoryIssueCost, Product,
+    InventoryBalance, InventoryLotBalance, InventoryBinBalance, InventoryMovement,
+    InventoryReservation, InventoryCostLayer, InventoryIssueCost, Product,
 )
 
 CENTS = Decimal("0.01")
@@ -131,6 +131,22 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
             )
         lot_bal.on_hand = new_lot_on_hand
         lot_bal.save()
+
+    # Bin-level balance (optional): track on-hand per bin within the location.
+    if bin is not None:
+        bin_bal, _ = InventoryBinBalance.objects.select_for_update().get_or_create(
+            tenant=tenant, product=product, location=location, bin=bin,
+            defaults={"on_hand": Decimal("0.00"), "reserved": Decimal("0.00")}
+        )
+        new_bin_on_hand = (bin_bal.on_hand or Decimal("0.00")) + qty_delta
+        if qty_delta < 0 and new_bin_on_hand < 0 and getattr(tenant, "block_negative_stock", False):
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                f"Insufficient stock for {product.sku} in bin {bin.code} at {location.name}: "
+                f"on hand {bin_bal.on_hand or Decimal('0.00')}, requested {-qty_delta}."
+            )
+        bin_bal.on_hand = new_bin_on_hand
+        bin_bal.save()
 
     # ----- Valuation -----
     prior_avg = product.average_cost or Decimal("0.0000")
@@ -350,6 +366,21 @@ def expire_stale_reservations(*, tenant, older_than):
         release_reservations(tenant=tenant, ref_type=ref_type, ref_id=ref_id)
         n += before
     return n
+
+
+def bin_balances(tenant, *, location=None, bin=None, product=None):
+    """Per-bin on-hand balances (positive only), for bin-level stock visibility.
+    Optionally filtered by location, bin, or product."""
+    qs = (InventoryBinBalance.objects
+          .filter(tenant=tenant, on_hand__gt=0)
+          .select_related("product", "location", "bin"))
+    if location is not None:
+        qs = qs.filter(location=location)
+    if bin is not None:
+        qs = qs.filter(bin=bin)
+    if product is not None:
+        qs = qs.filter(product=product)
+    return qs.order_by("location__name", "bin__code", "product__sku")
 
 
 def lot_layer_value(tenant, product, location, lot_code=None, serial_number=None, expiry_date=None):
