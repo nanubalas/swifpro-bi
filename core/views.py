@@ -3816,12 +3816,13 @@ def transfer_post(request, transfer_id):
 def _post_transfer(transfer: InventoryTransfer, request=None):
     if transfer.status == InventoryTransfer.Status.POSTED:
         return
+    user = request.user if request is not None else None
     # Post OUT then IN (lot-aware)
     for line in transfer.lines.select_related("product").all():
         qty = Decimal(line.qty)
         if qty <= 0:
             continue
-        apply_movement(
+        out_move = apply_movement(
             tenant=transfer.tenant,
             product=line.product,
             location=transfer.from_location,
@@ -3829,11 +3830,15 @@ def _post_transfer(transfer: InventoryTransfer, request=None):
             qty_delta=(qty * Decimal("-1")),
             ref_type="TRANSFER",
             ref_id=transfer.transfer_number,
-            notes="Transfer out", user=request.user,
+            notes="Transfer out", user=user,
             lot_code=line.lot_code,
             serial_number=line.serial_number,
             expiry_date=line.expiry_date,
         )
+        # Carry the exact cost relieved on the OUT side into the IN side so the
+        # transfer is value-neutral. Without this, TRANSFER_IN re-layers at the
+        # product's moving average and every internal transfer silently restates
+        # total inventory value (C6).
         apply_movement(
             tenant=transfer.tenant,
             product=line.product,
@@ -3842,7 +3847,8 @@ def _post_transfer(transfer: InventoryTransfer, request=None):
             qty_delta=qty,
             ref_type="TRANSFER",
             ref_id=transfer.transfer_number,
-            notes="Transfer in", user=request.user,
+            notes="Transfer in", user=user,
+            unit_cost=out_move.unit_cost,
             lot_code=line.lot_code,
             serial_number=line.serial_number,
             expiry_date=line.expiry_date,
@@ -4397,6 +4403,10 @@ def ar_invoice_cancel(request, invoice_id):
                 for l in je.lines.all():
                     JournalLine.objects.create(entry=rev, account=l.account, description="Cancellation",
                                                debit=l.credit, credit=l.debit)
+            # Restore stock + reverse COGS so the ledger matches physical stock.
+            if inv.status in CustomerInvoice.ISSUED_STATES:
+                from core.services.gl import reverse_invoice_cogs
+                reverse_invoice_cogs(inv, user=request.user)
             inv.status = CustomerInvoice.Status.CANCELLED
             inv.save(update_fields=["status"])
             log_audit(action="INVOICE_CANCELLED", request=request, user=request.user, tenant=tenant, detail=inv.invoice_number)

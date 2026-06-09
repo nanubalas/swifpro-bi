@@ -1057,6 +1057,9 @@ class InventoryCostLayer(models.Model):
     consume layers oldest-first (by received_at, id)."""
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="cost_layers")
+    # Layers are scoped to the location that received the stock so FIFO
+    # consumption only relieves stock physically held at that location.
+    location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name="cost_layers")
     received_at = models.DateTimeField(default=timezone.now)
     qty_received = models.DecimalField(max_digits=12, decimal_places=2)
     qty_remaining = models.DecimalField(max_digits=12, decimal_places=2)
@@ -1066,7 +1069,10 @@ class InventoryCostLayer(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        indexes = [models.Index(fields=["tenant", "product", "qty_remaining"])]
+        indexes = [
+            models.Index(fields=["tenant", "product", "qty_remaining"]),
+            models.Index(fields=["tenant", "product", "location", "qty_remaining"]),
+        ]
         ordering = ["received_at", "id"]
 
 

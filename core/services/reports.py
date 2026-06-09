@@ -225,10 +225,14 @@ def stock_valuation(tenant, location_ids=None):
         by_product.setdefault(p, ZERO)
         by_product[p] += (b.on_hand or ZERO)
     # FIFO products are valued from remaining layers; others at average cost.
+    # Scope layers to the same locations as the on-hand balances so a
+    # site-restricted view sums only its own locations' layers (C5/H14).
+    layer_qs = InventoryCostLayer.objects.filter(tenant=tenant, qty_remaining__gt=0)
+    if location_ids is not None:
+        layer_qs = layer_qs.filter(location_id__in=location_ids)
     fifo_value = {
         row["product"]: row["v"]
-        for row in (InventoryCostLayer.objects
-                    .filter(tenant=tenant, qty_remaining__gt=0)
+        for row in (layer_qs
                     .values("product")
                     .annotate(v=Sum(F("qty_remaining") * F("unit_cost"))))
     }
