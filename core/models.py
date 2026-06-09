@@ -1130,6 +1130,44 @@ class InventoryIssueCost(models.Model):
         indexes = [models.Index(fields=["tenant", "movement"])]
 
 
+class CycleCountValuationCorrection(models.Model):
+    """Audit record of a historical cycle-count valuation catch-up.
+
+    Records that a past cycle-count movement was revalued from product-average to
+    lot/serial-specific cost (and/or had its missing GL posted), together with the
+    correcting journal and revaluation movement. The OneToOne on the original
+    movement makes the catch-up idempotent: a movement is never corrected twice.
+    Original movements are never deleted or rewritten - only new auditable
+    revaluation entries are posted."""
+    class Source(models.TextChoices):
+        LOT_LAYER = "LOT_LAYER", "Lot/serial cost layer"
+        PRODUCT_AVERAGE = "PRODUCT_AVERAGE", "Product-average fallback"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    original_movement = models.OneToOneField("InventoryMovement", on_delete=models.PROTECT,
+                                             related_name="cc_valuation_correction")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    location = models.ForeignKey(Location, on_delete=models.PROTECT)
+    lot_code = models.CharField(max_length=50, blank=True, null=True)
+    serial_number = models.CharField(max_length=100, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
+    original_value = models.DecimalField(max_digits=14, decimal_places=2)
+    expected_value = models.DecimalField(max_digits=14, decimal_places=2)
+    variance = models.DecimalField(max_digits=14, decimal_places=2)
+    valuation_source = models.CharField(max_length=20, choices=Source.choices)
+    correction_journal = models.ForeignKey("JournalEntry", on_delete=models.SET_NULL, null=True, blank=True,
+                                           related_name="cc_valuation_corrections")
+    reval_movement = models.ForeignKey("InventoryMovement", on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name="cc_reval_for")
+    posted_to_current_period = models.BooleanField(default=False)
+    note = models.CharField(max_length=255, blank=True, null=True)
+    created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        indexes = [models.Index(fields=["tenant", "created_at"])]
+
+
 # ---------- Phase 2 (Channel Sync) ----------
 
 class SalesChannel(models.TextChoices):
