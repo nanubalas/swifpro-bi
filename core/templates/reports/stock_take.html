@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Stock-Take Variances - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Stock-Take Variances</h2>
+    <div class="text-muted">Active and posted physical counts, with high-value and stale lines.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{% url 'stock_take_list' %}">All stock takes</a>
+</div>
+
+<div class="card card-soft mb-3">
+  <div class="card-body">
+    <h5 class="fw-semibold mb-3">Active stock takes</h5>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light"><tr><th>Reference</th><th>Scope</th><th>Status</th><th>Count date</th><th></th></tr></thead>
+        <tbody>
+          {% for s in active %}
+          <tr>
+            <td class="fw-semibold">{{ s.reference|default:s.id }}</td>
+            <td>{{ s.get_scope_display }} &middot; {{ s.scope_label }}</td>
+            <td><span class="badge text-bg-light">{{ s.get_status_display }}</span></td>
+            <td>{{ s.count_date|date:"d M Y" }}</td>
+            <td class="text-end"><a href="{% url 'stock_take_detail' s.id %}">Open</a></td>
+          </tr>
+          {% empty %}<tr><td colspan="5" class="text-muted text-center py-3">No active stock takes.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card card-soft mb-3">
+  <div class="card-body">
+    <h5 class="fw-semibold mb-3">Posted stock takes</h5>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light"><tr><th>Reference</th><th>Scope</th><th>Posted</th><th></th></tr></thead>
+        <tbody>
+          {% for s in posted %}
+          <tr>
+            <td class="fw-semibold">{{ s.reference|default:s.id }}</td>
+            <td>{{ s.get_scope_display }} &middot; {{ s.scope_label }}</td>
+            <td>{{ s.posted_at|date:"d M Y H:i"|default:"-" }}</td>
+            <td class="text-end"><a href="{% url 'stock_take_detail' s.id %}">Open</a></td>
+          </tr>
+          {% empty %}<tr><td colspan="4" class="text-muted text-center py-3">No posted stock takes.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card card-soft mb-3">
+  <div class="card-body">
+    <h5 class="fw-semibold mb-3">High-value variances {% if threshold %}<span class="text-muted small">(&ge; {{ threshold|floatformat:2 }})</span>{% endif %}</h5>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light"><tr><th>Reference</th><th>SKU</th><th>Product</th><th>Location</th><th>Lot/Bin</th><th class="text-end">Var qty</th><th class="text-end">Var value</th></tr></thead>
+        <tbody>
+          {% for l in high_value %}
+          <tr>
+            <td><a href="{% url 'stock_take_detail' l.session_id %}">{{ l.session.reference|default:l.session_id }}</a></td>
+            <td class="fw-semibold">{{ l.product.sku }}</td>
+            <td>{{ l.product.name }}</td>
+            <td>{{ l.location.name }}</td>
+            <td>{{ l.lot_code|default:l.bin.code|default:"-" }}</td>
+            <td class="text-end {% if l.variance_qty < 0 %}text-danger{% elif l.variance_qty > 0 %}text-success{% endif %}">{{ l.variance_qty|floatformat:2 }}</td>
+            <td class="text-end">{{ l.variance_value|floatformat:2 }}</td>
+          </tr>
+          {% empty %}<tr><td colspan="7" class="text-muted text-center py-3">No high-value variances.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card card-soft">
+  <div class="card-body">
+    <h5 class="fw-semibold mb-3">Stale lines requiring recount</h5>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light"><tr><th>Reference</th><th>SKU</th><th>Location</th><th>Lot</th><th class="text-end">Expected</th><th class="text-end">Counted</th></tr></thead>
+        <tbody>
+          {% for l in stale_lines %}
+          <tr>
+            <td><a href="{% url 'stock_take_detail' l.session_id %}">{{ l.session.reference|default:l.session_id }}</a></td>
+            <td class="fw-semibold">{{ l.product.sku }}</td>
+            <td>{{ l.location.name }}</td>
+            <td>{{ l.lot_code|default:"-" }}</td>
+            <td class="text-end">{{ l.expected_qty_snapshot|floatformat:2 }}</td>
+            <td class="text-end">{% if l.counted_qty is not None %}{{ l.counted_qty|floatformat:2 }}{% else %}-{% endif %}</td>
+          </tr>
+          {% empty %}<tr><td colspan="6" class="text-muted text-center py-3">No stale lines.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

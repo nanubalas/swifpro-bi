@@ -7004,3 +7004,284 @@ class UkRetailDemoScenarioTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         for bal in resp.context["balances"]:
             self.assertEqual(bal.location.site_id, self.manchester.id)
+
+
+class StockTakeTests(TestCase):
+    """Full physical stock-take: snapshot, blind entry, valuation, staleness
+    guard, approval, GL posting, idempotency, closed periods, tenant isolation."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Bin
+        from core.services.inventory import apply_movement
+        self.t = Tenant.objects.create(name="StockTake Co")   # signal seeds GL
+        self.site = Site.objects.create(tenant=self.t, name="HQ")
+        self.loc = Location.objects.create(tenant=self.t, name="WH", site=self.site)
+        # Lot/serial-tracked FIFO product.
+        self.lp = Product.objects.create(tenant=self.t, sku="SKU-L", name="Lotted",
+                                         cost_method=Product.CostMethod.FIFO,
+                                         track_lots=True, track_expiry=True)
+        self.sp = Product.objects.create(tenant=self.t, sku="SKU-S", name="Serial",
+                                         cost_method=Product.CostMethod.FIFO, track_serial=True)
+        # Plain (location-level) product.
+        self.pp = Product.objects.create(tenant=self.t, sku="SKU-P", name="Plain")
+        self.bin = Bin.objects.create(tenant=self.t, location=self.loc, code="A1")
+        self.eA = datetime.date(2026, 6, 1)
+
+        apply_movement(tenant=self.t, product=self.lp, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="la", unit_cost=Decimal("2.00"),
+                       lot_code="A", expiry_date=self.eA)
+        apply_movement(tenant=self.t, product=self.sp, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("1"), ref_type="T", ref_id="s1", unit_cost=Decimal("5.00"),
+                       serial_number="S1")
+        apply_movement(tenant=self.t, product=self.pp, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("20"), ref_type="T", ref_id="pa", unit_cost=Decimal("3.00"))
+
+        self.user = User.objects.create_user("stu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="stu", password="pw")
+
+    # ---- helpers -----------------------------------------------------------
+    def _session(self, scope="LOCATION"):
+        from core.models import StockTakeSession
+        s = StockTakeSession(tenant=self.t, status=StockTakeSession.Status.DRAFT,
+                             reference="ST-T1")
+        if scope == "SITE":
+            s.scope = StockTakeSession.Scope.SITE
+            s.site = self.site
+        else:
+            s.scope = StockTakeSession.Scope.LOCATION
+            s.location = self.loc
+        s.save()
+        return s
+
+    def _count(self, line, qty):
+        from core.services.stock_take import recompute_variance
+        from core.models import StockTakeLine
+        line.counted_qty = Decimal(qty)
+        line.count_status = StockTakeLine.CountStatus.COUNTED
+        recompute_variance(line)
+        line.save()
+
+    def _line_for(self, session, product, **kw):
+        return session.lines.get(product=product, **kw)
+
+    def _approve(self, session):
+        from core.models import StockTakeSession
+        session.status = StockTakeSession.Status.APPROVED
+        session.approved_by = self.user
+        session.save()
+
+    # ---- tests -------------------------------------------------------------
+    def test_create_session_view(self):
+        from django.urls import reverse
+        from core.models import StockTakeSession
+        resp = self.client.post(reverse("stock_take_create"), {
+            "scope": "LOCATION", "location": self.loc.id,
+            "count_date": "2026-06-09", "blind": "on", "notes": "first"})
+        self.assertEqual(resp.status_code, 302)
+        s = StockTakeSession.objects.get(tenant=self.t)
+        self.assertEqual(s.location_id, self.loc.id)
+        self.assertTrue(s.reference)
+        self.assertEqual(s.started_by, self.user)
+
+    def test_snapshot_generates_lines_for_whole_location(self):
+        from core.services.stock_take import generate_snapshot
+        from core.models import StockTakeSession
+        s = self._session()
+        n = generate_snapshot(s, user=self.user)
+        self.assertEqual(n, 3)  # one lot line, one serial line, one plain line
+        s.refresh_from_db()
+        self.assertEqual(s.status, StockTakeSession.Status.SNAPSHOTTED)
+        self.assertIsNotNone(s.snapshot_at)
+        lot_line = self._line_for(s, self.lp)
+        self.assertEqual(lot_line.lot_code, "A")
+        self.assertEqual(lot_line.expected_qty_snapshot, Decimal("10.00"))
+        self.assertEqual(lot_line.expected_unit_cost, Decimal("2.0000"))  # lot layer cost
+        self.assertEqual(lot_line.expected_value_snapshot, Decimal("20.00"))
+
+    def test_snapshot_whole_site_scope(self):
+        from core.services.stock_take import generate_snapshot
+        s = self._session(scope="SITE")
+        n = generate_snapshot(s, user=self.user)
+        self.assertEqual(n, 3)
+        self.assertEqual({l.location_id for l in s.lines.all()}, {self.loc.id})
+
+    def test_blind_count_entry_hides_expected(self):
+        from django.urls import reverse
+        from core.services.stock_take import generate_snapshot
+        s = self._session()
+        s.blind = True
+        s.save()
+        generate_snapshot(s, user=self.user)
+        resp = self.client.get(reverse("stock_take_count", args=[s.id]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, "Expected")  # blind hides the expected column
+
+    def test_count_entry_view_and_zero_count(self):
+        from django.urls import reverse
+        from core.services.stock_take import generate_snapshot
+        from core.models import StockTakeLine
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        plain = self._line_for(s, self.pp)
+        # Record an explicit zero count for the plain product (full shrinkage).
+        resp = self.client.post(reverse("stock_take_count", args=[s.id]),
+                                {f"counted_{plain.id}": "0"})
+        self.assertEqual(resp.status_code, 302)
+        plain.refresh_from_db()
+        self.assertEqual(plain.counted_qty, Decimal("0.00"))
+        self.assertEqual(plain.variance_qty, Decimal("-20.00"))
+        self.assertEqual(plain.count_status, StockTakeLine.CountStatus.COUNTED)
+
+    def test_positive_and_negative_variance_post(self):
+        from core.services.stock_take import generate_snapshot, post_session
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        # Plain product: found 5 extra (positive); lot A: lost 1 (negative).
+        self._count(self._line_for(s, self.pp), "25")
+        self._count(self._line_for(s, self.lp), "9")
+        self._approve(s)
+        ok, reason = post_session(s, user=self.user)
+        self.assertTrue(ok)
+        bal_p = InventoryBalance.objects.get(tenant=self.t, product=self.pp, location=self.loc)
+        self.assertEqual(bal_p.on_hand, Decimal("25.00"))   # 20 + 5
+        bal_l = InventoryBalance.objects.get(tenant=self.t, product=self.lp, location=self.loc)
+        self.assertEqual(bal_l.on_hand, Decimal("9.00"))    # 10 - 1
+
+    def test_lot_specific_valuation(self):
+        from core.services.stock_take import generate_snapshot, post_session
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        self._count(self._line_for(s, self.lp), "9")   # -1 of lot A @ cost 2.00
+        self._approve(s)
+        post_session(s, user=self.user)
+        mv = InventoryMovement.objects.get(tenant=self.t, ref_type="STOCK_TAKE", product=self.lp)
+        self.assertEqual(mv.value, Decimal("-2.00"))   # lot cost, not product average
+
+    def test_serial_specific_valuation(self):
+        from core.services.stock_take import generate_snapshot, post_session
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        self._count(self._line_for(s, self.sp), "0")   # serial S1 missing
+        self._approve(s)
+        post_session(s, user=self.user)
+        mv = InventoryMovement.objects.get(tenant=self.t, ref_type="STOCK_TAKE", product=self.sp)
+        self.assertEqual(mv.value, Decimal("-5.00"))   # the serial's own cost
+
+    def test_bin_level_line(self):
+        from core.services.inventory import apply_movement
+        from core.services.stock_take import generate_snapshot, post_session
+        from core.models import InventoryBinBalance
+        # A bin-tracked product (no lot tracking) so a bin line is generated.
+        bp = Product.objects.create(tenant=self.t, sku="SKU-B", name="Binned")
+        apply_movement(tenant=self.t, product=bp, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("12"), ref_type="T", ref_id="bb", unit_cost=Decimal("1.00"),
+                       bin=self.bin)
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        bin_line = self._line_for(s, bp)
+        self.assertEqual(bin_line.bin_id, self.bin.id)
+        self.assertEqual(bin_line.expected_qty_snapshot, Decimal("12.00"))
+        self._count(bin_line, "10")
+        self._approve(s)
+        ok, _ = post_session(s, user=self.user)
+        self.assertTrue(ok)
+        bb = InventoryBinBalance.objects.get(tenant=self.t, product=bp, location=self.loc, bin=self.bin)
+        self.assertEqual(bb.on_hand, Decimal("10.00"))
+
+    def test_stale_line_detected_and_cannot_post_silently(self):
+        from core.services.inventory import apply_movement
+        from core.services.stock_take import generate_snapshot, post_session
+        from core.models import StockTakeSession, StockTakeLine, JournalEntry
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        self._count(self._line_for(s, self.pp), "20")  # no variance at snapshot
+        self._approve(s)
+        # Stock moves AFTER approval (book now 25, snapshot said 20).
+        apply_movement(tenant=self.t, product=self.pp, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("5"), ref_type="T", ref_id="late", unit_cost=Decimal("3.00"))
+        ok, reason = post_session(s, user=self.user)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "stale")
+        s.refresh_from_db()
+        self.assertEqual(s.status, StockTakeSession.Status.REVIEW)   # bounced back
+        self.assertIsNone(s.approved_by_id)
+        line = self._line_for(s, self.pp)
+        self.assertEqual(line.count_status, StockTakeLine.CountStatus.STALE)
+        self.assertEqual(line.expected_qty_snapshot, Decimal("25.00"))  # refreshed to live
+        # Nothing posted: no stock-take movement or journal.
+        self.assertFalse(InventoryMovement.objects.filter(tenant=self.t, ref_type="STOCK_TAKE").exists())
+        self.assertFalse(JournalEntry.objects.filter(tenant=self.t, ref_type="STOCK_TAKE").exists())
+
+    def test_approval_required_before_posting(self):
+        from core.services.stock_take import generate_snapshot, post_session
+        from core.models import StockTakeSession
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        self._count(self._line_for(s, self.lp), "9")
+        s.status = StockTakeSession.Status.REVIEW
+        s.save()
+        ok, reason = post_session(s, user=self.user)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "not_approved")
+        self.assertFalse(InventoryMovement.objects.filter(tenant=self.t, ref_type="STOCK_TAKE").exists())
+
+    def test_posting_creates_movement_and_gl(self):
+        from core.services.stock_take import generate_snapshot, post_session
+        from core.models import JournalEntry
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        self._count(self._line_for(s, self.lp), "9")   # -1 @ 2.00 = -2.00
+        self._approve(s)
+        post_session(s, user=self.user)
+        self.assertTrue(InventoryMovement.objects.filter(tenant=self.t, ref_type="STOCK_TAKE").exists())
+        je = JournalEntry.objects.get(tenant=self.t, ref_type="STOCK_TAKE", ref_id=str(s.id))
+        self.assertEqual(_account_balance(self.t, "1000"), Decimal("-2.00"))  # inventory credited
+        self.assertTrue(je.lines.exists())
+
+    def test_posting_is_idempotent(self):
+        from core.services.stock_take import generate_snapshot, post_session
+        from core.models import JournalEntry
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        self._count(self._line_for(s, self.lp), "9")
+        self._approve(s)
+        post_session(s, user=self.user)
+        mv1 = InventoryMovement.objects.filter(tenant=self.t, ref_type="STOCK_TAKE").count()
+        ok, reason = post_session(s, user=self.user)   # second call
+        self.assertTrue(ok)
+        self.assertEqual(reason, "already_posted")
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.t, ref_type="STOCK_TAKE").count(), mv1)
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.t, ref_type="STOCK_TAKE").count(), 1)
+
+    def test_closed_period_posts_to_current_period(self):
+        import datetime
+        from django.utils import timezone
+        from core.services.stock_take import generate_snapshot, post_session
+        from core.models import JournalEntry
+        s = self._session()
+        s.count_date = datetime.date(2026, 1, 1)
+        s.save()
+        generate_snapshot(s, user=self.user)
+        self._count(self._line_for(s, self.lp), "9")
+        self._approve(s)
+        post_session(s, user=self.user, lock_date=datetime.date(2026, 3, 31))
+        je = JournalEntry.objects.get(tenant=self.t, ref_type="STOCK_TAKE", ref_id=str(s.id))
+        self.assertEqual(je.entry_date, timezone.localdate())  # shifted out of closed period
+
+    def test_tenant_isolation(self):
+        from django.urls import reverse
+        from core.models import OrgMembership, StockTakeSession
+        from core.services.stock_take import generate_snapshot
+        s = self._session()
+        generate_snapshot(s, user=self.user)
+        # A second tenant + user must not see tenant A's session.
+        t2 = Tenant.objects.create(name="Other Co")
+        u2 = User.objects.create_user("other", password="pw")
+        OrgMembership.objects.create(user=u2, tenant=t2, role="ADMIN", is_default=True)
+        c2 = Client()
+        c2.login(username="other", password="pw")
+        resp = c2.get(reverse("stock_take_detail", args=[s.id]))
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(StockTakeSession.objects.filter(tenant=t2).count(), 0)

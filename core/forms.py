@@ -11,7 +11,7 @@ from core.models import (
     Product, Supplier, Location, Site, Bin, Department, OrgMembership, ChannelConnection,
     SalesOrder, SalesOrderLine, Tenant,
     UnitOfMeasure, UOMConversion, BillOfMaterials, BillOfMaterialsLine, ProductBarcode, ProductCategory,
-    StockAdjustment,
+    StockAdjustment, StockTakeSession, StockTakeLine,
     InventoryTransfer, InventoryTransferLine,
     GoodsReceipt, GoodsReceiptLine, LandedCostCharge,
     SupplierInvoice, SupplierInvoiceLine,
@@ -445,6 +445,45 @@ CycleCountLineFormSet = inlineformset_factory(
     extra=1,
     can_delete=True
 )
+
+
+# --- Full physical stock-take ---
+class StockTakeSessionForm(TenantModelForm):
+    class Meta:
+        model = StockTakeSession
+        fields = ["scope", "site", "location", "count_date", "blind", "notes"]
+        widgets = {
+            "count_date": forms.DateInput(attrs={"type": "date"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._limit_stock_locations("location")
+        self.fields["site"].required = False
+        self.fields["location"].required = False
+
+    def clean(self):
+        cleaned = super().clean()
+        scope = cleaned.get("scope")
+        if scope == StockTakeSession.Scope.SITE and not cleaned.get("site"):
+            self.add_error("site", "Choose the site to count.")
+        if scope == StockTakeSession.Scope.LOCATION and not cleaned.get("location"):
+            self.add_error("location", "Choose the location to count.")
+        return cleaned
+
+
+class StockTakeAddLineForm(TenantModelForm):
+    """Add a line for stock found that was not in the original snapshot."""
+    class Meta:
+        model = StockTakeLine
+        fields = ["product", "location", "bin", "lot_code", "serial_number", "expiry_date", "counted_qty"]
+        widgets = {
+            "expiry_date": forms.DateInput(attrs={"type": "date"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._limit_stock_locations("location")
 
 
 # --- Transfers ---

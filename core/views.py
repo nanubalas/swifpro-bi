@@ -24,7 +24,8 @@ from core.models import (
     CreditNote, CreditNoteLine, BankTransaction,
     SalesQuote, SalesQuoteLine, CustomerOrder, CustomerOrderLine,
     RecurringInvoice, RecurringInvoiceLine,
-    OrgMembership, AuditLog, AccessRequest, UserProfile, UserPermissionOverride
+    OrgMembership, AuditLog, AccessRequest, UserProfile, UserPermissionOverride,
+    StockTakeSession, StockTakeLine,
 )
 from django.core.exceptions import PermissionDenied, ValidationError
 from core import roles as roles_mod
@@ -52,7 +53,8 @@ from core.forms import (
     NewOrganisationForm, InviteUserForm, ExpenseForm,
     CreditNoteForm, CreditNoteLineFormSet, BankTransactionForm,
     SalesQuoteForm, SalesQuoteLineFormSet, CustomerOrderForm, CustomerOrderLineFormSet,
-    RecurringInvoiceForm, RecurringInvoiceLineFormSet
+    RecurringInvoiceForm, RecurringInvoiceLineFormSet,
+    StockTakeSessionForm, StockTakeAddLineForm,
 )
 from core.services.inventory import apply_movement, reserve_stock, release_reservations, consume_reservations
 from core.services.bom import explode_product
@@ -3841,6 +3843,280 @@ def cycle_count_post(request, cc_id):
     cc.status = CycleCount.Status.POSTED
     cc.save()
     return redirect("cycle_count_detail", cc_id=cc.id)
+
+
+# ---------------------------------------------------------------------------
+# Full physical stock-take
+# ---------------------------------------------------------------------------
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_FINANCE])
+def stock_take_list(request):
+    tenant = _get_default_tenant(request)
+    qs = (StockTakeSession.objects.filter(tenant=tenant)
+          .select_related("site", "location").order_by("-created_at"))
+    return render(request, "inventory/stock_take_list.html", {"tenant": tenant, "sessions": qs})
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def stock_take_create(request):
+    tenant = _get_default_tenant(request)
+    session = StockTakeSession(tenant=tenant)
+    if request.method == "POST":
+        form = StockTakeSessionForm(request.POST, instance=session)
+        if form.is_valid():
+            session = form.save(commit=False)
+            session.tenant = tenant
+            session.started_by = request.user
+            session.reference = "ST-" + timezone.now().strftime("%Y%m%d-%H%M%S")
+            # A whole-site count records the site; a location count clears it.
+            if session.scope == StockTakeSession.Scope.SITE:
+                session.location = None
+            else:
+                session.site = None
+            session.save()
+            return redirect("stock_take_detail", session_id=session.id)
+    else:
+        form = StockTakeSessionForm(instance=session)
+
+    _scope_location_fields_by_site(form, request, "location")
+    return render(request, "inventory/stock_take_form.html", {"tenant": tenant, "form": form})
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_FINANCE])
+def stock_take_detail(request, session_id):
+    tenant = _get_default_tenant(request)
+    session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
+    lines = list(session.lines.select_related("product", "location", "bin").all())
+    threshold = tenant.stock_adjustment_approval_threshold or Decimal("0.00")
+    # Flag high-value variances for reviewer attention.
+    for l in lines:
+        l.is_high_value = bool(threshold) and abs(l.variance_value or Decimal("0.00")) >= threshold
+    net_variance_value = sum((l.variance_value or Decimal("0.00")) for l in lines)
+    counted = sum(1 for l in lines if l.counted_qty is not None)
+    return render(request, "inventory/stock_take_detail.html", {
+        "tenant": tenant, "session": session, "lines": lines,
+        "net_variance_value": net_variance_value,
+        "counted_lines": counted, "total_lines": len(lines),
+        "threshold": threshold,
+    })
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def stock_take_snapshot(request, session_id):
+    from core.services.stock_take import generate_snapshot
+    tenant = _get_default_tenant(request)
+    session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("stock_take_detail", session_id=session.id)
+    if session.status not in (StockTakeSession.Status.DRAFT, StockTakeSession.Status.SNAPSHOTTED):
+        messages.warning(request, "Snapshot can only be (re)generated before counting begins.")
+        return redirect("stock_take_detail", session_id=session.id)
+    n = generate_snapshot(session, user=request.user)
+    messages.success(request, f"Snapshot generated: {n} line(s) captured. You can now count.")
+    return redirect("stock_take_count", session_id=session.id)
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def stock_take_count(request, session_id):
+    from core.services.stock_take import recompute_variance
+    tenant = _get_default_tenant(request)
+    session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
+    open_statuses = (StockTakeSession.Status.SNAPSHOTTED, StockTakeSession.Status.COUNTING,
+                     StockTakeSession.Status.REVIEW)
+    if session.status not in open_statuses:
+        messages.warning(request, "This stock-take is not open for counting.")
+        return redirect("stock_take_detail", session_id=session.id)
+
+    lines = list(session.lines.select_related("product", "location", "bin").all())
+    if request.method == "POST":
+        for line in lines:
+            raw = (request.POST.get(f"counted_{line.id}") or "").strip()
+            note = (request.POST.get(f"reason_{line.id}") or "").strip()
+            if raw == "":
+                # Left blank = not counted yet (distinct from a zero count).
+                continue
+            try:
+                line.counted_qty = Decimal(raw)
+            except (InvalidOperation, ValueError):
+                continue
+            line.reason_code = note or None
+            line.counted_by = request.user
+            line.counted_at = timezone.now()
+            if line.count_status in (StockTakeLine.CountStatus.PENDING, StockTakeLine.CountStatus.STALE):
+                line.count_status = StockTakeLine.CountStatus.COUNTED
+            recompute_variance(line)
+            line.save()
+        if session.status == StockTakeSession.Status.SNAPSHOTTED:
+            session.status = StockTakeSession.Status.COUNTING
+            session.save(update_fields=["status"])
+        messages.success(request, "Counts saved.")
+        if request.POST.get("action") == "submit":
+            return redirect("stock_take_submit", session_id=session.id)
+        return redirect("stock_take_count", session_id=session.id)
+
+    add_form = StockTakeAddLineForm()
+    _scope_location_fields_by_site(add_form, request, "location")
+    return render(request, "inventory/stock_take_count.html", {
+        "tenant": tenant, "session": session, "lines": lines, "add_form": add_form,
+    })
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def stock_take_add_line(request, session_id):
+    """Record stock found that was not in the original snapshot (expected 0)."""
+    from core.services.stock_take import recompute_variance, _expected_unit_cost
+    tenant = _get_default_tenant(request)
+    session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
+    if request.method != "POST" or session.status not in (
+            StockTakeSession.Status.SNAPSHOTTED, StockTakeSession.Status.COUNTING):
+        return redirect("stock_take_count", session_id=session.id)
+
+    form = StockTakeAddLineForm(request.POST)
+    if form.is_valid():
+        line = form.save(commit=False)
+        line.session = session
+        line.is_unexpected = True
+        line.expected_qty_snapshot = Decimal("0.00")
+        line.uom = line.product.base_uom
+        line.expected_unit_cost = _expected_unit_cost(
+            tenant, line.product, line.location,
+            lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date)
+        line.expected_value_snapshot = Decimal("0.00")
+        line.count_status = StockTakeLine.CountStatus.COUNTED
+        line.counted_by = request.user
+        line.counted_at = timezone.now()
+        recompute_variance(line)
+        try:
+            line.save()
+            messages.success(request, "Unexpected stock line added.")
+        except IntegrityError:
+            messages.warning(request, "That product/lot/bin is already a line in this stock-take.")
+    else:
+        messages.error(request, "Could not add line: " + "; ".join(
+            f"{k}: {', '.join(v)}" for k, v in form.errors.items()))
+    return redirect("stock_take_count", session_id=session.id)
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def stock_take_submit(request, session_id):
+    from core.services.stock_take import recompute_variance
+    tenant = _get_default_tenant(request)
+    session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("stock_take_detail", session_id=session.id)
+    if session.status not in (StockTakeSession.Status.SNAPSHOTTED, StockTakeSession.Status.COUNTING):
+        return redirect("stock_take_detail", session_id=session.id)
+
+    pending = 0
+    for line in session.lines.all():
+        recompute_variance(line)
+        line.save(update_fields=["variance_qty", "variance_value"])
+        if line.counted_qty is None:
+            pending += 1
+    session.status = StockTakeSession.Status.REVIEW
+    session.save(update_fields=["status"])
+    if pending:
+        messages.warning(request, f"Submitted for review. {pending} line(s) were not counted and "
+                                  "will post no variance — recount them if that is unexpected.")
+    else:
+        messages.success(request, "Submitted for review.")
+    return redirect("stock_take_detail", session_id=session.id)
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_FINANCE], write_groups=[ROLE_ADMIN, ROLE_FINANCE])
+@transaction.atomic
+def stock_take_approve(request, session_id):
+    from core.services.stock_take import refresh_staleness
+    tenant = _get_default_tenant(request)
+    session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
+    if request.method != "POST" or session.status != StockTakeSession.Status.REVIEW:
+        return redirect("stock_take_detail", session_id=session.id)
+    # Don't approve over the top of drifted stock — refresh and keep in review.
+    if refresh_staleness(session):
+        messages.warning(request, "Stock moved since the snapshot — the affected lines were "
+                                  "refreshed and flagged stale. Review/recount before approving.")
+        return redirect("stock_take_detail", session_id=session.id)
+    session.lines.filter(count_status=StockTakeLine.CountStatus.COUNTED).update(
+        count_status=StockTakeLine.CountStatus.APPROVED)
+    session.status = StockTakeSession.Status.APPROVED
+    session.approved_by = request.user
+    session.save(update_fields=["status", "approved_by"])
+    messages.success(request, "Stock-take approved. You can now post the variances.")
+    return redirect("stock_take_detail", session_id=session.id)
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_FINANCE], write_groups=[ROLE_ADMIN, ROLE_FINANCE])
+@transaction.atomic
+def stock_take_post(request, session_id):
+    from core.services.stock_take import post_session
+    tenant = _get_default_tenant(request)
+    session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
+    if request.method != "POST":
+        return render(request, "inventory/stock_take_post.html", {"tenant": tenant, "session": session})
+    if session.status != StockTakeSession.Status.APPROVED:
+        return redirect("stock_take_detail", session_id=session.id)
+
+    ok, reason = post_session(session, user=request.user)
+    if ok:
+        messages.success(request, "Stock-take posted: variances written to stock and the GL.")
+    elif reason == "stale":
+        messages.warning(request, "Stock changed since approval — the variances were refreshed and "
+                                  "the count returned to review. Re-approve before posting.")
+    else:
+        messages.error(request, "This stock-take is not approved for posting.")
+    return redirect("stock_take_detail", session_id=session.id)
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def stock_take_cancel(request, session_id):
+    tenant = _get_default_tenant(request)
+    session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
+    if request.method == "POST" and session.status != StockTakeSession.Status.POSTED:
+        session.status = StockTakeSession.Status.CANCELLED
+        session.save(update_fields=["status"])
+        messages.success(request, "Stock-take cancelled.")
+    return redirect("stock_take_detail", session_id=session.id)
+
+
+@role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_FINANCE])
+def report_stock_take(request):
+    """Stock-take reporting: active/posted sessions, variance summary, high-value
+    variances and stale lines requiring recount."""
+    tenant = _get_default_tenant(request)
+    sessions = StockTakeSession.objects.filter(tenant=tenant).select_related("site", "location")
+    active_statuses = [StockTakeSession.Status.DRAFT, StockTakeSession.Status.SNAPSHOTTED,
+                       StockTakeSession.Status.COUNTING, StockTakeSession.Status.REVIEW,
+                       StockTakeSession.Status.APPROVED]
+    active = sessions.filter(status__in=active_statuses).order_by("-created_at")
+    posted = sessions.filter(status=StockTakeSession.Status.POSTED).order_by("-posted_at")
+
+    threshold = tenant.stock_adjustment_approval_threshold or Decimal("0.00")
+    posted_lines = (StockTakeLine.objects
+                    .filter(session__tenant=tenant, session__status=StockTakeSession.Status.POSTED)
+                    .exclude(variance_qty=Decimal("0.00"))
+                    .select_related("product", "location", "bin", "session")
+                    .order_by("-session__posted_at", "product__sku"))
+    high_value = sorted(
+        posted_lines, key=lambda l: abs(l.variance_value or Decimal("0.00")), reverse=True)
+    if threshold:
+        high_value = [l for l in high_value if abs(l.variance_value or Decimal("0.00")) >= threshold]
+    high_value = high_value[:50]
+
+    stale_lines = (StockTakeLine.objects
+                   .filter(session__tenant=tenant, count_status=StockTakeLine.CountStatus.STALE)
+                   .select_related("product", "location", "session")
+                   .order_by("-session__created_at"))
+
+    return render(request, "reports/stock_take.html", {
+        "tenant": tenant, "active": active, "posted": posted[:50],
+        "high_value": high_value, "stale_lines": stale_lines, "threshold": threshold,
+    })
 
 
 @login_required

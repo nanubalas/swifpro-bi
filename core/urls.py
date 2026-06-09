@@ -212,6 +212,19 @@ urlpatterns = [
     path("cycle-counts/<int:cc_id>/approve/", views.cycle_count_approve, name="cycle_count_approve"),
     path("cycle-counts/<int:cc_id>/post/", views.cycle_count_post, name="cycle_count_post"),
 
+    # Full physical stock-take
+    path("stock-takes/", views.stock_take_list, name="stock_take_list"),
+    path("stock-takes/new/", views.stock_take_create, name="stock_take_create"),
+    path("stock-takes/<int:session_id>/", views.stock_take_detail, name="stock_take_detail"),
+    path("stock-takes/<int:session_id>/snapshot/", views.stock_take_snapshot, name="stock_take_snapshot"),
+    path("stock-takes/<int:session_id>/count/", views.stock_take_count, name="stock_take_count"),
+    path("stock-takes/<int:session_id>/add-line/", views.stock_take_add_line, name="stock_take_add_line"),
+    path("stock-takes/<int:session_id>/submit/", views.stock_take_submit, name="stock_take_submit"),
+    path("stock-takes/<int:session_id>/approve/", views.stock_take_approve, name="stock_take_approve"),
+    path("stock-takes/<int:session_id>/post/", views.stock_take_post, name="stock_take_post"),
+    path("stock-takes/<int:session_id>/cancel/", views.stock_take_cancel, name="stock_take_cancel"),
+    path("reports/stock-take/", views.report_stock_take, name="report_stock_take"),
+
     # VAT / Tax
 path("tax-codes/", views.taxcode_list, name="taxcode_list"),
 path("tax-codes/new/", views.taxcode_create, name="taxcode_create"),

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Stock Takes - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Stock Takes</h2>
+    <div class="text-muted">Full physical counts of a location or whole site.</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'stock_take_create' %}"><i class="bi bi-plus-lg"></i> New stock take</a>
+</div>
+
+<div class="card card-soft">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Reference</th>
+            <th>Scope</th>
+            <th>Count date</th>
+            <th>Status</th>
+            <th class="text-end">Lines</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in sessions %}
+          <tr>
+            <td class="fw-semibold">{{ s.reference|default:s.id }}</td>
+            <td>{{ s.get_scope_display }} &middot; {{ s.scope_label }}</td>
+            <td>{{ s.count_date|date:"d M Y" }}</td>
+            <td><span class="badge text-bg-light">{{ s.get_status_display }}</span></td>
+            <td class="text-end">{{ s.lines.count }}</td>
+            <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="{% url 'stock_take_detail' s.id %}">Open</a></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-5">No stock takes yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

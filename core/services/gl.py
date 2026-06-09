@@ -593,6 +593,41 @@ def post_cycle_count_adjustment(tenant, cc, value, user=None, entry_date=None):
 
 
 @transaction.atomic
+def post_stock_take_adjustment(tenant, session, value, *, user=None, entry_date=None):
+    """Book the net GL impact of a stock-take's variances: DR/CR Inventory vs
+    Inventory Adjustments, valued identically to the inventory movements the
+    posting created (lot cost for lot/serial items, product cost otherwise).
+    Idempotent on the STOCK_TAKE ref so re-posting never double-books."""
+    value = Decimal(value)
+    if value == Decimal("0.00"):
+        return None
+    ref_id = str(session.id)
+    existing = JournalEntry.objects.filter(tenant=tenant, ref_type="STOCK_TAKE", ref_id=ref_id).order_by("-id").first()
+    if existing:
+        return existing
+
+    je = JournalEntry.objects.create(
+        tenant=tenant, site_id=getattr(session.location, "site_id", None) or getattr(session.site, "id", None),
+        entry_date=entry_date or timezone.now().date(),
+        ref_type="STOCK_TAKE", ref_id=ref_id,
+        memo=f"Stock-take {session.reference or session.id} variance ({session.scope_label})",
+        posted_by=user, posted_at=timezone.now(),
+    )
+    inv_acc = _acc(tenant, "inventory")
+    adj_acc = _acc(tenant, "inventory_adjustment")
+    amount = abs(value)
+    if value < Decimal("0.00"):
+        # Net shortage: inventory decreases, recognise the loss.
+        JournalLine.objects.create(entry=je, account=adj_acc, description="Stock-take shrinkage", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=Decimal("0.00"), credit=amount)
+    else:
+        # Net overage: inventory increases, reduce the expense.
+        JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=adj_acc, description="Stock-take gain", debit=Decimal("0.00"), credit=amount)
+    return je
+
+
+@transaction.atomic
 def reverse_payment(payment, user=None):
     """Post a reversing journal entry for a payment (used when a payment is
     deleted). Mirrors the original PAYMENT entry with debit/credit swapped, so

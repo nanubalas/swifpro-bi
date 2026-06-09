@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Count - Stock Take {{ session.reference|default:session.id }}{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Count &mdash; {{ session.reference|default:session.id }}</h2>
+    <div class="text-muted">
+      {{ session.get_scope_display }}: <b>{{ session.scope_label }}</b>
+      {% if session.blind %}<span class="mx-2">&bull;</span><span class="badge text-bg-secondary">Blind count</span>{% endif %}
+    </div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{% url 'stock_take_detail' session.id %}">Back</a>
+</div>
+
+<form method="post" action="{% url 'stock_take_count' session.id %}">
+  {% csrf_token %}
+  <div class="card card-soft mb-3">
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>SKU</th><th>Product</th><th>Location</th><th>Bin</th><th>Lot</th><th>Serial</th>
+              {% if not session.blind %}<th class="text-end">Expected</th>{% endif %}
+              <th style="width:140px">Counted</th><th style="width:200px">Reason / note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for l in lines %}
+            <tr>
+              <td class="fw-semibold">{{ l.product.sku }}</td>
+              <td>{{ l.product.name }}{% if l.is_unexpected %} <span class="badge text-bg-info">found</span>{% endif %}</td>
+              <td>{{ l.location.name }}</td>
+              <td>{{ l.bin.code|default:"-" }}</td>
+              <td>{{ l.lot_code|default:"-" }}</td>
+              <td>{{ l.serial_number|default:"-" }}</td>
+              {% if not session.blind %}<td class="text-end">{{ l.expected_qty_snapshot|floatformat:2 }}</td>{% endif %}
+              <td><input type="number" step="0.01" class="form-control" name="counted_{{ l.id }}"
+                         value="{% if l.counted_qty is not None %}{{ l.counted_qty }}{% endif %}"></td>
+              <td><input type="text" class="form-control" name="reason_{{ l.id }}" value="{{ l.reason_code|default:'' }}"></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="9" class="text-center text-muted py-5">No lines.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="form-text mt-2">Leave a cell blank if not yet counted. Enter <b>0</b> to record a zero count (full shrinkage).</div>
+      <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-primary" type="submit" name="action" value="save">Save counts</button>
+        <button class="btn btn-success" type="submit" name="action" value="submit">Save &amp; submit for review</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="card card-soft">
+  <div class="card-body">
+    <h5 class="fw-semibold mb-3">Add unexpected stock (not in snapshot)</h5>
+    <form method="post" action="{% url 'stock_take_add_line' session.id %}">
+      {% csrf_token %}
+      <div class="row g-2 align-items-end">
+        <div class="col-md-3"><label class="form-label">Product</label>{{ add_form.product }}</div>
+        <div class="col-md-2"><label class="form-label">Location</label>{{ add_form.location }}</div>
+        <div class="col-md-1"><label class="form-label">Bin</label>{{ add_form.bin }}</div>
+        <div class="col-md-2"><label class="form-label">Lot</label>{{ add_form.lot_code }}</div>
+        <div class="col-md-1"><label class="form-label">Serial</label>{{ add_form.serial_number }}</div>
+        <div class="col-md-1"><label class="form-label">Counted</label>{{ add_form.counted_qty }}</div>
+        <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Add line</button></div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll("#lines, form select, form input, form textarea").forEach(el => {
+    if (el.type === "checkbox") el.classList.add("form-check-input");
+    else if (!el.classList.contains("btn")) el.classList.add("form-control");
+  });
+</script>
+{% endblock %}

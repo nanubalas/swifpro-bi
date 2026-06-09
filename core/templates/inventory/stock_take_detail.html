@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Stock Take {{ session.reference|default:session.id }} - SwifPro BI{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h2 class="fw-bold mb-1">Stock Take {{ session.reference|default:session.id }}</h2>
+    <div class="text-muted">
+      {{ session.get_scope_display }}: <b>{{ session.scope_label }}</b>
+      <span class="mx-2">&bull;</span> Count date: {{ session.count_date|date:"d M Y" }}
+      <span class="mx-2">&bull;</span> Status: <span class="badge text-bg-light">{{ session.get_status_display }}</span>
+      {% if session.blind %}<span class="mx-2">&bull;</span> <span class="badge text-bg-secondary">Blind</span>{% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if session.status == "DRAFT" %}
+      <form method="post" action="{% url 'stock_take_snapshot' session.id %}">{% csrf_token %}
+        <button class="btn btn-primary" type="submit">Generate snapshot</button>
+      </form>
+    {% endif %}
+    {% if session.status == "SNAPSHOTTED" or session.status == "COUNTING" %}
+      <a class="btn btn-primary" href="{% url 'stock_take_count' session.id %}">Count</a>
+      <form method="post" action="{% url 'stock_take_submit' session.id %}">{% csrf_token %}
+        <button class="btn btn-outline-success" type="submit">Submit for review</button>
+      </form>
+    {% endif %}
+    {% if session.status == "REVIEW" %}
+      <a class="btn btn-outline-secondary" href="{% url 'stock_take_count' session.id %}">Recount</a>
+      <form method="post" action="{% url 'stock_take_approve' session.id %}">{% csrf_token %}
+        <button class="btn btn-success" type="submit" {% if session.has_stale_lines %}disabled title="Refresh stale lines first"{% endif %}>Approve</button>
+      </form>
+    {% endif %}
+    {% if session.status == "APPROVED" %}
+      <form method="post" action="{% url 'stock_take_post' session.id %}">{% csrf_token %}
+        <button class="btn btn-success" type="submit">Post variances</button>
+      </form>
+    {% endif %}
+    {% if session.status != "POSTED" and session.status != "CANCELLED" %}
+      <form method="post" action="{% url 'stock_take_cancel' session.id %}" onsubmit="return confirm('Cancel this stock take?');">{% csrf_token %}
+        <button class="btn btn-outline-danger" type="submit">Cancel</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="card card-soft"><div class="card-body">
+    <div class="text-muted small">Lines counted</div>
+    <div class="h4 mb-0">{{ counted_lines }} / {{ total_lines }}</div>
+  </div></div></div>
+  <div class="col-md-3"><div class="card card-soft"><div class="card-body">
+    <div class="text-muted small">Net variance value</div>
+    <div class="h4 mb-0 {% if net_variance_value < 0 %}text-danger{% elif net_variance_value > 0 %}text-success{% endif %}">{{ net_variance_value|floatformat:2 }}</div>
+  </div></div></div>
+  {% if session.has_stale_lines %}
+  <div class="col-md-6"><div class="alert alert-warning mb-0 h-100 d-flex align-items-center">
+    Stock moved since the snapshot. Stale lines must be recounted/refreshed before posting.
+  </div></div>
+  {% endif %}
+</div>
+
+<div class="card card-soft">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>SKU</th><th>Product</th><th>Location</th><th>Bin</th><th>Lot</th><th>Serial</th>
+            <th class="text-end">Expected</th><th class="text-end">Counted</th>
+            <th class="text-end">Var qty</th><th class="text-end">Var value</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in lines %}
+          <tr {% if l.is_high_value %}class="table-warning"{% endif %}>
+            <td class="fw-semibold">{{ l.product.sku }}</td>
+            <td>{{ l.product.name }}{% if l.is_unexpected %} <span class="badge text-bg-info">found</span>{% endif %}</td>
+            <td>{{ l.location.name }}</td>
+            <td>{{ l.bin.code|default:"-" }}</td>
+            <td>{{ l.lot_code|default:"-" }}</td>
+            <td>{{ l.serial_number|default:"-" }}</td>
+            <td class="text-end">{{ l.expected_qty_snapshot|floatformat:2 }}</td>
+            <td class="text-end">{% if l.counted_qty is not None %}{{ l.counted_qty|floatformat:2 }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td class="text-end {% if l.variance_qty < 0 %}text-danger{% elif l.variance_qty > 0 %}text-success{% endif %}">{{ l.variance_qty|floatformat:2 }}</td>
+            <td class="text-end">{{ l.variance_value|floatformat:2 }}</td>
+            <td><span class="badge text-bg-light">{{ l.get_count_status_display }}</span></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="11" class="text-center text-muted py-5">No lines. Generate the snapshot to begin.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if threshold %}<div class="text-muted small mt-2">Highlighted rows exceed the high-value variance threshold ({{ threshold|floatformat:2 }}).</div>{% endif %}
+  </div>
+</div>
+{% endblock %}
