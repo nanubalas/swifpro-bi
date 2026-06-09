@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load money %}
 {% block title %}Requisition {{ req.req_number }}{% endblock %}
+{% block back_url %}{% url 'requisition_list' %}{% endblock %}
 
 {% block body %}
 <div class="d-flex gap-2 flex-wrap mb-3">

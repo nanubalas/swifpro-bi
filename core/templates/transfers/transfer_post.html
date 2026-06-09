@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Post Transfer - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'transfer_detail' transfer.id %}{% endblock %}
 {% block body %}
 <div class="card card-soft">
   <div class="card-body p-4">

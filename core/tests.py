@@ -7424,3 +7424,56 @@ class BackNavigationTests(TestCase):
         # Root/landing pages declare no logical parent (JS also hides the button).
         resp = self.client.get("/", follow=True)
         self.assertContains(resp, 'data-back-url=""')
+
+
+class BackNavCoverageTests(TestCase):
+    """Representative back_url coverage across Sales, Procurement, Finance,
+    Inventory and Administration (list/form/report pages)."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="Cover Co")
+        self.user = User.objects.create_user("coveru", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="coveru", password="pw")
+
+    # (url, expected data-back-url) — one or more per ERP area.
+    CASES = [
+        # Sales
+        ("/customers/", "/dashboard/"), ("/customers/new/", "/customers/"),
+        ("/quotes/", "/dashboard/"), ("/customer-orders/", "/dashboard/"),
+        ("/ar/invoices/", "/dashboard/"), ("/ar/invoices/new/", "/ar/invoices/"),
+        ("/returns/", "/dashboard/"), ("/recurring-invoices/", "/dashboard/"),
+        ("/sales-orders/", "/dashboard/"),
+        # Procurement
+        ("/suppliers/", "/dashboard/"), ("/suppliers/new/", "/suppliers/"),
+        ("/requisitions/", "/dashboard/"), ("/shipments/", "/dashboard/"),
+        ("/invoices/", "/dashboard/"), ("/po/backorders/", "/po/"),
+        # Finance
+        ("/payments/", "/dashboard/"), ("/expenses/", "/dashboard/"),
+        ("/expenses/new/", "/expenses/"), ("/credit-notes/", "/dashboard/"),
+        ("/bank/transactions/", "/dashboard/"), ("/tax-codes/", "/dashboard/"),
+        ("/gl/journal/", "/dashboard/"), ("/gl/accounts/", "/dashboard/"),
+        # Inventory / master data
+        ("/po/", "/dashboard/"), ("/inventory/", "/dashboard/"), ("/cycle-counts/", "/dashboard/"),
+        ("/inventory/adjustments/", "/dashboard/"), ("/inventory/movements/", "/dashboard/"),
+        ("/inventory/low-stock/", "/inventory/"), ("/transfers/", "/dashboard/"),
+        ("/sites/", "/dashboard/"), ("/locations/", "/dashboard/"), ("/bins/", "/dashboard/"),
+        ("/products/", "/dashboard/"), ("/products/new/", "/products/"),
+        ("/product-categories/", "/dashboard/"), ("/boms/", "/dashboard/"),
+        ("/uoms/", "/dashboard/"), ("/uom-conversions/", "/dashboard/"),
+        # Reports
+        ("/reports/profit-and-loss/", "/reports/"), ("/reports/balance-sheet/", "/reports/"),
+        ("/reports/trial-balance/", "/reports/"), ("/reports/stock-valuation/", "/reports/"),
+        # Administration
+        ("/departments/", "/dashboard/"), ("/departments/new/", "/departments/"),
+        ("/audit/", "/dashboard/"), ("/email-log/", "/dashboard/"),
+        ("/settings/tenant/", "/dashboard/"), ("/users/", "/dashboard/"),
+    ]
+
+    def test_back_url_coverage(self):
+        for url, expected in self.CASES:
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 200, f"{url} did not return 200")
+            self.assertContains(resp, f'data-back-url="{expected}"',
+                                msg_prefix=f"{url} missing back_url {expected}")

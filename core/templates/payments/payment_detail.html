@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load money %}
 {% block title %}Payment - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'payment_list' %}{% endblock %}
 
 {% block body %}
 <div class="d-flex align-items-center gap-2 mb-3">

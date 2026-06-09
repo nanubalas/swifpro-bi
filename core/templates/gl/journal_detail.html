@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load money %}
 {% block title %}Journal Entry {{ je.id }} - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'journal_list' %}{% endblock %}
 {% block body %}
 <div class="d-flex justify-content-between align-items-start mb-4">
   <div>
