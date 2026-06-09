@@ -2684,6 +2684,31 @@ class LotTraceTests(TestCase):
         self.assertIsNone(reports.lot_trace(other, self.p.id, "L1"))
 
 
+class UomNavAndSeedTests(TestCase):
+    """UOM master-data pages are reachable from the nav, and the seed is idempotent."""
+
+    def test_admin_sidebar_has_uom_links(self):
+        from core.roles import sidebar_for_role, ADMIN, SALES
+        admin_urls = [u for (_, items) in sidebar_for_role(ADMIN) for (_, u, _) in items]
+        self.assertIn("/uoms/", admin_urls)
+        self.assertIn("/uom-conversions/", admin_urls)
+        # Admin-only (matches the view permissions): a non-admin doesn't see them.
+        sales_urls = [u for (_, items) in sidebar_for_role(SALES) for (_, u, _) in items]
+        self.assertNotIn("/uoms/", sales_urls)
+
+    def test_seed_uom_demo_is_idempotent(self):
+        from django.core.management import call_command
+        from core.models import UnitOfMeasure, UOMConversion
+        t = Tenant.objects.create(name="Seed Co")
+        call_command("seed_uom_demo", "--tenant", "Seed Co")
+        call_command("seed_uom_demo", "--tenant", "Seed Co")  # second run = no dupes
+        self.assertEqual(UnitOfMeasure.objects.filter(tenant=t, code="CASE").count(), 1)
+        self.assertEqual(UnitOfMeasure.objects.filter(tenant=t, code="EA").count(), 1)
+        conv = UOMConversion.objects.get(tenant=t, from_uom__code="CASE")
+        self.assertEqual(conv.to_uom.code, "EA")
+        self.assertEqual(conv.multiplier, Decimal("12"))
+
+
 class UiPassRenderTests(TestCase):
     """Smoke-test the UI-pass templates render (UOM dropdowns, transfer states,
     bin section, reports help)."""

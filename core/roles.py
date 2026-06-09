@@ -128,6 +128,8 @@ NAV = [
         ("Products", "/products/", "box-seam", {ADMIN, MANAGER, WAREHOUSE, PURCHASING, SALES}),
         ("Product Categories", "/product-categories/", "tags", {ADMIN, MANAGER, PURCHASING}),
         ("BOMs / Kits", "/boms/", "diagram-3", {ADMIN, MANAGER, PURCHASING}),
+        ("Units of Measure", "/uoms/", "rulers", {ADMIN}),
+        ("UOM Conversions", "/uom-conversions/", "shuffle", {ADMIN}),
     ]),
     ("Finance", [
         ("Payments", "/payments/", "cash-stack", {ADMIN, ACCOUNTANT, FINANCE}),
