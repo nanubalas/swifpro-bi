@@ -64,7 +64,16 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
         tenant=tenant, product=product, location=location,
         defaults={"on_hand": Decimal("0.00"), "reserved": Decimal("0.00"), "site_id": location.site_id}
     )
-    bal.on_hand = (bal.on_hand or Decimal("0.00")) + qty_delta
+    new_on_hand = (bal.on_hand or Decimal("0.00")) + qty_delta
+    # Optionally refuse to drive stock negative (H7). Opt-in per tenant; the
+    # raise rolls back the surrounding transaction so no movement is recorded.
+    if qty_delta < 0 and new_on_hand < 0 and getattr(tenant, "block_negative_stock", False):
+        from django.core.exceptions import ValidationError
+        raise ValidationError(
+            f"Insufficient stock for {product.sku} at {location.name}: "
+            f"on hand {bal.on_hand or Decimal('0.00')}, requested {-qty_delta}."
+        )
+    bal.on_hand = new_on_hand
     if bal.site_id is None:
         bal.site_id = location.site_id  # keep stock site in sync with its location
     bal.save()
