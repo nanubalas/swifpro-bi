@@ -1189,6 +1189,127 @@ class CycleCountValuationCorrection(models.Model):
         indexes = [models.Index(fields=["tenant", "created_at"])]
 
 
+class StockTakeSession(models.Model):
+    """A full physical stock-take (count) of a whole location or whole site.
+
+    Unlike a cycle count (which counts a hand-picked set of lines), a stock-take
+    snapshots EVERY on-hand line in scope at a point in time, supports blind
+    entry, then posts the variance per line. It reuses the inventory movement
+    ledger, the cycle-count staleness guard and lot-aware valuation, and books
+    the net GL impact through the same Inventory vs Inventory-Adjustment path.
+
+    Flow: DRAFT -> (generate snapshot) -> SNAPSHOTTED -> (enter counts) ->
+    COUNTING -> (submit) -> REVIEW -> (approve) -> APPROVED -> (post) -> POSTED.
+    A session may be CANCELLED any time before it is POSTED.
+    """
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SNAPSHOTTED = "SNAPSHOTTED", "Snapshotted"
+        COUNTING = "COUNTING", "Counting"
+        REVIEW = "REVIEW", "Review"
+        APPROVED = "APPROVED", "Approved"
+        POSTED = "POSTED", "Posted"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Scope(models.TextChoices):
+        LOCATION = "LOCATION", "Single location"
+        SITE = "SITE", "Whole site"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="stock_takes")
+    reference = models.CharField(max_length=40, blank=True, null=True)
+    scope = models.CharField(max_length=10, choices=Scope.choices, default=Scope.LOCATION)
+    # Exactly one of these is set, depending on scope.
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True, blank=True, related_name="stock_takes")
+    location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name="stock_takes")
+
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    # Blind count: counters do not see the expected (book) quantity while counting.
+    blind = models.BooleanField(default=True)
+    count_date = models.DateField(default=timezone.now)
+    snapshot_at = models.DateTimeField(null=True, blank=True)
+    notes = models.CharField(max_length=255, blank=True, null=True)
+
+    started_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="started_stock_takes")
+    approved_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="approved_stock_takes")
+    posted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="posted_stock_takes")
+    created_at = models.DateTimeField(default=timezone.now)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["tenant", "status"])]
+
+    def __str__(self):
+        return f"StockTake {self.reference or self.id} ({self.get_scope_display()})"
+
+    @property
+    def scope_label(self):
+        if self.scope == self.Scope.SITE and self.site_id:
+            return self.site.name
+        if self.location_id:
+            return self.location.name
+        return "-"
+
+    @property
+    def has_stale_lines(self):
+        return self.lines.filter(count_status=StockTakeLine.CountStatus.STALE).exists()
+
+
+class StockTakeLine(models.Model):
+    """One countable line in a stock-take: a product at a location, optionally
+    narrowed to a specific bin and/or lot/serial. `expected_qty_snapshot` is the
+    book quantity captured when the snapshot was taken; `counted_qty` is the
+    physical count (null until counted, 0 is a valid zero count)."""
+    class CountStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        COUNTED = "COUNTED", "Counted"
+        STALE = "STALE", "Stale (recount)"
+        APPROVED = "APPROVED", "Approved"
+        POSTED = "POSTED", "Posted"
+
+    session = models.ForeignKey(StockTakeSession, related_name="lines", on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    location = models.ForeignKey(Location, on_delete=models.PROTECT)
+    bin = models.ForeignKey("Bin", on_delete=models.SET_NULL, null=True, blank=True, related_name="stock_take_lines")
+
+    lot_code = models.CharField(max_length=50, blank=True, null=True)
+    serial_number = models.CharField(max_length=100, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
+    uom = models.ForeignKey(UnitOfMeasure, on_delete=models.SET_NULL, null=True, blank=True,
+                            related_name="stock_take_lines")
+
+    expected_qty_snapshot = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    counted_qty = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    variance_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    expected_unit_cost = models.DecimalField(max_digits=12, decimal_places=4, default=Decimal("0.0000"))
+    expected_value_snapshot = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    variance_value = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    # Staleness signal: the latest movement timestamp for this product/location
+    # at snapshot time; re-checked before posting (qty drift is the hard guard).
+    last_movement_at = models.DateTimeField(null=True, blank=True)
+    count_status = models.CharField(max_length=10, choices=CountStatus.choices, default=CountStatus.PENDING)
+    # Stock found that was not in the original snapshot (expected 0).
+    is_unexpected = models.BooleanField(default=False)
+    reason_code = models.CharField(max_length=60, blank=True, null=True)
+    notes = models.CharField(max_length=255, blank=True, null=True)
+    counted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="counted_stock_take_lines")
+    counted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("session", "product", "location", "bin", "lot_code", "serial_number", "expiry_date")
+        ordering = ["location__name", "product__sku"]
+
+    @property
+    def is_counted(self):
+        return self.counted_qty is not None
+
+
 # ---------- Phase 2 (Channel Sync) ----------
 
 class SalesChannel(models.TextChoices):

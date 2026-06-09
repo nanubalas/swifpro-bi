@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Post Stock Take {{ session.reference|default:session.id }}{% endblock %}
+{% block body %}
+<div class="mb-4">
+  <h2 class="fw-bold mb-1">Post Stock Take {{ session.reference|default:session.id }}</h2>
+  <div class="text-muted">Posting writes the variance per line to stock and books the net GL impact.</div>
+</div>
+<div class="card card-soft">
+  <div class="card-body">
+    <p>This will adjust on-hand to the counted quantities for <b>{{ session.scope_label }}</b> and post the
+       net Inventory vs Inventory-Adjustment entry. Stock that moved since approval is re-checked first.</p>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'stock_take_detail' session.id %}">Back</a>
+      <form method="post" action="{% url 'stock_take_post' session.id %}">{% csrf_token %}
+        <button class="btn btn-success" type="submit">Confirm &amp; post</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

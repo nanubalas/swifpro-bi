@@ -15,6 +15,25 @@ def _total_on_hand(tenant, product):
     return agg["s"] or Decimal("0.00")
 
 
+def current_on_hand(tenant, product, location, *, lot_code=None, serial_number=None,
+                    expiry_date=None, bin=None):
+    """Live book on-hand for a product at a location, at the requested
+    granularity (lot/serial > bin > location total). Shared by the cycle-count
+    and stock-take staleness guards so a frozen snapshot can be compared to the
+    current book before a variance is posted."""
+    if lot_code or serial_number or expiry_date:
+        lb = InventoryLotBalance.objects.filter(
+            tenant=tenant, product=product, location=location,
+            lot_code=lot_code, serial_number=serial_number, expiry_date=expiry_date).first()
+        return lb.on_hand if lb else Decimal("0.00")
+    if bin is not None:
+        bb = InventoryBinBalance.objects.filter(
+            tenant=tenant, product=product, location=location, bin=bin).first()
+        return bb.on_hand if bb else Decimal("0.00")
+    bal = InventoryBalance.objects.filter(tenant=tenant, product=product, location=location).first()
+    return bal.on_hand if bal else Decimal("0.00")
+
+
 def _consume_fifo_layers(tenant, product, qty, fallback_cost, location,
                          lot_code=None, serial_number=None, expiry_date=None):
     """Consume `qty` from the oldest FIFO layers *at this location*; return
