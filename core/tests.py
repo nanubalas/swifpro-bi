@@ -2562,6 +2562,94 @@ class UomSalesTests(TestCase):
         self.assertEqual(cogs.total_debit, Decimal("72.00"))  # 24 EACH @ 3.00
 
 
+class InTransitTransferTests(TestCase):
+    """Two-step dispatch -> receive transfers: value-neutral, partial receipt,
+    in-transit GL, shortage write-off, cancellation."""
+
+    def setUp(self):
+        from core.models import InventoryTransfer, InventoryTransferLine
+        from core.services.inventory import apply_movement
+        from core.services.gl import post_inventory_receipt
+        self.t = Tenant.objects.create(name="Transit Co")
+        self.a = Location.objects.create(tenant=self.t, name="WH-A")
+        self.b = Location.objects.create(tenant=self.t, name="WH-B")
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-TR", name="P",
+                                        cost_method=Product.CostMethod.FIFO)
+        # 100 @ 2.00 at A, with a matching GL receipt so the baseline reconciles.
+        apply_movement(tenant=self.t, product=self.p, location=self.a, movement_type="RECEIVE",
+                       qty_delta=Decimal("100"), ref_type="T", ref_id="r", unit_cost=Decimal("2.00"))
+        post_inventory_receipt(self.t, Decimal("200.00"), "r")
+        self.tr = InventoryTransfer.objects.create(tenant=self.t, transfer_number="TR-1",
+                                                   from_location=self.a, to_location=self.b)
+        self.line = InventoryTransferLine.objects.create(transfer=self.tr, product=self.p, qty=Decimal("10"))
+
+    def _on_hand(self, loc):
+        from core.models import InventoryBalance
+        b = InventoryBalance.objects.filter(tenant=self.t, product=self.p, location=loc).first()
+        return b.on_hand if b else Decimal("0.00")
+
+    def _recon(self):
+        from core.services import reports
+        return reports.inventory_gl_reconciliation(self.t)["variance"]
+
+    def test_dispatch_then_full_receive_is_value_neutral(self):
+        from core.models import InventoryTransfer
+        from core.views import _dispatch_transfer, _receive_transfer
+        self.assertEqual(self._recon(), Decimal("0.00"))
+
+        _dispatch_transfer(self.tr)
+        self.tr.refresh_from_db(); self.line.refresh_from_db()
+        self.assertEqual(self.tr.status, InventoryTransfer.Status.DISPATCHED)
+        self.assertEqual(self._on_hand(self.a), Decimal("90.00"))   # relieved into transit
+        self.assertEqual(self._on_hand(self.b), Decimal("0.00"))    # not arrived yet
+        self.assertEqual(self.line.in_transit_qty, Decimal("10.00"))
+        self.assertEqual(_account_balance(self.t, "1010"), Decimal("20.00"))  # in-transit asset
+        self.assertEqual(self._recon(), Decimal("0.00"))            # control stays balanced
+
+        _receive_transfer(self.tr)
+        self.tr.refresh_from_db()
+        self.assertEqual(self.tr.status, InventoryTransfer.Status.RECEIVED)
+        self.assertEqual(self._on_hand(self.a), Decimal("90.00"))
+        self.assertEqual(self._on_hand(self.b), Decimal("10.00"))   # arrived, value-neutral
+        self.assertEqual(_account_balance(self.t, "1010"), Decimal("0.00"))  # transit cleared
+        self.assertEqual(self._recon(), Decimal("0.00"))
+
+    def test_partial_receipt_keeps_remainder_in_transit(self):
+        from core.models import InventoryTransfer
+        from core.views import _dispatch_transfer, _receive_transfer
+        _dispatch_transfer(self.tr)
+        _receive_transfer(self.tr, receipts={self.line.id: Decimal("6")})
+        self.tr.refresh_from_db(); self.line.refresh_from_db()
+        self.assertEqual(self.tr.status, InventoryTransfer.Status.DISPATCHED)  # still open
+        self.assertEqual(self._on_hand(self.b), Decimal("6.00"))
+        self.assertEqual(self.line.in_transit_qty, Decimal("4.00"))
+        self.assertEqual(_account_balance(self.t, "1010"), Decimal("8.00"))   # 4 @ 2 still in transit
+        self.assertEqual(self._recon(), Decimal("0.00"))
+
+    def test_close_short_writes_off_in_transit_loss(self):
+        from core.models import InventoryTransfer
+        from core.views import _dispatch_transfer, _receive_transfer
+        _dispatch_transfer(self.tr)
+        _receive_transfer(self.tr, receipts={self.line.id: Decimal("6")}, close_short=True)
+        self.tr.refresh_from_db(); self.line.refresh_from_db()
+        self.assertEqual(self.tr.status, InventoryTransfer.Status.RECEIVED)
+        self.assertEqual(self.line.in_transit_qty, Decimal("0.00"))           # closed
+        self.assertEqual(_account_balance(self.t, "1010"), Decimal("0.00"))   # transit cleared
+        self.assertEqual(_account_balance(self.t, "5200"), Decimal("8.00"))   # 4 @ 2 lost in transit
+        self.assertEqual(self._recon(), Decimal("0.00"))
+
+    def test_cancel_dispatched_returns_stock_to_source(self):
+        from core.models import InventoryTransfer
+        from core.views import _dispatch_transfer, _cancel_dispatched_transfer
+        _dispatch_transfer(self.tr)
+        _cancel_dispatched_transfer(self.tr)
+        self.tr.refresh_from_db()
+        self.assertEqual(self.tr.status, InventoryTransfer.Status.CANCELLED)
+        self.assertEqual(self._on_hand(self.a), Decimal("100.00"))   # all returned
+        self.assertEqual(_account_balance(self.t, "1010"), Decimal("0.00"))
+        self.assertEqual(self._recon(), Decimal("0.00"))
+
+
 class LandedCostTests(TestCase):
     def setUp(self):
         from core.models import Location

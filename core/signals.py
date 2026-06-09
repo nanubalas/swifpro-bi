@@ -16,6 +16,7 @@ DEFAULT_TAX_CODES = [
 
 DEFAULT_ACCOUNTS = [
     ("1000", "Inventory", "ASSET"),
+    ("1010", "Inventory In Transit", "ASSET"),
     ("1050", "Bank", "ASSET"),
     ("1100", "Accounts Receivable", "ASSET"),
     ("2000", "Accounts Payable", "LIABILITY"),

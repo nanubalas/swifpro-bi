@@ -1259,7 +1259,9 @@ class SalesOrderLine(models.Model):
 class InventoryTransfer(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
-        POSTED = "POSTED", "Posted"
+        DISPATCHED = "DISPATCHED", "Dispatched (in transit)"
+        RECEIVED = "RECEIVED", "Received"
+        POSTED = "POSTED", "Posted"  # legacy one-step transfers
         CANCELLED = "CANCELLED", "Cancelled"
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
@@ -1269,6 +1271,8 @@ class InventoryTransfer(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     notes = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
+    dispatched_at = models.DateTimeField(blank=True, null=True)
+    received_at = models.DateTimeField(blank=True, null=True)
     posted_at = models.DateTimeField(blank=True, null=True)
 
     class Meta:
@@ -1282,6 +1286,13 @@ class InventoryTransferLine(models.Model):
     transfer = models.ForeignKey(InventoryTransfer, related_name="lines", on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     qty = models.DecimalField(max_digits=12, decimal_places=2)
+    # Two-step (dispatch -> receive) tracking. dispatched_qty leaves the source
+    # into transit; received_qty arrives at the destination; the difference is
+    # in transit (value owned by the source site). dispatched_unit_cost is the
+    # cost relieved on dispatch, re-applied on receipt so the move is value-neutral.
+    dispatched_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    received_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    dispatched_unit_cost = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
 
     lot_code = models.CharField(max_length=50, blank=True, null=True)
     serial_number = models.CharField(max_length=100, blank=True, null=True)
@@ -1289,6 +1300,10 @@ class InventoryTransferLine(models.Model):
 
     class Meta:
         unique_together = ("transfer", "product", "lot_code", "serial_number", "expiry_date")
+
+    @property
+    def in_transit_qty(self):
+        return (self.dispatched_qty or Decimal("0.00")) - (self.received_qty or Decimal("0.00"))
 
 
 # --- Receiving / GRN ---

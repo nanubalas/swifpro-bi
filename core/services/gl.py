@@ -6,6 +6,7 @@ from core.models import JournalEntry, JournalLine, GLAccount, CustomerInvoice, S
 
 DEFAULT_ACCOUNT_CODES = {
     "inventory": "1000",
+    "inventory_in_transit": "1010",
     "bank": "1050",
     "ar": "1100",
     "ap": "2000",
@@ -468,6 +469,88 @@ def post_stock_adjustment(adj, value, user=None, entry_date=None):
         JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=Decimal("0.00"), credit=amount)
     else:
         # Inventory increases (e.g. found stock); reduces the expense.
+        JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=adj_acc, description="Inventory gain", debit=Decimal("0.00"), credit=amount)
+    return je
+
+
+@transaction.atomic
+def post_transfer_dispatch(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
+    """Move value from Inventory into Inventory In Transit on dispatch:
+    DR Inventory In Transit / CR Inventory. Keeps the GL control account in step
+    with the on-hand subledger while goods are in transit (their value sits in
+    the in-transit asset account, still owned by the source site)."""
+    value = Decimal(value)
+    if value <= Decimal("0.00"):
+        return None
+    je = JournalEntry.objects.create(
+        tenant=tenant, site_id=site_id, entry_date=entry_date or timezone.now().date(),
+        ref_type="TRANSFER_DISPATCH", ref_id=str(ref_id), memo=f"Transfer dispatch {ref_id}",
+        posted_by=user, posted_at=timezone.now())
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory_in_transit"), description="Inventory in transit", debit=value, credit=Decimal("0.00"))
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory"), description="Inventory", debit=Decimal("0.00"), credit=value)
+    return je
+
+
+@transaction.atomic
+def post_transfer_receipt(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
+    """Move value from Inventory In Transit back into Inventory on receipt:
+    DR Inventory / CR Inventory In Transit. Also used (with the source site) when
+    a dispatched transfer is cancelled and stock returns to source."""
+    value = Decimal(value)
+    if value <= Decimal("0.00"):
+        return None
+    je = JournalEntry.objects.create(
+        tenant=tenant, site_id=site_id, entry_date=entry_date or timezone.now().date(),
+        ref_type="TRANSFER_RECEIPT", ref_id=str(ref_id), memo=f"Transfer receipt {ref_id}",
+        posted_by=user, posted_at=timezone.now())
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory"), description="Inventory", debit=value, credit=Decimal("0.00"))
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory_in_transit"), description="Inventory in transit", debit=Decimal("0.00"), credit=value)
+    return je
+
+
+@transaction.atomic
+def post_transfer_shortage(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
+    """Write off in-transit stock lost in transit: DR Inventory Adjustments /
+    CR Inventory In Transit (value is a positive loss amount)."""
+    value = Decimal(value)
+    if value <= Decimal("0.00"):
+        return None
+    je = JournalEntry.objects.create(
+        tenant=tenant, site_id=site_id, entry_date=entry_date or timezone.now().date(),
+        ref_type="TRANSFER_SHORTAGE", ref_id=str(ref_id), memo=f"Transfer in-transit shortage {ref_id}",
+        posted_by=user, posted_at=timezone.now())
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory_adjustment"), description="In-transit shortage", debit=value, credit=Decimal("0.00"))
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory_in_transit"), description="Inventory in transit", debit=Decimal("0.00"), credit=value)
+    return je
+
+
+@transaction.atomic
+def post_stock_adjustment_value(tenant, value, *, ref_type, ref_id, location=None, memo=None,
+                                user=None, entry_date=None):
+    """Generic inventory value adjustment: DR/CR Inventory vs Inventory
+    Adjustments for a signed `value` (negative = loss). Used for inventory
+    impacts not tied to a StockAdjustment row (e.g. transfer in-transit
+    shortage). Idempotent on (tenant, ref_type, ref_id)."""
+    value = Decimal(value)
+    if value == Decimal("0.00"):
+        return None
+    existing = JournalEntry.objects.filter(tenant=tenant, ref_type=ref_type, ref_id=str(ref_id)).order_by("-id").first()
+    if existing:
+        return existing
+    je = JournalEntry.objects.create(
+        tenant=tenant, site_id=getattr(location, "site_id", None),
+        entry_date=entry_date or timezone.now().date(),
+        ref_type=ref_type, ref_id=str(ref_id), memo=memo or f"Inventory adjustment {ref_id}",
+        posted_by=user, posted_at=timezone.now(),
+    )
+    inv_acc = _acc(tenant, "inventory")
+    adj_acc = _acc(tenant, "inventory_adjustment")
+    amount = abs(value)
+    if value < Decimal("0.00"):
+        JournalLine.objects.create(entry=je, account=adj_acc, description="Inventory loss", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=Decimal("0.00"), credit=amount)
+    else:
         JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=amount, credit=Decimal("0.00"))
         JournalLine.objects.create(entry=je, account=adj_acc, description="Inventory gain", debit=Decimal("0.00"), credit=amount)
     return je

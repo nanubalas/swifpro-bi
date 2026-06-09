@@ -130,6 +130,9 @@ urlpatterns = [
     path("transfers/new/", views.transfer_create, name="transfer_create"),
     path("transfers/<int:transfer_id>/", views.transfer_detail, name="transfer_detail"),
     path("transfers/<int:transfer_id>/post/", views.transfer_post, name="transfer_post"),
+    path("transfers/<int:transfer_id>/dispatch/", views.transfer_dispatch, name="transfer_dispatch"),
+    path("transfers/<int:transfer_id>/receive/", views.transfer_receive, name="transfer_receive"),
+    path("transfers/<int:transfer_id>/cancel/", views.transfer_cancel, name="transfer_cancel"),
 
     # Channels
     path("channels/", views.channel_list, name="channel_list"),

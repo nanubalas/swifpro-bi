@@ -3945,6 +3945,182 @@ def _post_transfer(transfer: InventoryTransfer, request=None):
         messages.success(request, f"Transfer {transfer.transfer_number} posted.")
 
 
+# ---- Two-step (dispatch -> receive) in-transit transfers ----
+
+def _dispatch_transfer(transfer: InventoryTransfer, request=None):
+    """Relieve stock from the source into transit. The relieved cost is captured
+    per line and re-applied on receipt so the move is value-neutral; the
+    in-transit value remains owned by the source site until received."""
+    if transfer.status != InventoryTransfer.Status.DRAFT:
+        return
+    from core.services.gl import post_transfer_dispatch
+    user = request.user if request is not None else None
+    dispatch_value = Decimal("0.00")
+    for line in transfer.lines.select_related("product").all():
+        qty = Decimal(line.qty)
+        if qty <= 0:
+            continue
+        out_move = apply_movement(
+            tenant=transfer.tenant, product=line.product, location=transfer.from_location,
+            movement_type="TRANSFER_OUT", qty_delta=(qty * Decimal("-1")),
+            ref_type="TRANSFER", ref_id=transfer.transfer_number, notes="Transfer dispatch",
+            user=user, lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date,
+        )
+        line.dispatched_qty = qty
+        line.dispatched_unit_cost = out_move.unit_cost
+        line.save(update_fields=["dispatched_qty", "dispatched_unit_cost"])
+        dispatch_value += -(out_move.value or Decimal("0.00"))
+    # Move the relieved value from Inventory into Inventory In Transit so the GL
+    # control account stays in step with the on-hand subledger during transit.
+    post_transfer_dispatch(transfer.tenant, dispatch_value, transfer.transfer_number, user=user,
+                           site_id=getattr(transfer.from_location, "site_id", None))
+    transfer.status = InventoryTransfer.Status.DISPATCHED
+    transfer.dispatched_at = timezone.now()
+    transfer.save(update_fields=["status", "dispatched_at"])
+    if request is not None:
+        messages.success(request, f"Transfer {transfer.transfer_number} dispatched (in transit).")
+
+
+def _receive_transfer(transfer: InventoryTransfer, receipts=None, close_short=False, request=None):
+    """Receive in-transit stock into the destination at the dispatched cost
+    (value-neutral). `receipts` maps line id -> qty received (defaults to the
+    full in-transit qty per line). Partial receipts leave the remainder in
+    transit. With close_short, any remaining in-transit qty is written off as a
+    transit loss (DR Inventory Adjustments / CR Inventory) and the transfer is
+    closed; the GL write-off keeps the subledger and control account in step."""
+    if transfer.status != InventoryTransfer.Status.DISPATCHED:
+        return
+    from core.services.gl import post_transfer_receipt, post_transfer_shortage
+    user = request.user if request is not None else None
+    recv_value = Decimal("0.00")
+    for line in transfer.lines.select_related("product").all():
+        in_transit = line.in_transit_qty
+        if in_transit <= 0:
+            continue
+        recv = in_transit if receipts is None else Decimal(receipts.get(line.id, 0))
+        recv = min(max(recv, Decimal("0.00")), in_transit)
+        if recv > 0:
+            in_move = apply_movement(
+                tenant=transfer.tenant, product=line.product, location=transfer.to_location,
+                movement_type="TRANSFER_IN", qty_delta=recv,
+                ref_type="TRANSFER", ref_id=transfer.transfer_number, notes="Transfer receipt",
+                user=user, unit_cost=line.dispatched_unit_cost,
+                lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date,
+            )
+            line.received_qty = (line.received_qty or Decimal("0.00")) + recv
+            line.save(update_fields=["received_qty"])
+            recv_value += (in_move.value or Decimal("0.00"))
+    # Move the received value back from Inventory In Transit into Inventory.
+    post_transfer_receipt(transfer.tenant, recv_value, transfer.transfer_number, user=user,
+                          site_id=getattr(transfer.to_location, "site_id", None))
+
+    if close_short:
+        # Write off whatever is still in transit as a loss, valued at the
+        # dispatched cost, clearing the in-transit account (DR Inventory
+        # Adjustments / CR Inventory In Transit).
+        loss = Decimal("0.00")
+        for line in transfer.lines.all():
+            short = line.in_transit_qty
+            if short > 0:
+                loss += (short * (line.dispatched_unit_cost or Decimal("0.0000"))).quantize(Decimal("0.01"))
+                line.received_qty = line.dispatched_qty  # nothing left in transit
+                line.save(update_fields=["received_qty"])
+        post_transfer_shortage(transfer.tenant, loss, transfer.transfer_number, user=user,
+                               site_id=getattr(transfer.from_location, "site_id", None))
+
+    fully_received = all(l.in_transit_qty <= 0 for l in transfer.lines.all())
+    if fully_received:
+        transfer.status = InventoryTransfer.Status.RECEIVED
+        transfer.received_at = timezone.now()
+        transfer.save(update_fields=["status", "received_at"])
+    if request is not None:
+        messages.success(request, f"Transfer {transfer.transfer_number} receipt recorded.")
+
+
+def _cancel_dispatched_transfer(transfer: InventoryTransfer, request=None):
+    """Cancel a dispatched transfer by returning any in-transit stock to the
+    source location at the dispatched cost (value-neutral)."""
+    if transfer.status != InventoryTransfer.Status.DISPATCHED:
+        return
+    from core.services.gl import post_transfer_receipt
+    user = request.user if request is not None else None
+    return_value = Decimal("0.00")
+    for line in transfer.lines.select_related("product").all():
+        back = line.in_transit_qty
+        if back > 0:
+            in_move = apply_movement(
+                tenant=transfer.tenant, product=line.product, location=transfer.from_location,
+                movement_type="TRANSFER_IN", qty_delta=back,
+                ref_type="TRANSFER", ref_id=transfer.transfer_number, notes="Transfer cancelled - returned to source",
+                user=user, unit_cost=line.dispatched_unit_cost,
+                lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date,
+            )
+            line.received_qty = line.dispatched_qty
+            line.save(update_fields=["received_qty"])
+            return_value += (in_move.value or Decimal("0.00"))
+    # Return the in-transit value to source Inventory (DR Inventory / CR In Transit).
+    post_transfer_receipt(transfer.tenant, return_value, transfer.transfer_number, user=user,
+                          site_id=getattr(transfer.from_location, "site_id", None))
+    transfer.status = InventoryTransfer.Status.CANCELLED
+    transfer.save(update_fields=["status"])
+    if request is not None:
+        messages.warning(request, f"Transfer {transfer.transfer_number} cancelled; stock returned to source.")
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def transfer_dispatch(request, transfer_id):
+    tenant = _get_default_tenant(request)
+    transfer = get_object_or_404(InventoryTransfer, id=transfer_id, tenant=tenant)
+    if not _can_access_location(request, tenant, transfer.from_location_id, transfer.to_location_id):
+        raise PermissionDenied("You do not have access to one of this transfer's locations.")
+    if request.method == "POST":
+        _dispatch_transfer(transfer, request)
+    return redirect("transfer_detail", transfer_id=transfer.id)
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def transfer_receive(request, transfer_id):
+    tenant = _get_default_tenant(request)
+    transfer = get_object_or_404(InventoryTransfer, id=transfer_id, tenant=tenant)
+    if not _can_access_location(request, tenant, transfer.from_location_id, transfer.to_location_id):
+        raise PermissionDenied("You do not have access to one of this transfer's locations.")
+    if request.method == "POST":
+        # Optional per-line received quantities; absent -> receive all in transit.
+        receipts = {}
+        for line in transfer.lines.all():
+            raw = (request.POST.get(f"recv_{line.id}") or "").strip()
+            if raw:
+                try:
+                    receipts[line.id] = Decimal(raw)
+                except InvalidOperation:
+                    messages.error(request, f"Invalid quantity '{raw}'.")
+                    return redirect("transfer_detail", transfer_id=transfer.id)
+        close_short = bool(request.POST.get("close_short"))
+        _receive_transfer(transfer, receipts=receipts or None, close_short=close_short, request=request)
+    return redirect("transfer_detail", transfer_id=transfer.id)
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_WAREHOUSE])
+@transaction.atomic
+def transfer_cancel(request, transfer_id):
+    tenant = _get_default_tenant(request)
+    transfer = get_object_or_404(InventoryTransfer, id=transfer_id, tenant=tenant)
+    if not _can_access_location(request, tenant, transfer.from_location_id, transfer.to_location_id):
+        raise PermissionDenied("You do not have access to one of this transfer's locations.")
+    if request.method == "POST":
+        if transfer.status == InventoryTransfer.Status.DISPATCHED:
+            _cancel_dispatched_transfer(transfer, request)
+        elif transfer.status == InventoryTransfer.Status.DRAFT:
+            transfer.status = InventoryTransfer.Status.CANCELLED
+            transfer.save(update_fields=["status"])
+    return redirect("transfer_detail", transfer_id=transfer.id)
+
+
 @login_required
 @role_required([ROLE_ADMIN, ROLE_FINANCE])
 def invoice_list(request):
