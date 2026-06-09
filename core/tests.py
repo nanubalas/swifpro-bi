@@ -2278,6 +2278,163 @@ class ReservationLifecycleTests(TestCase):
         self.assertEqual(self._bal().reserved, Decimal("0.00"))
 
 
+class CycleCountValuationCatchupTests(TestCase):
+    """Catch-up reconciliation for historical cycle-count valuation drift."""
+
+    def setUp(self):
+        import datetime
+        self.t = Tenant.objects.create(name="Catchup Co")  # signal seeds GL accounts
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-CU", name="P",
+                                        cost_method=Product.CostMethod.FIFO, track_lots=True, track_expiry=True)
+        self.eA = datetime.date(2026, 6, 1)
+        self.eB = datetime.date(2026, 12, 1)
+
+    def _receive(self, lot, expiry, qty, cost, gl=False, ref="r"):
+        from core.services.inventory import apply_movement
+        from core.services.gl import post_inventory_receipt
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal(qty), ref_type="T", ref_id=ref, unit_cost=Decimal(cost),
+                       lot_code=lot, expiry_date=expiry)
+        if gl:
+            post_inventory_receipt(self.t, Decimal(qty) * Decimal(cost), ref)
+
+    def _hist_cc(self, lot, expiry, qty_delta, value, ref_id="hist", created=None):
+        """A pre-existing cycle-count movement created directly (simulating data
+        posted before lot-scoped costing/GL), optionally backdated."""
+        m = InventoryMovement.objects.create(
+            tenant=self.t, site_id=self.loc.site_id, product=self.p, location=self.loc,
+            movement_type="ADJUSTMENT", qty_delta=Decimal(qty_delta), unit_cost=None,
+            value=Decimal(value), ref_type="CYCLE_COUNT", ref_id=ref_id,
+            lot_code=lot, expiry_date=expiry)
+        if created is not None:
+            InventoryMovement.objects.filter(id=m.id).update(created_at=created)
+            m.refresh_from_db()
+        return m
+
+    def _cc_gl(self, value, ref_id="hist"):
+        from core.models import GLAccount, JournalEntry, JournalLine
+        from django.utils import timezone
+        inv = GLAccount.objects.get(tenant=self.t, code="1000")
+        adj = GLAccount.objects.get(tenant=self.t, code="5200")
+        je = JournalEntry.objects.create(tenant=self.t, entry_date=timezone.localdate(),
+                                         ref_type="CYCLE_COUNT", ref_id=ref_id, memo="hist")
+        amt = abs(Decimal(value))
+        if Decimal(value) < 0:
+            JournalLine.objects.create(entry=je, account=adj, debit=amt, credit=Decimal("0.00"))
+            JournalLine.objects.create(entry=je, account=inv, debit=Decimal("0.00"), credit=amt)
+        else:
+            JournalLine.objects.create(entry=je, account=inv, debit=amt, credit=Decimal("0.00"))
+            JournalLine.objects.create(entry=je, account=adj, debit=Decimal("0.00"), credit=amt)
+        return je
+
+    def test_no_variance_when_already_lot_correct_with_gl(self):
+        from core.services import inventory_corrections as recon
+        self._receive("B", self.eB, "10", "8.00")
+        # Movement valued at lot cost (8) AND already has a GL -> nothing to do.
+        self._hist_cc("B", self.eB, "-2", "-16.00")
+        self._cc_gl("-16.00")
+        self.assertEqual(recon.find_drift(self.t), [])
+
+    def test_variance_detected_dry_run_makes_no_changes(self):
+        from core.models import CycleCountValuationCorrection
+        from core.services import inventory_corrections as recon
+        self._receive("A", self.eA, "10", "2.00")
+        self._receive("B", self.eB, "10", "8.00")
+        self._hist_cc("B", self.eB, "-2", "-10.00")  # valued at average 5, not lot 8; no GL
+        rows = recon.find_drift(self.t)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["expected_value"], Decimal("-16.00"))  # 2 @ lot cost 8
+        self.assertEqual(rows[0]["variance"], Decimal("-6.00"))
+        self.assertEqual(rows[0]["valuation_source"], CycleCountValuationCorrection.Source.LOT_LAYER)
+        # Dry-run / find only: nothing posted.
+        self.assertEqual(CycleCountValuationCorrection.objects.count(), 0)
+
+    def test_correction_applied_once_and_idempotent(self):
+        from core.models import CycleCountValuationCorrection
+        from core.services import inventory_corrections as recon
+        self._receive("A", self.eA, "10", "2.00")
+        self._receive("B", self.eB, "10", "8.00")
+        m = self._hist_cc("B", self.eB, "-2", "-10.00")
+
+        summary = recon.apply_corrections(self.t)
+        self.assertEqual(summary["corrected_count"], 1)
+        corr = CycleCountValuationCorrection.objects.get(original_movement=m)
+        self.assertEqual(corr.expected_value, Decimal("-16.00"))
+        self.assertEqual(corr.variance, Decimal("-6.00"))
+        self.assertIsNotNone(corr.correction_journal)
+        self.assertIsNotNone(corr.reval_movement)
+        self.assertEqual(corr.reval_movement.value, Decimal("-6.00"))  # subledger top-up
+        # Re-run: no double correction.
+        summary2 = recon.apply_corrections(self.t)
+        self.assertEqual(summary2["corrected_count"], 0)
+        self.assertEqual(CycleCountValuationCorrection.objects.count(), 1)
+
+    def test_legacy_lot_without_layer_uses_product_average_fallback(self):
+        from core.models import CycleCountValuationCorrection
+        from core.services import inventory_corrections as recon
+        self._receive("A", self.eA, "10", "2.00")
+        self._receive("B", self.eB, "10", "8.00")  # company average = 5.00
+        # Lot C was never received -> no cost layer. Movement valued at average 5.
+        self._hist_cc("C", self.eA, "-1", "-5.00", ref_id="histC")
+        rows = recon.find_drift(self.t)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["valuation_source"], CycleCountValuationCorrection.Source.PRODUCT_AVERAGE)
+        self.assertEqual(rows[0]["expected_value"], Decimal("-5.00"))  # fallback = average
+        self.assertEqual(rows[0]["variance"], Decimal("0.00"))         # value already average
+
+    def test_gl_reconciliation_improves_after_correction(self):
+        from core.services import inventory_corrections as recon
+        from core.services import reports
+        # Clean baseline: receipts post matching GL so subledger == GL.
+        self._receive("A", self.eA, "10", "2.00", gl=True, ref="ra")
+        self._receive("B", self.eB, "10", "8.00", gl=True, ref="rb")
+        self.assertEqual(reports.inventory_gl_reconciliation(self.t)["variance"], Decimal("0.00"))
+
+        # Historical cycle count: subledger gets -10 (average), no GL -> drift.
+        self._hist_cc("B", self.eB, "-2", "-10.00")
+        before = reports.inventory_gl_reconciliation(self.t)["variance"]
+        self.assertEqual(before, Decimal("-10.00"))
+
+        recon.apply_corrections(self.t)
+        after = reports.inventory_gl_reconciliation(self.t)["variance"]
+        self.assertEqual(after, Decimal("0.00"))  # subledger and GL both at lot-correct value
+        self.assertLess(abs(after), abs(before))
+
+    def test_closed_period_correction_posts_to_current_period(self):
+        import datetime
+        from django.utils import timezone
+        from core.models import CycleCountValuationCorrection
+        from core.services import inventory_corrections as recon
+        self._receive("A", self.eA, "10", "2.00")
+        self._receive("B", self.eB, "10", "8.00")
+        old = timezone.make_aware(datetime.datetime(2026, 1, 15, 9, 0, 0))
+        self._hist_cc("B", self.eB, "-2", "-10.00", created=old)
+
+        posting = datetime.date(2026, 7, 1)
+        recon.apply_corrections(self.t, lock_date=datetime.date(2026, 3, 31),
+                                posting_date=posting)
+        corr = CycleCountValuationCorrection.objects.get()
+        self.assertTrue(corr.posted_to_current_period)
+        self.assertEqual(corr.correction_journal.entry_date, posting)  # not the Jan movement date
+        self.assertIn("closed period", corr.note)
+
+    def test_closed_period_block_skips_correction(self):
+        import datetime
+        from django.utils import timezone
+        from core.models import CycleCountValuationCorrection
+        from core.services import inventory_corrections as recon
+        self._receive("B", self.eB, "10", "8.00")
+        old = timezone.make_aware(datetime.datetime(2026, 1, 15, 9, 0, 0))
+        self._hist_cc("B", self.eB, "-2", "-10.00", created=old)
+
+        summary = recon.apply_corrections(self.t, lock_date=datetime.date(2026, 3, 31),
+                                          block_closed=True)
+        self.assertEqual(summary["corrected_count"], 0)
+        self.assertEqual(summary["blocked_count"], 1)
+        self.assertEqual(CycleCountValuationCorrection.objects.count(), 0)
+
+
 class LandedCostTests(TestCase):
     def setUp(self):
         from core.models import Location
