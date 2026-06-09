@@ -925,6 +925,24 @@ class InventoryLotBalance(models.Model):
         unique_together = ("tenant", "product", "location", "lot_code", "serial_number", "expiry_date")
 
 
+class InventoryBinBalance(models.Model):
+    """On-hand per bin within a location, for bin-level stock visibility.
+
+    A sub-balance of InventoryBalance (which stays the per-location total):
+    maintained only when a movement specifies a bin, so the sum of a location's
+    bin balances equals the bin-tracked portion of its on-hand."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    location = models.ForeignKey(Location, on_delete=models.PROTECT)
+    bin = models.ForeignKey("Bin", on_delete=models.PROTECT, related_name="balances")
+    on_hand = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    reserved = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    class Meta:
+        unique_together = ("tenant", "product", "location", "bin")
+        indexes = [models.Index(fields=["tenant", "bin"])]
+
+
 class InventoryReservation(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"

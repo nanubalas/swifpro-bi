@@ -2562,6 +2562,60 @@ class UomSalesTests(TestCase):
         self.assertEqual(cogs.total_debit, Decimal("72.00"))  # 24 EACH @ 3.00
 
 
+class BinBalanceTests(TestCase):
+    """Bin-level on-hand tracking (a sub-balance of the location balance)."""
+
+    def setUp(self):
+        from core.models import Bin
+        self.t = Tenant.objects.create(name="Bin Co")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.bin_a = Bin.objects.create(tenant=self.t, location=self.loc, code="A1")
+        self.bin_b = Bin.objects.create(tenant=self.t, location=self.loc, code="B2")
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-BIN", name="P")
+
+    def test_movements_track_per_bin_and_roll_up_to_location(self):
+        from core.services.inventory import apply_movement, bin_balances
+        from core.models import InventoryBalance, InventoryBinBalance
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="1", unit_cost=Decimal("2.00"), bin=self.bin_a)
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("4"), ref_type="T", ref_id="2", unit_cost=Decimal("2.00"), bin=self.bin_b)
+        # Location balance is the total; bins hold the split.
+        self.assertEqual(InventoryBalance.objects.get(tenant=self.t, product=self.p, location=self.loc).on_hand,
+                         Decimal("14.00"))
+        self.assertEqual(InventoryBinBalance.objects.get(tenant=self.t, bin=self.bin_a).on_hand, Decimal("10.00"))
+        self.assertEqual(InventoryBinBalance.objects.get(tenant=self.t, bin=self.bin_b).on_hand, Decimal("4.00"))
+        # Issue from bin A only.
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="SALE",
+                       qty_delta=Decimal("-3"), ref_type="T", ref_id="3", bin=self.bin_a)
+        self.assertEqual(InventoryBinBalance.objects.get(tenant=self.t, bin=self.bin_a).on_hand, Decimal("7.00"))
+        self.assertEqual(InventoryBinBalance.objects.get(tenant=self.t, bin=self.bin_b).on_hand, Decimal("4.00"))
+        # Helper: only positive bin balances, filterable.
+        rows = list(bin_balances(self.t, location=self.loc))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r.bin.code for r in rows}, {"A1", "B2"})
+
+    def test_strict_control_blocks_bin_oversell(self):
+        from core.services.inventory import apply_movement
+        from django.core.exceptions import ValidationError
+        self.t.block_negative_stock = True
+        self.t.save(update_fields=["block_negative_stock"])
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("5"), ref_type="T", ref_id="1", unit_cost=Decimal("2.00"), bin=self.bin_a)
+        # Bin B has nothing; issuing from it is rejected even though the location
+        # has stock (in bin A).
+        with self.assertRaises(ValidationError):
+            apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="SALE",
+                           qty_delta=Decimal("-1"), ref_type="T", ref_id="2", bin=self.bin_b)
+
+    def test_no_bin_movements_leave_bin_balances_empty(self):
+        from core.services.inventory import apply_movement
+        from core.models import InventoryBinBalance
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="1", unit_cost=Decimal("2.00"))
+        self.assertEqual(InventoryBinBalance.objects.filter(tenant=self.t).count(), 0)
+
+
 class InTransitTransferTests(TestCase):
     """Two-step dispatch -> receive transfers: value-neutral, partial receipt,
     in-transit GL, shortage write-off, cancellation."""
