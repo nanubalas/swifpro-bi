@@ -2562,6 +2562,128 @@ class UomSalesTests(TestCase):
         self.assertEqual(cogs.total_debit, Decimal("72.00"))  # 24 EACH @ 3.00
 
 
+class NearExpiryReportTests(TestCase):
+    """Near-expiry lot report (visibility only)."""
+
+    def setUp(self):
+        import datetime
+        self.t = Tenant.objects.create(name="Expiry Co")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-EX", name="P",
+                                        cost_method=Product.CostMethod.FIFO, track_lots=True, track_expiry=True)
+        self.today = datetime.date(2026, 6, 1)
+
+    def _recv(self, lot, expiry, qty, cost):
+        from core.services.inventory import apply_movement
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal(qty), ref_type="T", ref_id=lot, unit_cost=Decimal(cost),
+                       lot_code=lot, expiry_date=expiry)
+
+    def _issue(self, lot, expiry, qty):
+        from core.services.inventory import apply_movement
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="SALE",
+                       qty_delta=Decimal(qty), ref_type="T", ref_id=lot + "s",
+                       lot_code=lot, expiry_date=expiry)
+
+    def test_statuses_and_window(self):
+        import datetime
+        from core.services import reports
+        self._recv("NEAR", self.today + datetime.timedelta(days=20), "10", "8.00")
+        self._recv("FAR", self.today + datetime.timedelta(days=200), "10", "2.00")
+        self._recv("OLD", self.today - datetime.timedelta(days=5), "10", "5.00")
+        rows = {r["lot_code"]: r for r in reports.near_expiry_lots(self.t, days=30, today=self.today)}
+        self.assertEqual(rows["NEAR"]["status"], "near_expiry")   # within window
+        self.assertEqual(rows["OLD"]["status"], "expired")        # past expiry
+        self.assertNotIn("FAR", rows)                             # outside window, default view
+        self.assertEqual(rows["NEAR"]["days_until"], 20)
+        # status='all' brings the OK lot in.
+        all_rows = {r["lot_code"]: r for r in reports.near_expiry_lots(self.t, days=30, today=self.today, status="all")}
+        self.assertEqual(all_rows["FAR"]["status"], "okay")
+
+    def test_value_uses_lot_cost_layer(self):
+        import datetime
+        from core.services import reports
+        # Company average becomes 5.00, but NEAR's own layer cost is 8.00.
+        self._recv("NEAR", self.today + datetime.timedelta(days=10), "10", "8.00")
+        self._recv("OTHER", self.today + datetime.timedelta(days=10), "10", "2.00")
+        rows = {r["lot_code"]: r for r in reports.near_expiry_lots(self.t, days=30, today=self.today)}
+        self.assertEqual(rows["NEAR"]["value"], Decimal("80.00"))   # 10 @ 8, not 10 @ 5 avg
+        self.assertEqual(rows["NEAR"]["valuation_source"], "lot_layer")
+
+    def test_zero_balance_excluded_unless_audit(self):
+        import datetime
+        from core.services import reports
+        exp = self.today + datetime.timedelta(days=10)
+        self._recv("Z", exp, "5", "3.00")
+        self._issue("Z", exp, "-5")  # depletes the lot
+        default = {r["lot_code"] for r in reports.near_expiry_lots(self.t, days=30, today=self.today)}
+        self.assertNotIn("Z", default)
+        audit = {r["lot_code"] for r in reports.near_expiry_lots(self.t, days=30, today=self.today, include_zero=True)}
+        self.assertIn("Z", audit)
+
+
+class LotTraceTests(TestCase):
+    """Lot traceability across receipt -> transfer -> issue, with costing trail."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(name="Trace Co")
+        self.a = Location.objects.create(tenant=self.t, name="A", type=Location.Type.WAREHOUSE)
+        self.b = Location.objects.create(tenant=self.t, name="B", type=Location.Type.WAREHOUSE)
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-TRC", name="P",
+                                        cost_method=Product.CostMethod.FIFO, track_lots=True)
+
+    def test_trace_receipt_transfer_issue_with_costs(self):
+        from core.models import (InventoryTransfer, InventoryTransferLine, GoodsReceipt,
+                                  PurchaseOrder, Supplier)
+        from core.services.inventory import apply_movement
+        from core.views import _post_transfer
+        from core.services import reports
+        # Receipt against a GRN (with PO + supplier) so the source is traceable.
+        supplier = Supplier.objects.create(tenant=self.t, name="Acme Supplies")
+        po = PurchaseOrder.objects.create(tenant=self.t, po_number="PO-TRC", supplier=supplier)
+        GoodsReceipt.objects.create(tenant=self.t, po=po, grn_number="GRN-TRC", received_to=self.a,
+                                    status=GoodsReceipt.Status.POSTED)
+        apply_movement(tenant=self.t, product=self.p, location=self.a, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="GRN", ref_id="GRN-TRC",
+                       unit_cost=Decimal("4.00"), lot_code="L1")
+        # Transfer 4 A->B (one-step), carrying the lot.
+        tr = InventoryTransfer.objects.create(tenant=self.t, transfer_number="TR-TRC",
+                                              from_location=self.a, to_location=self.b)
+        InventoryTransferLine.objects.create(transfer=tr, product=self.p, qty=Decimal("4"), lot_code="L1")
+        _post_transfer(tr)
+        # Issue 3 from B.
+        apply_movement(tenant=self.t, product=self.p, location=self.b, movement_type="SALE",
+                       qty_delta=Decimal("-3"), ref_type="ORDER", ref_id="SO-1", lot_code="L1")
+
+        data = reports.lot_trace(self.t, self.p.id, "L1")
+        self.assertIsNotNone(data)
+        types = [row["m"].movement_type for row in data["movements"]]
+        for mt in ("RECEIVE", "TRANSFER_OUT", "TRANSFER_IN", "SALE"):
+            self.assertIn(mt, types)
+        # Receipt is linked to its GRN / PO / supplier.
+        recv = next(r for r in data["movements"] if r["m"].movement_type == "RECEIVE")
+        self.assertEqual(recv["grn"].grn_number, "GRN-TRC")
+        self.assertEqual(recv["po"].po_number, "PO-TRC")
+        self.assertEqual(recv["supplier"].name, "Acme Supplies")
+        # Issue carries the InventoryIssueCost linkage.
+        sale = next(r for r in data["movements"] if r["m"].movement_type == "SALE")
+        self.assertTrue(sale["issue_costs"])
+        self.assertEqual(sale["issue_costs"][0].unit_cost, Decimal("4.0000"))
+        # Current balances by location are present.
+        bal = {b.location.name: b.on_hand for b in data["balances"]}
+        self.assertEqual(bal["A"], Decimal("6.00"))   # 10 received - 4 transferred
+        self.assertEqual(bal["B"], Decimal("1.00"))   # 4 in - 3 issued
+
+    def test_trace_respects_tenant_isolation(self):
+        from core.services.inventory import apply_movement
+        from core.services import reports
+        apply_movement(tenant=self.t, product=self.p, location=self.a, movement_type="RECEIVE",
+                       qty_delta=Decimal("5"), ref_type="T", ref_id="r", unit_cost=Decimal("4.00"), lot_code="L1")
+        other = Tenant.objects.create(name="Other Co")
+        # Another tenant cannot trace this tenant's product/lot.
+        self.assertIsNone(reports.lot_trace(other, self.p.id, "L1"))
+
+
 class UiPassRenderTests(TestCase):
     """Smoke-test the UI-pass templates render (UOM dropdowns, transfer states,
     bin section, reports help)."""
@@ -2576,7 +2698,8 @@ class UiPassRenderTests(TestCase):
     def test_form_and_report_pages_render(self):
         from django.urls import reverse
         for name in ["po_create", "quote_create", "corder_create", "sales_order_create",
-                     "ar_invoice_create", "inventory_list", "reports_index"]:
+                     "ar_invoice_create", "inventory_list", "reports_index",
+                     "report_near_expiry", "report_lot_trace"]:
             resp = self.client.get(reverse(name))
             self.assertEqual(resp.status_code, 200, f"{name} did not render: {resp.status_code}")
         # Reports page documents the control commands.

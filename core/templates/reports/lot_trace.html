@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Lot Traceability - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small"><a href="{% url 'reports_index' %}" class="text-decoration-none">Reports</a> / Lot Traceability</div>
+    <h2 class="fw-bold mb-0">Lot Traceability</h2>
+  </div>
+</div>
+
+<form method="get" class="card card-soft mb-3"><div class="card-body">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label small mb-1" for="product">Product</label>
+      <select name="product" id="product" class="form-select form-select-sm">
+        <option value="">Select product…</option>
+        {% for p in products %}
+          <option value="{{ p.id }}" {% if product_id == p.id|stringformat:'s' %}selected{% endif %}>{{ p.sku }} — {{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label small mb-1" for="lot">Lot</label>
+      <input class="form-control form-control-sm" name="lot" id="lot" value="{{ lot_code }}" placeholder="Lot code">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label small mb-1" for="serial">Serial (optional)</label>
+      <input class="form-control form-control-sm" name="serial" id="serial" value="{{ serial }}" placeholder="Serial">
+    </div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Trace</button></div>
+  </div>
+</div></form>
+
+{% if data %}
+<div class="card card-soft mb-3"><div class="card-body">
+  <h5 class="fw-semibold mb-1">{{ data.product.sku }} — {{ data.product.name }}</h5>
+  <div class="text-muted">Lot <span class="badge text-bg-light">{{ data.lot_code|default:"(none)" }}</span>
+    {% if data.serial_number %} · Serial <span class="badge text-bg-light">{{ data.serial_number }}</span>{% endif %}</div>
+</div></div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card h-100"><div class="card-body">
+      <h6 class="fw-semibold mb-2">Current balance by location</h6>
+      <table class="table table-sm mb-0">
+        <thead class="table-light"><tr><th>Location</th><th class="text-end">On hand</th><th class="text-end">Reserved</th></tr></thead>
+        <tbody>
+          {% for b in data.balances %}
+          <tr><td>{{ b.location.name }}</td><td class="text-end">{{ b.on_hand }}</td><td class="text-end">{{ b.reserved }}</td></tr>
+          {% empty %}<tr><td colspan="3" class="text-muted text-center py-3">No current balance.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100"><div class="card-body">
+      <h6 class="fw-semibold mb-2">Cost layers (receipt → remaining)</h6>
+      <table class="table table-sm mb-0">
+        <thead class="table-light"><tr><th>Location</th><th class="text-end">Received</th><th class="text-end">Remaining</th><th class="text-end">Unit cost</th><th class="text-end">Rem. value</th></tr></thead>
+        <tbody>
+          {% for l in data.layers %}
+          <tr>
+            <td>{{ l.location.name|default:"-" }}</td>
+            <td class="text-end">{{ l.qty_received }}</td>
+            <td class="text-end">{{ l.qty_remaining }}</td>
+            <td class="text-end">{{ l.unit_cost|money:tenant.currency_code }}</td>
+            <td class="text-end">{{ l.qty_remaining|floatformat:2 }} × {{ l.unit_cost|money:tenant.currency_code }}</td>
+          </tr>
+          {% empty %}<tr><td colspan="5" class="text-muted text-center py-3">No FIFO cost layers (non-FIFO product or fully consumed).</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div></div>
+  </div>
+</div>
+
+<div class="card"><div class="card-body">
+  <h6 class="fw-semibold mb-2">Movement history</h6>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr><th>Date</th><th>Type</th><th>Location</th><th>Bin</th><th class="text-end">Qty</th>
+            <th class="text-end">Unit cost</th><th class="text-end">Value</th><th>Reference / source</th></tr>
+      </thead>
+      <tbody>
+        {% for row in data.movements %}
+        <tr>
+          <td class="text-nowrap">{{ row.m.created_at|date:"d M Y H:i" }}</td>
+          <td><span class="badge text-bg-light">{{ row.m.get_movement_type_display }}</span></td>
+          <td>{{ row.m.location.name }}</td>
+          <td>{% if row.m.bin %}{{ row.m.bin.code }}{% else %}-{% endif %}</td>
+          <td class="text-end {% if row.m.qty_delta < 0 %}text-danger{% endif %}">{{ row.m.qty_delta }}</td>
+          <td class="text-end">{% if row.m.unit_cost != None %}{{ row.m.unit_cost|money:tenant.currency_code }}{% else %}-{% endif %}</td>
+          <td class="text-end">{% if row.m.value != None %}{{ row.m.value|money:tenant.currency_code }}{% else %}-{% endif %}</td>
+          <td class="small">
+            {{ row.m.ref_type }} {{ row.m.ref_id }}
+            {% if row.grn %}<div class="text-muted">GRN {{ row.grn.grn_number }}{% if row.po %} · PO {{ row.po.po_number }}{% endif %}{% if row.supplier %} · {{ row.supplier.name }}{% endif %}</div>{% endif %}
+            {% for ic in row.issue_costs %}
+              <div class="text-muted">Costed {{ ic.qty }} @ {{ ic.unit_cost|money:tenant.currency_code }} = {{ ic.total_cost|money:tenant.currency_code }}{% if ic.cost_layer %} (layer #{{ ic.cost_layer_id }}){% endif %}</div>
+            {% endfor %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-center text-muted py-4">No movements for this lot.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>
+{% elif product_id %}
+<div class="alert alert-secondary">No trace found for that product / lot.</div>
+{% else %}
+<div class="text-muted">Choose a product and lot (and serial if applicable) to see its full history.</div>
+{% endif %}
+{% endblock %}

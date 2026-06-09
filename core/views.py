@@ -5650,6 +5650,57 @@ def report_inventory_analytics(request):
         "tenant": tenant, "data": data, "date_from": date_from, "date_to": date_to})
 
 
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_PROCUREMENT, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_near_expiry(request):
+    """Lots at or near expiry (report/dashboard visibility; no scheduled alerts)."""
+    tenant = _get_default_tenant(request)
+    allowed = active_location_ids(request)  # scope to the selected site
+    try:
+        days = int(request.GET.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(days, 3650))
+    product_id = request.GET.get("product") or None
+    status = request.GET.get("status") or None
+    include_zero = request.GET.get("include_zero") == "1"
+    rows = reports_service.near_expiry_lots(
+        tenant, days=days, location_ids=allowed, product_id=product_id,
+        status=status, include_zero=include_zero)
+    expired = [r for r in rows if r["status"] == "expired"]
+    near = [r for r in rows if r["status"] == "near_expiry"]
+    okay = [r for r in rows if r["status"] == "okay"]
+    products = Product.objects.filter(tenant=tenant, track_expiry=True).order_by("sku")
+    locations = Location.objects.filter(tenant=tenant)
+    if allowed is not None:
+        locations = locations.filter(id__in=allowed)
+    return render(request, "reports/near_expiry.html", {
+        "tenant": tenant, "rows": rows, "expired": expired, "near": near, "okay": okay,
+        "days": days, "status": status or "", "include_zero": include_zero,
+        "product_id": product_id or "", "products": products,
+        "locations": locations.order_by("name"),
+        "expired_value": sum((r["value"] for r in expired), Decimal("0.00")),
+        "near_value": sum((r["value"] for r in near), Decimal("0.00")),
+    })
+
+
+@role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_PROCUREMENT, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
+def report_lot_trace(request):
+    """Full movement + costing trail for a single lot/serial (tenant-scoped)."""
+    tenant = _get_default_tenant(request)
+    allowed = active_location_ids(request)  # scope to accessible locations
+    product_id = request.GET.get("product") or None
+    lot_code = (request.GET.get("lot") or "").strip()
+    serial = (request.GET.get("serial") or "").strip() or None
+    data = None
+    if product_id and (lot_code or serial):
+        data = reports_service.lot_trace(tenant, product_id, lot_code, serial_number=serial,
+                                         location_ids=allowed)
+    products = Product.objects.filter(tenant=tenant).order_by("sku")
+    return render(request, "reports/lot_trace.html", {
+        "tenant": tenant, "data": data, "products": products,
+        "product_id": product_id or "", "lot_code": lot_code, "serial": serial or ""})
+
+
 @role_required([ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY], write_groups=[ROLE_FINANCE, ROLE_ADMIN])
 def report_aged_payables(request):
     tenant = _get_default_tenant(request)

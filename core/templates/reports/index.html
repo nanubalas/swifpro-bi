@@ -59,6 +59,20 @@
       <div class="text-muted small">On-hand quantity valued at moving-average cost.</div>
     </a>
   </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="tile p-4 h-100 d-block text-decoration-none text-reset" href="{% url 'report_near_expiry' %}">
+      <span class="workflow-icon mb-3"><i class="bi bi-hourglass-split"></i></span>
+      <h6 class="fw-semibold mb-1">Near-Expiry Stock</h6>
+      <div class="text-muted small">Expired and soon-to-expire lots, with value at risk.</div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="tile p-4 h-100 d-block text-decoration-none text-reset" href="{% url 'report_lot_trace' %}">
+      <span class="workflow-icon mb-3"><i class="bi bi-diagram-3"></i></span>
+      <h6 class="fw-semibold mb-1">Lot Traceability</h6>
+      <div class="text-muted small">Full movement &amp; costing trail for a lot or serial.</div>
+    </a>
+  </div>
 </div>
 
 <h5 class="fw-semibold mt-4 mb-2">Inventory control tools</h5>

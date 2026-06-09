@@ -1,0 +1,41 @@
+{% load money %}
+<div class="table-responsive">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light">
+      <tr>
+        <th>SKU</th><th>Product</th><th>Location</th><th>Lot</th><th>Serial</th>
+        <th>Expiry</th><th class="text-end">Days</th>
+        <th class="text-end">On hand</th><th class="text-end">Avail.</th><th class="text-end">Reserved</th>
+        <th class="text-end">Value</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="fw-semibold">{{ r.product.sku }}</td>
+        <td>{{ r.product.name }}</td>
+        <td>{{ r.location.name }}</td>
+        <td>{{ r.lot_code|default:"-" }}</td>
+        <td>{{ r.serial_number|default:"-" }}</td>
+        <td>{{ r.expiry_date|date:"d M Y" }}</td>
+        <td class="text-end">
+          {% if r.days_until < 0 %}<span class="text-danger">{{ r.days_until }}</span>
+          {% else %}{{ r.days_until }}{% endif %}
+        </td>
+        <td class="text-end">{{ r.on_hand }}</td>
+        <td class="text-end">{{ r.available }}</td>
+        <td class="text-end">{{ r.reserved }}</td>
+        <td class="text-end">{{ r.value|money:tenant.currency_code }}{% if r.valuation_source == "product_cost" %} <span class="text-muted small" title="No lot cost layer; product cost used">*</span>{% endif %}</td>
+        <td>
+          {% if r.status == "expired" %}<span class="badge text-bg-danger">Expired</span>
+          {% elif r.status == "near_expiry" %}<span class="badge text-bg-warning">Near expiry</span>
+          {% else %}<span class="badge text-bg-success">OK</span>{% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="12" class="text-center text-muted py-4">No lots in this view.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="text-muted small px-3 py-2">Value uses the lot's own cost layer where one exists; * = product cost fallback. Bin is tracked at location level, not per lot.</div>

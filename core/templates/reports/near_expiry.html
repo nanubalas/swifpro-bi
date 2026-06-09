@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Near-Expiry Stock - SwifPro BI{% endblock %}
+
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small"><a href="{% url 'reports_index' %}" class="text-decoration-none">Reports</a> / Near-Expiry Stock</div>
+    <h2 class="fw-bold mb-0">Near-Expiry Stock</h2>
+  </div>
+</div>
+
+<div class="alert alert-info py-2 small" role="alert">
+  Report / dashboard visibility. Scheduled email alerts are not enabled yet — those can be added later.
+</div>
+
+<form method="get" class="card card-soft mb-3"><div class="card-body">
+  <div class="row g-2 align-items-end">
+    <div class="col-auto">
+      <label class="form-label small mb-1" for="days">Expiry window</label>
+      <select name="days" id="days" class="form-select form-select-sm">
+        <option value="30" {% if days == 30 %}selected{% endif %}>30 days</option>
+        <option value="60" {% if days == 60 %}selected{% endif %}>60 days</option>
+        <option value="90" {% if days == 90 %}selected{% endif %}>90 days</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1" for="status">Status</label>
+      <select name="status" id="status" class="form-select form-select-sm">
+        <option value="">Expired + near</option>
+        <option value="expired" {% if status == "expired" %}selected{% endif %}>Expired only</option>
+        <option value="near_expiry" {% if status == "near_expiry" %}selected{% endif %}>Near only</option>
+        <option value="all" {% if status == "all" %}selected{% endif %}>All (incl. OK)</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1" for="product">Product</label>
+      <select name="product" id="product" class="form-select form-select-sm">
+        <option value="">All expiry-tracked</option>
+        {% for p in products %}
+          <option value="{{ p.id }}" {% if product_id == p.id|stringformat:'s' %}selected{% endif %}>{{ p.sku }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" name="include_zero" value="1" id="include_zero" {% if include_zero %}checked{% endif %}>
+        <label class="form-check-label small" for="include_zero">Include zero-balance (audit)</label>
+      </div>
+    </div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary mt-3" type="submit">Apply</button></div>
+  </div>
+</div></form>
+
+<div class="row g-3 mb-3">
+  <div class="col-sm-6 col-lg-3">
+    <div class="card card-soft border-danger"><div class="card-body py-3">
+      <div class="text-muted small">Expired lots</div>
+      <div class="h4 mb-0 text-danger">{{ expired|length }}</div>
+      <div class="small text-muted">{{ expired_value|money:tenant.currency_code }} at risk</div>
+    </div></div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card card-soft border-warning"><div class="card-body py-3">
+      <div class="text-muted small">Near expiry (≤ {{ days }} days)</div>
+      <div class="h4 mb-0 text-warning">{{ near|length }}</div>
+      <div class="small text-muted">{{ near_value|money:tenant.currency_code }} value</div>
+    </div></div>
+  </div>
+</div>
+
+{% if expired %}
+<div class="card mb-3"><div class="card-body p-0">
+  <div class="px-3 pt-3"><h5 class="fw-semibold text-danger mb-0"><i class="bi bi-x-octagon me-1"></i>Expired</h5></div>
+  {% include "reports/_near_expiry_table.html" with rows=expired %}
+</div></div>
+{% endif %}
+
+<div class="card mb-3"><div class="card-body p-0">
+  <div class="px-3 pt-3"><h5 class="fw-semibold {% if not status %}text-warning{% endif %} mb-0">
+    {% if status == "expired" %}Expired{% elif status == "all" %}All lots{% else %}Near expiry{% endif %}</h5></div>
+  {% if status == "all" %}{% include "reports/_near_expiry_table.html" with rows=rows %}
+  {% elif status == "expired" %}{% include "reports/_near_expiry_table.html" with rows=expired %}
+  {% else %}{% include "reports/_near_expiry_table.html" with rows=near %}{% endif %}
+</div></div>
+{% endblock %}

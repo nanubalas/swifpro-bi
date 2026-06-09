@@ -457,6 +457,130 @@ def check_inventory_gl_variance(tenant=None, tolerance=Decimal("0.01"), as_of=No
     return flagged
 
 
+def near_expiry_lots(tenant, days=30, location_ids=None, product_id=None, status=None,
+                     include_zero=False, today=None):
+    """Lots/serials at or near expiry, from existing lot-balance + expiry data.
+
+    Returns a row per expiry-dated lot balance with days-until-expiry, on-hand /
+    reserved / available, lot value (from the lot's own cost layer where one
+    exists, else the product average/standard cost), and a status of
+    expired / near_expiry / okay.
+
+    Default view shows expired + near (within `days`); pass status to narrow to a
+    single bucket, or status='all' to include okay lots too. Zero-balance lots
+    are excluded unless include_zero=True (audit). `today` is injectable for tests.
+    """
+    from core.models import InventoryLotBalance
+    from core.services.inventory import lot_layer_unit_cost
+    today = today or timezone.localdate()
+    days = int(days)
+
+    qs = (InventoryLotBalance.objects
+          .filter(tenant=tenant, expiry_date__isnull=False)
+          .select_related("product", "location"))
+    if not include_zero:
+        qs = qs.filter(on_hand__gt=0)
+    if location_ids is not None:
+        qs = qs.filter(location_id__in=location_ids)
+    if product_id:
+        qs = qs.filter(product_id=product_id)
+
+    rows = []
+    for lb in qs.order_by("expiry_date", "product__sku"):
+        days_until = (lb.expiry_date - today).days
+        if days_until < 0:
+            st = "expired"
+        elif days_until <= days:
+            st = "near_expiry"
+        else:
+            st = "okay"
+        if status in ("expired", "near_expiry", "okay"):
+            if st != status:
+                continue
+        elif status != "all" and st == "okay":
+            # Default view: expired + near only.
+            continue
+        unit = lot_layer_unit_cost(tenant, lb.product, lb.location, lot_code=lb.lot_code,
+                                   serial_number=lb.serial_number, expiry_date=lb.expiry_date)
+        cost = unit if unit is not None else (lb.product.average_cost or lb.product.standard_cost or ZERO)
+        on_hand = lb.on_hand or ZERO
+        reserved = lb.reserved or ZERO
+        rows.append({
+            "product": lb.product, "location": lb.location,
+            "lot_code": lb.lot_code, "serial_number": lb.serial_number,
+            "expiry_date": lb.expiry_date, "days_until": days_until,
+            "on_hand": on_hand, "reserved": reserved, "available": on_hand - reserved,
+            "value": (on_hand * cost).quantize(Decimal("0.01")),
+            "valuation_source": "lot_layer" if unit is not None else "product_cost",
+            "status": st,
+        })
+    return rows
+
+
+def lot_trace(tenant, product_id, lot_code, serial_number=None, location_ids=None):
+    """Full movement history + costing trail + current balances for one lot
+    (scoped by tenant + product + lot, and serial when given - lot codes are not
+    assumed globally unique).
+
+    Returns: product, lot/serial, movements (each annotated with its GRN / PO /
+    supplier source for receipts and its InventoryIssueCost lines for issues),
+    cost layers (receipt cost + remaining), and per-location lot balances.
+    """
+    from core.models import (InventoryMovement, InventoryIssueCost, InventoryCostLayer,
+                             InventoryLotBalance, GoodsReceipt, Product)
+
+    product = Product.objects.filter(tenant=tenant, id=product_id).first()
+    if product is None:
+        return None
+
+    mv = InventoryMovement.objects.filter(tenant=tenant, product_id=product_id, lot_code=lot_code)
+    if serial_number:
+        mv = mv.filter(serial_number=serial_number)
+    if location_ids is not None:
+        mv = mv.filter(location_id__in=location_ids)
+    moves = list(mv.select_related("product", "location", "bin").order_by("created_at", "id"))
+
+    ic_map = {}
+    for ic in (InventoryIssueCost.objects
+               .filter(tenant=tenant, movement_id__in=[m.id for m in moves])
+               .select_related("cost_layer")):
+        ic_map.setdefault(ic.movement_id, []).append(ic)
+
+    grn_numbers = [m.ref_id for m in moves if m.ref_type == "GRN" and m.ref_id]
+    grns = {g.grn_number: g for g in (GoodsReceipt.objects
+            .filter(tenant=tenant, grn_number__in=grn_numbers)
+            .select_related("po", "po__supplier"))}
+
+    movements = []
+    for m in moves:
+        grn = grns.get(m.ref_id) if m.ref_type == "GRN" else None
+        po = getattr(grn, "po", None)
+        movements.append({
+            "m": m, "grn": grn, "po": po,
+            "supplier": getattr(po, "supplier", None),
+            "issue_costs": ic_map.get(m.id, []),
+        })
+
+    layer_q = InventoryCostLayer.objects.filter(tenant=tenant, product_id=product_id, lot_code=lot_code)
+    if serial_number:
+        layer_q = layer_q.filter(serial_number=serial_number)
+    if location_ids is not None:
+        layer_q = layer_q.filter(location_id__in=location_ids)
+    layers = list(layer_q.select_related("location").order_by("received_at", "id"))
+
+    bal_q = InventoryLotBalance.objects.filter(tenant=tenant, product_id=product_id, lot_code=lot_code)
+    if serial_number:
+        bal_q = bal_q.filter(serial_number=serial_number)
+    if location_ids is not None:
+        bal_q = bal_q.filter(location_id__in=location_ids)
+    balances = list(bal_q.select_related("location"))
+
+    return {
+        "product": product, "lot_code": lot_code, "serial_number": serial_number,
+        "movements": movements, "layers": layers, "balances": balances,
+    }
+
+
 def cash_flow_summary(tenant, date_from=None, date_to=None):
     """A simple cash flow summary built from movements on the Bank account.
 
