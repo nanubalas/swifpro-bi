@@ -85,7 +85,18 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
             lot_code=lot_code, serial_number=serial_number, expiry_date=expiry_date,
             defaults={"on_hand": Decimal("0.00"), "reserved": Decimal("0.00")}
         )
-        lot_bal.on_hand = (lot_bal.on_hand or Decimal("0.00")) + qty_delta
+        new_lot_on_hand = (lot_bal.on_hand or Decimal("0.00")) + qty_delta
+        # Under strict control, refuse to issue more of a lot/serial than is on
+        # hand. For serials (on_hand is 0/1) this enforces the 1-on-hand rule:
+        # a serial that isn't in stock can't be issued (M6).
+        if qty_delta < 0 and new_lot_on_hand < 0 and getattr(tenant, "block_negative_stock", False):
+            from django.core.exceptions import ValidationError
+            label = serial_number or lot_code or (expiry_date and str(expiry_date)) or "lot"
+            raise ValidationError(
+                f"Insufficient stock for {product.sku} ({label}) at {location.name}: "
+                f"on hand {lot_bal.on_hand or Decimal('0.00')}, requested {-qty_delta}."
+            )
+        lot_bal.on_hand = new_lot_on_hand
         lot_bal.save()
 
     # ----- Valuation -----
@@ -165,6 +176,17 @@ def reserve_stock(*, tenant, product, location, qty, ref_type, ref_id, lot_code=
         tenant=tenant, product=product, location=location,
         defaults={"on_hand": Decimal("0.00"), "reserved": Decimal("0.00")}
     )
+    # Available-to-promise: refuse to reserve more than is unreserved on hand
+    # when the tenant runs strict stock control. The lock above makes the
+    # check race-free. Off by default, so over-reservation only warns (M7).
+    if getattr(tenant, "block_negative_stock", False):
+        available = (bal.on_hand or Decimal("0.00")) - (bal.reserved or Decimal("0.00"))
+        if qty > available:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                f"Cannot reserve {qty} of {product.sku} at {location.name}: "
+                f"only {available} available to promise."
+            )
     bal.reserved = bal.reserved + qty
     bal.save()
 
@@ -191,17 +213,23 @@ def release_reservations(*, tenant, ref_type, ref_id):
         tenant=tenant, ref_type=ref_type, ref_id=ref_id, status=InventoryReservation.Status.ACTIVE
     )
     for r in qs:
-        bal = InventoryBalance.objects.select_for_update().get(tenant=tenant, product=r.product, location=r.location)
-        bal.reserved = bal.reserved - r.qty
-        bal.save()
+        # Decrement the balance's reserved qty if the row still exists. A missing
+        # balance/lot row must not abort the whole release: the reservation is
+        # still marked released so it never gets stuck ACTIVE (M14).
+        bal = (InventoryBalance.objects.select_for_update()
+               .filter(tenant=tenant, product=r.product, location=r.location).first())
+        if bal is not None:
+            bal.reserved = (bal.reserved or Decimal("0.00")) - r.qty
+            bal.save()
 
         if r.lot_code or r.serial_number or r.expiry_date:
-            lot_bal = InventoryLotBalance.objects.select_for_update().get(
-                tenant=tenant, product=r.product, location=r.location,
-                lot_code=r.lot_code, serial_number=r.serial_number, expiry_date=r.expiry_date
-            )
-            lot_bal.reserved = lot_bal.reserved - r.qty
-            lot_bal.save()
+            lot_bal = (InventoryLotBalance.objects.select_for_update()
+                       .filter(tenant=tenant, product=r.product, location=r.location,
+                               lot_code=r.lot_code, serial_number=r.serial_number,
+                               expiry_date=r.expiry_date).first())
+            if lot_bal is not None:
+                lot_bal.reserved = (lot_bal.reserved or Decimal("0.00")) - r.qty
+                lot_bal.save()
 
         r.status = InventoryReservation.Status.RELEASED
         r.save()

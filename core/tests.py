@@ -1755,6 +1755,140 @@ class HighInventoryFixTests(TestCase):
         self.assertEqual(sum(by_loc.values()), res["current_value"])
 
 
+class MediumInventoryFixTests(TestCase):
+    """Regression tests for the Medium inventory findings M5/M6/M7/M13/M14."""
+
+    # ---- M14: release survives a missing balance row ----
+    def test_m14_release_survives_missing_balance_row(self):
+        from core.services.inventory import release_reservations
+        from core.models import InventoryReservation
+        t = Tenant.objects.create(name="M14 Co")
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-M14", name="P")
+        r = InventoryReservation.objects.create(
+            tenant=t, product=p, location=loc, qty=Decimal("5"),
+            status=InventoryReservation.Status.ACTIVE, ref_type="X", ref_id="1")
+        # No InventoryBalance row exists for (p, loc): release must not crash.
+        release_reservations(tenant=t, ref_type="X", ref_id="1")
+        r.refresh_from_db()
+        self.assertEqual(r.status, InventoryReservation.Status.RELEASED)
+
+    # ---- M7: ATP blocks over-reservation under strict control ----
+    def test_m7_atp_blocks_over_reservation(self):
+        from core.services.inventory import reserve_stock
+        from core.models import InventoryBalance, InventoryReservation
+        from django.core.exceptions import ValidationError
+        t = Tenant.objects.create(name="M7 Co", block_negative_stock=True)
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-M7", name="P")
+        InventoryBalance.objects.create(tenant=t, product=p, location=loc,
+                                        on_hand=Decimal("5"), reserved=Decimal("0"))
+        with self.assertRaises(ValidationError):
+            reserve_stock(tenant=t, product=p, location=loc, qty=Decimal("10"),
+                          ref_type="X", ref_id="1")
+        bal = InventoryBalance.objects.get(tenant=t, product=p, location=loc)
+        self.assertEqual(bal.reserved, Decimal("0.00"))  # rolled back
+        self.assertFalse(InventoryReservation.objects.filter(tenant=t).exists())
+        # Within available is still fine.
+        reserve_stock(tenant=t, product=p, location=loc, qty=Decimal("3"),
+                      ref_type="X", ref_id="2")
+        bal.refresh_from_db()
+        self.assertEqual(bal.reserved, Decimal("3.00"))
+
+    def test_m7_over_reservation_allowed_by_default(self):
+        from core.services.inventory import reserve_stock
+        from core.models import InventoryBalance
+        t = Tenant.objects.create(name="M7 Allow Co")  # strict control off
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-M7B", name="P")
+        InventoryBalance.objects.create(tenant=t, product=p, location=loc,
+                                        on_hand=Decimal("5"), reserved=Decimal("0"))
+        reserve_stock(tenant=t, product=p, location=loc, qty=Decimal("10"),
+                      ref_type="X", ref_id="1")  # over-reserve permitted
+        self.assertEqual(InventoryBalance.objects.get(tenant=t, product=p, location=loc).reserved,
+                         Decimal("10.00"))
+
+    # ---- M6: a serial/lot can't be issued without on-hand stock ----
+    def test_m6_serial_not_in_stock_cannot_be_issued(self):
+        from core.services.inventory import apply_movement
+        from django.core.exceptions import ValidationError
+        t = Tenant.objects.create(name="M6 Co", block_negative_stock=True)
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-M6", name="P")
+        # Receive serial SN-1 (on-hand at location is now 1).
+        apply_movement(tenant=t, product=p, location=loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("1"), ref_type="T", ref_id="1",
+                       unit_cost=Decimal("2.00"), serial_number="SN-1")
+        # Issuing a different serial passes the location on-hand check (1 -> 0)
+        # but must fail the lot/serial check: SN-2 has none on hand.
+        with self.assertRaises(ValidationError):
+            apply_movement(tenant=t, product=p, location=loc, movement_type="SALE",
+                           qty_delta=Decimal("-1"), ref_type="T", ref_id="2",
+                           serial_number="SN-2")
+
+    # ---- M13: a bad landed-cost amount rolls the whole receipt back ----
+    def test_m13_bad_landed_cost_rolls_back_receipt(self):
+        t = Tenant.objects.create(name="M13 Co")
+        loc = Location.objects.create(tenant=t, name="WH")
+        supplier = Supplier.objects.create(tenant=t, name="S")
+        product = Product.objects.create(tenant=t, sku="SKU-M13", name="P")
+        po = PurchaseOrder.objects.create(tenant=t, po_number="PO-M13", supplier=supplier,
+                                          status=PurchaseOrder.Status.SUBMITTED)
+        pol = PurchaseOrderLine.objects.create(po=po, product=product,
+                                               ordered_qty=Decimal("10"), unit_cost=Decimal("3.00"))
+        shipment = Shipment.objects.create(tenant=t, po=po, from_supplier=supplier, destination=loc)
+        sl = ShipmentLine.objects.create(shipment=shipment, po_line=pol, expected_qty=Decimal("10"))
+        user = User.objects.create_user("m13u", password="pw")
+        user.groups.add(Group.objects.get_or_create(name="Warehouse")[0])
+        UserProfile.objects.create(user=user, tenant=t)
+        self.client.login(username="m13u", password="pw")
+
+        from django.urls import reverse
+        resp = self.client.post(reverse("receive_po", args=[po.id]), {
+            "grn_number": "GRN-M13", f"recv_{sl.id}": "5",
+            "landed_cost_name": "Freight", "landed_cost_amount": "not-a-number",
+        })
+        self.assertEqual(resp.status_code, 302)
+        # Whole receipt rolled back: no GRN, no movement, no stock, no landed cost.
+        self.assertFalse(GoodsReceipt.objects.filter(tenant=t).exists())
+        self.assertFalse(InventoryMovement.objects.filter(tenant=t).exists())
+        self.assertFalse(InventoryBalance.objects.filter(tenant=t, on_hand__gt=0).exists())
+
+    # ---- M5: a stale cycle count bounces for re-approval instead of mis-posting ----
+    def test_m5_stale_cycle_count_refreshes_and_bounces(self):
+        from core.models import (CycleCount, CycleCountLine, InventoryBalance,
+                                  InventoryMovement, OrgMembership)
+        from django.urls import reverse
+        t = Tenant.objects.create(name="M5 Co")
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-M5", name="P")
+        bal = InventoryBalance.objects.create(tenant=t, product=p, location=loc,
+                                              on_hand=Decimal("10"), reserved=Decimal("0"))
+        cc = CycleCount.objects.create(tenant=t, location=loc, status=CycleCount.Status.APPROVED)
+        line = CycleCountLine.objects.create(cycle_count=cc, product=p, system_qty=Decimal("10"),
+                                             counted_qty=Decimal("12"), variance_qty=Decimal("2"))
+        user = User.objects.create_user("m5u", password="pw")
+        OrgMembership.objects.create(user=user, tenant=t, role="ADMIN", is_default=True)
+        self.client.login(username="m5u", password="pw")
+
+        # Stock moves to 7 after approval -> the frozen variance is now stale.
+        bal.on_hand = Decimal("7"); bal.save()
+        self.client.post(reverse("cycle_count_post", args=[cc.id]))
+
+        cc.refresh_from_db(); line.refresh_from_db()
+        self.assertEqual(cc.status, CycleCount.Status.SUBMITTED)   # bounced, not posted
+        self.assertEqual(line.system_qty, Decimal("7.00"))          # refreshed to live
+        self.assertEqual(line.variance_qty, Decimal("5.00"))        # 12 - 7
+        self.assertFalse(InventoryMovement.objects.filter(tenant=t, ref_type="CYCLE_COUNT").exists())
+
+        # Re-approve (no further movement) and post -> book reaches the counted 12.
+        cc.status = CycleCount.Status.APPROVED; cc.save()
+        self.client.post(reverse("cycle_count_post", args=[cc.id]))
+        bal.refresh_from_db()
+        self.assertEqual(bal.on_hand, Decimal("12.00"))
+        self.assertTrue(InventoryMovement.objects.filter(tenant=t, ref_type="CYCLE_COUNT").exists())
+
+
 class LandedCostTests(TestCase):
     def setUp(self):
         from core.models import Location
