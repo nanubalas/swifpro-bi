@@ -54,7 +54,7 @@ from core.forms import (
     SalesQuoteForm, SalesQuoteLineFormSet, CustomerOrderForm, CustomerOrderLineFormSet,
     RecurringInvoiceForm, RecurringInvoiceLineFormSet
 )
-from core.services.inventory import apply_movement, reserve_stock, release_reservations
+from core.services.inventory import apply_movement, reserve_stock, release_reservations, consume_reservations
 from core.services.bom import explode_product
 from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment, post_inventory_receipt, post_cogs, post_expense, post_credit_note
 from core.services import reports as reports_service
@@ -3351,8 +3351,9 @@ def _post_sales_order(order: SalesOrder):
     shortages = []
     ref_id = f"{order.channel}:{order.order_number}"
 
-    # Release reserved qty first (we still post even if insufficient; warn)
-    release_reservations(tenant=order.tenant, ref_type="SALES_ORDER", ref_id=ref_id)
+    # Consume the order's reservations: posting fulfils it, so the held stock
+    # ships rather than being freed unfulfilled (reservation lifecycle fix).
+    consume_reservations(tenant=order.tenant, ref_type="SALES_ORDER", ref_id=ref_id)
 
     cogs_total = Decimal("0.00")
     for line in order.lines.select_related("product").all():
@@ -3779,23 +3780,41 @@ def cycle_count_post(request, cc_id):
                                   "were refreshed. Please review and re-approve before posting.")
         return redirect("cycle_count_detail", cc_id=cc.id)
 
-    # Post variances as ADJUSTMENT movements
+    # Post variances as ADJUSTMENT movements, then book the net GL impact valued
+    # identically to those movements (cycle-count variance valuation fix).
+    from core.services.inventory import lot_layer_unit_cost
+    from core.services.gl import post_cycle_count_adjustment
+    net_value = Decimal("0.00")
     for line in lines:
-        if Decimal(line.variance_qty) == Decimal("0.00"):
+        var = Decimal(line.variance_qty)
+        if var == Decimal("0.00"):
             continue
-        apply_movement(
+        unit_cost = None
+        # A positive (found) variance on a lot/serial item is valued at that
+        # lot's existing layer cost, not the product average. A negative variance
+        # already consumes the lot's own layers (lot-scoped FIFO), so its movement
+        # value is the lot cost without extra handling.
+        if var > 0 and (line.lot_code or line.serial_number or line.expiry_date):
+            unit_cost = lot_layer_unit_cost(
+                tenant, line.product, cc.location,
+                lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date)
+        movement = apply_movement(
             tenant=tenant,
             product=line.product,
             location=cc.location,
             movement_type="ADJUSTMENT",
-            qty_delta=Decimal(line.variance_qty),
+            qty_delta=var,
             ref_type="CYCLE_COUNT",
             ref_id=str(cc.id),
             notes="Cycle count variance posted", user=request.user,
             lot_code=line.lot_code,
             serial_number=line.serial_number,
-            expiry_date=line.expiry_date
+            expiry_date=line.expiry_date,
+            unit_cost=unit_cost,
         )
+        net_value += movement.value or Decimal("0.00")
+
+    post_cycle_count_adjustment(tenant, cc, net_value, user=request.user)
 
     cc.status = CycleCount.Status.POSTED
     cc.save()
@@ -4799,8 +4818,10 @@ def corder_to_invoice(request, order_id):
         inv = _invoice_from_lines(tenant, o.customer, o.currency_code, o.notes, o.terms, o, "source_order", request.user)
         o.status = CustomerOrder.Status.INVOICED
         o.save(update_fields=["status"])
-        # Release reservations: the invoice will deduct actual stock on issue.
-        _release_customer_order(o)
+        # Consume reservations: the order is now fulfilled into an invoice (the
+        # invoice deducts actual stock on issue), so the hold ships rather than
+        # being freed unfulfilled (reservation lifecycle fix).
+        consume_reservations(tenant=tenant, ref_type="CUSTOMER_ORDER", ref_id=str(o.id))
         log_audit(action="ORDER_INVOICED", request=request, user=request.user, tenant=tenant,
                   detail=f"{o.order_number} -> invoice {inv.invoice_number}")
         messages.success(request, f"Sales order {o.order_number} converted to invoice {inv.invoice_number} (draft).")

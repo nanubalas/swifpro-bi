@@ -258,30 +258,121 @@ def reserve_stock(*, tenant, product, location, qty, ref_type, ref_id, lot_code=
         ref_type=ref_type, ref_id=ref_id
     )
 
+def _unhold(tenant, reservation, amount):
+    """Decrement the held `reserved` quantity on the balance (and lot balance)
+    for a reservation by `amount`. Resilient to a missing balance/lot row so a
+    release/consume never gets stuck (M14)."""
+    bal = (InventoryBalance.objects.select_for_update()
+           .filter(tenant=tenant, product=reservation.product, location=reservation.location).first())
+    if bal is not None:
+        bal.reserved = (bal.reserved or Decimal("0.00")) - amount
+        bal.save()
+    if reservation.lot_code or reservation.serial_number or reservation.expiry_date:
+        lot_bal = (InventoryLotBalance.objects.select_for_update()
+                   .filter(tenant=tenant, product=reservation.product, location=reservation.location,
+                           lot_code=reservation.lot_code, serial_number=reservation.serial_number,
+                           expiry_date=reservation.expiry_date).first())
+        if lot_bal is not None:
+            lot_bal.reserved = (lot_bal.reserved or Decimal("0.00")) - amount
+            lot_bal.save()
+
+
 @transaction.atomic
 def release_reservations(*, tenant, ref_type, ref_id):
-    """Release all active reservations for a given ref."""
+    """Release all active reservations for a given ref (e.g. order cancelled)."""
     qs = InventoryReservation.objects.select_for_update().filter(
-        tenant=tenant, ref_type=ref_type, ref_id=ref_id, status=InventoryReservation.Status.ACTIVE
+        tenant=tenant, ref_type=ref_type, ref_id=str(ref_id), status=InventoryReservation.Status.ACTIVE
     )
     for r in qs:
-        # Decrement the balance's reserved qty if the row still exists. A missing
-        # balance/lot row must not abort the whole release: the reservation is
-        # still marked released so it never gets stuck ACTIVE (M14).
-        bal = (InventoryBalance.objects.select_for_update()
-               .filter(tenant=tenant, product=r.product, location=r.location).first())
-        if bal is not None:
-            bal.reserved = (bal.reserved or Decimal("0.00")) - r.qty
-            bal.save()
-
-        if r.lot_code or r.serial_number or r.expiry_date:
-            lot_bal = (InventoryLotBalance.objects.select_for_update()
-                       .filter(tenant=tenant, product=r.product, location=r.location,
-                               lot_code=r.lot_code, serial_number=r.serial_number,
-                               expiry_date=r.expiry_date).first())
-            if lot_bal is not None:
-                lot_bal.reserved = (lot_bal.reserved or Decimal("0.00")) - r.qty
-                lot_bal.save()
-
+        _unhold(tenant, r, r.qty)
         r.status = InventoryReservation.Status.RELEASED
-        r.save()
+        r.save(update_fields=["status"])
+
+
+@transaction.atomic
+def consume_reservations(*, tenant, ref_type, ref_id, qty=None):
+    """Transition ACTIVE reservations for a ref to CONSUMED as the order is
+    fulfilled, releasing the held `reserved` quantity.
+
+    With ``qty=None`` every active reservation for the ref is consumed in full.
+    With a quantity, consume up to that amount (oldest first); a reservation
+    that is only partially fulfilled is split — the consumed part becomes a
+    CONSUMED row and the remainder stays ACTIVE. Returns the qty consumed.
+
+    Distinct from release_reservations (cancellation): both free the reserved
+    qty so ATP is correct, but CONSUMED records that the stock actually shipped,
+    whereas RELEASED records that it was freed without fulfilment (M-reservation)."""
+    remaining = None if qty is None else Decimal(qty)
+    consumed_total = Decimal("0.00")
+    qs = (InventoryReservation.objects.select_for_update()
+          .filter(tenant=tenant, ref_type=ref_type, ref_id=str(ref_id),
+                  status=InventoryReservation.Status.ACTIVE)
+          .order_by("id"))
+    for r in qs:
+        if remaining is not None and remaining <= 0:
+            break
+        take = r.qty if remaining is None else min(remaining, r.qty)
+        if take <= 0:
+            continue
+        _unhold(tenant, r, take)
+        if take >= r.qty:
+            r.status = InventoryReservation.Status.CONSUMED
+            r.save(update_fields=["status"])
+        else:
+            # Partial fulfilment: shrink the active hold, record a CONSUMED row.
+            r.qty = r.qty - take
+            r.save(update_fields=["qty"])
+            InventoryReservation.objects.create(
+                tenant=tenant, product=r.product, location=r.location, qty=take,
+                status=InventoryReservation.Status.CONSUMED,
+                lot_code=r.lot_code, serial_number=r.serial_number, expiry_date=r.expiry_date,
+                ref_type=ref_type, ref_id=str(ref_id))
+        consumed_total += take
+        if remaining is not None:
+            remaining -= take
+    return consumed_total
+
+
+def expire_stale_reservations(*, tenant, older_than):
+    """Release ACTIVE reservations created on/before `older_than` (a datetime).
+
+    Stale holds (orders abandoned without fulfilment or cancellation) otherwise
+    keep stock reserved forever and understate ATP. Returns the count released."""
+    stale = (InventoryReservation.objects
+             .filter(tenant=tenant, status=InventoryReservation.Status.ACTIVE,
+                     created_at__lte=older_than)
+             .values_list("ref_type", "ref_id").distinct())
+    n = 0
+    for ref_type, ref_id in stale:
+        before = (InventoryReservation.objects
+                  .filter(tenant=tenant, ref_type=ref_type, ref_id=ref_id,
+                          status=InventoryReservation.Status.ACTIVE).count())
+        release_reservations(tenant=tenant, ref_type=ref_type, ref_id=ref_id)
+        n += before
+    return n
+
+
+def lot_layer_value(tenant, product, location, lot_code=None, serial_number=None, expiry_date=None):
+    """Remaining FIFO cost-layer value for a specific lot/serial at a location
+    (sum of qty_remaining x unit_cost). Returns None when the lot has no layers
+    (e.g. non-FIFO product), so callers can fall back to a documented cost."""
+    qs = InventoryCostLayer.objects.filter(
+        tenant=tenant, product=product, location=location, qty_remaining__gt=0)
+    if lot_code or serial_number or expiry_date:
+        qs = qs.filter(lot_code=lot_code, serial_number=serial_number, expiry_date=expiry_date)
+    agg = qs.aggregate(v=Sum(F("qty_remaining") * F("unit_cost")), q=Sum("qty_remaining"))
+    if not agg["q"]:
+        return None
+    return agg["v"] or Decimal("0.00"), agg["q"]
+
+
+def lot_layer_unit_cost(tenant, product, location, lot_code=None, serial_number=None, expiry_date=None):
+    """Weighted-average remaining unit cost of a lot's FIFO layers, or None when
+    the lot has no remaining layers."""
+    res = lot_layer_value(tenant, product, location, lot_code, serial_number, expiry_date)
+    if res is None:
+        return None
+    value, qty = res
+    if not qty:
+        return None
+    return (value / qty).quantize(COST_DP, rounding=ROUND_HALF_UP)

@@ -471,6 +471,42 @@ def post_stock_adjustment(adj, value, user=None, entry_date=None):
 
 
 @transaction.atomic
+def post_cycle_count_adjustment(tenant, cc, value, user=None, entry_date=None):
+    """Book the GL impact of a cycle-count variance: DR/CR Inventory vs Inventory
+    Adjustments, valued identically to the inventory movements the count posted
+    (lot cost for lot/serial items, product cost otherwise). Cycle counts
+    previously moved stock without any GL entry, drifting the control account.
+    Idempotent on the CYCLE_COUNT ref."""
+    value = Decimal(value)
+    if value == Decimal("0.00"):
+        return None
+    ref_id = str(cc.id)
+    existing = JournalEntry.objects.filter(tenant=tenant, ref_type="CYCLE_COUNT", ref_id=ref_id).order_by("-id").first()
+    if existing:
+        return existing
+
+    je = JournalEntry.objects.create(
+        tenant=tenant, site_id=getattr(cc.location, "site_id", None),
+        entry_date=entry_date or timezone.now().date(),
+        ref_type="CYCLE_COUNT", ref_id=ref_id,
+        memo=f"Cycle count {cc.id} variance ({cc.location.name})",
+        posted_by=user, posted_at=timezone.now(),
+    )
+    inv_acc = _acc(tenant, "inventory")
+    adj_acc = _acc(tenant, "inventory_adjustment")
+    amount = abs(value)
+    if value < Decimal("0.00"):
+        # Net shortage: inventory decreases, recognise the loss.
+        JournalLine.objects.create(entry=je, account=adj_acc, description="Cycle count shrinkage", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=Decimal("0.00"), credit=amount)
+    else:
+        # Net overage: inventory increases, reduce the expense.
+        JournalLine.objects.create(entry=je, account=inv_acc, description="Inventory", debit=amount, credit=Decimal("0.00"))
+        JournalLine.objects.create(entry=je, account=adj_acc, description="Cycle count gain", debit=Decimal("0.00"), credit=amount)
+    return je
+
+
+@transaction.atomic
 def reverse_payment(payment, user=None):
     """Post a reversing journal entry for a payment (used when a payment is
     deleted). Mirrors the original PAYMENT entry with debit/credit swapped, so

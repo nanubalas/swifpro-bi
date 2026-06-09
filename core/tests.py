@@ -2052,6 +2052,232 @@ class LotScopedCostingTests(TestCase):
         self.assertEqual(sale.value, Decimal("-19.00"))
 
 
+class LotValuationReportTests(TestCase):
+    """inventory_analytics values each lot from its own cost layer, not the
+    product moving-average."""
+
+    def test_lot_detail_uses_lot_layer_cost(self):
+        import datetime
+        from django.utils import timezone
+        from core.services.inventory import apply_movement
+        from core.services import reports
+        t = Tenant.objects.create(name="LotVal Co")
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-LV", name="P",
+                                   cost_method=Product.CostMethod.FIFO, track_lots=True, track_expiry=True)
+        apply_movement(tenant=t, product=p, location=loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="a", unit_cost=Decimal("2.00"),
+                       lot_code="A", expiry_date=datetime.date(2026, 6, 1))
+        apply_movement(tenant=t, product=p, location=loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="b", unit_cost=Decimal("8.00"),
+                       lot_code="B", expiry_date=datetime.date(2026, 12, 1))
+        # Company average is 5.00; lot valuation must NOT use it.
+        today = timezone.localdate()
+        res = reports.inventory_analytics(t, today, today)
+        lots = {l["lot"]: l["value"] for l in res["lots"]}
+        self.assertEqual(lots["A"], Decimal("20.00"))  # 10 @ 2.00
+        self.assertEqual(lots["B"], Decimal("80.00"))  # 10 @ 8.00, not 10 @ 5.00 = 50
+        # And the per-location FIFO total stays consistent.
+        self.assertEqual(res["current_value"], Decimal("100.00"))
+
+
+class InventoryGlReconciliationTests(TestCase):
+    """Inventory subledger (movement value) vs GL inventory control account."""
+
+    def setUp(self):
+        from core.models import GLAccount
+        self.t = Tenant.objects.create(name="Recon Co")  # signal seeds GL accounts
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-R", name="P")
+        self.inv_acc = GLAccount.objects.get(tenant=self.t, code="1000")
+
+    def _mv(self, value, created=None):
+        value = Decimal(value)
+        m = InventoryMovement.objects.create(
+            tenant=self.t, product=self.p, location=self.loc, site_id=self.loc.site_id,
+            movement_type=("RECEIVE" if value > 0 else "SALE"),
+            qty_delta=(Decimal("1") if value > 0 else Decimal("-1")),
+            unit_cost=abs(value), value=value, ref_type="T", ref_id="x")
+        if created is not None:
+            InventoryMovement.objects.filter(id=m.id).update(created_at=created)
+        return m
+
+    def _gl(self, debit="0", credit="0", entry_date=None):
+        from core.models import JournalEntry, JournalLine
+        from django.utils import timezone
+        je = JournalEntry.objects.create(tenant=self.t, entry_date=entry_date or timezone.localdate(),
+                                         ref_type="T", ref_id="x", memo="t")
+        JournalLine.objects.create(entry=je, account=self.inv_acc,
+                                   debit=Decimal(debit), credit=Decimal(credit))
+        return je
+
+    def test_matched_postings_reconcile(self):
+        from core.services import reports
+        self._mv("50"); self._gl(debit="50")
+        rec = reports.inventory_gl_reconciliation(self.t)
+        self.assertEqual(rec["closing_subledger"], Decimal("50.00"))
+        self.assertEqual(rec["closing_gl"], Decimal("50.00"))
+        self.assertEqual(rec["variance"], Decimal("0.00"))
+        self.assertTrue(rec["balanced"])
+
+    def test_missing_gl_posting_flagged(self):
+        from core.services import reports
+        self._mv("50")  # movement but no GL entry
+        rec = reports.inventory_gl_reconciliation(self.t)
+        self.assertEqual(rec["closing_subledger"], Decimal("50.00"))
+        self.assertEqual(rec["closing_gl"], Decimal("0.00"))
+        self.assertEqual(rec["variance"], Decimal("50.00"))
+        self.assertFalse(rec["balanced"])
+        # Periodic check flags it.
+        flagged = reports.check_inventory_gl_variance(tenant=self.t)
+        self.assertEqual(len(flagged), 1)
+
+    def test_duplicate_gl_posting_flagged(self):
+        from core.services import reports
+        self._mv("50"); self._gl(debit="50"); self._gl(debit="50")  # double-posted GL
+        rec = reports.inventory_gl_reconciliation(self.t)
+        self.assertEqual(rec["closing_gl"], Decimal("100.00"))
+        self.assertEqual(rec["variance"], Decimal("-50.00"))
+
+    def test_backdated_movement_lands_in_opening(self):
+        import datetime
+        from django.utils import timezone
+        from core.services import reports
+        old = timezone.make_aware(datetime.datetime(2026, 1, 1, 12, 0, 0))
+        self._mv("50", created=old)
+        self._gl(debit="50", entry_date=datetime.date(2026, 1, 1))
+        # As-of everything: reconciles.
+        self.assertEqual(reports.inventory_gl_reconciliation(self.t)["variance"], Decimal("0.00"))
+        # With a window starting after the backdate, it sits in opening, not the period.
+        rec = reports.inventory_gl_reconciliation(self.t, date_from=datetime.date(2026, 6, 1))
+        self.assertEqual(rec["opening_subledger"], Decimal("50.00"))
+        self.assertEqual(rec["movement_debits"], Decimal("0.00"))
+        self.assertEqual(rec["movement_ids"], [])
+        self.assertTrue(rec["balanced"])
+
+
+class CycleCountGlValuationTests(TestCase):
+    """Cycle-count variance posts to the GL, valued at the issued lot's cost."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="CCGL Co")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-CC", name="P",
+                                        cost_method=Product.CostMethod.FIFO, track_lots=True, track_expiry=True)
+        self.eA = datetime.date(2026, 6, 1)
+        self.eB = datetime.date(2026, 12, 1)
+        from core.services.inventory import apply_movement
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="a", unit_cost=Decimal("2.00"),
+                       lot_code="A", expiry_date=self.eA)
+        apply_movement(tenant=self.t, product=self.p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="b", unit_cost=Decimal("8.00"),
+                       lot_code="B", expiry_date=self.eB)
+        self.user = User.objects.create_user("ccu", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="ccu", password="pw")
+
+    def test_variance_valued_per_lot_and_posted_to_gl(self):
+        from django.urls import reverse
+        from core.models import CycleCount, CycleCountLine
+        cc = CycleCount.objects.create(tenant=self.t, location=self.loc, status=CycleCount.Status.APPROVED)
+        # Shrink each lot by 1: lot A (cost 2) and lot B (cost 8).
+        CycleCountLine.objects.create(cycle_count=cc, product=self.p, lot_code="A", expiry_date=self.eA,
+                                      system_qty=Decimal("10"), counted_qty=Decimal("9"), variance_qty=Decimal("-1"))
+        CycleCountLine.objects.create(cycle_count=cc, product=self.p, lot_code="B", expiry_date=self.eB,
+                                      system_qty=Decimal("10"), counted_qty=Decimal("9"), variance_qty=Decimal("-1"))
+        self.client.post(reverse("cycle_count_post", args=[cc.id]))
+
+        # Each variance movement is valued at its own lot's cost (not the 5.00 avg).
+        mv = {m.lot_code: m.value for m in
+              InventoryMovement.objects.filter(tenant=self.t, ref_type="CYCLE_COUNT")}
+        self.assertEqual(mv["A"], Decimal("-2.00"))   # 1 @ 2.00
+        self.assertEqual(mv["B"], Decimal("-8.00"))   # 1 @ 8.00, NOT 1 @ 5.00 average
+        # GL inventory control credited by exactly the movement total (2 + 8 = 10):
+        # the cycle count now posts to the GL, valued the same as the movements.
+        self.assertEqual(_account_balance(self.t, "1000"), Decimal("-10.00"))
+        self.assertEqual(sum(mv.values()), Decimal("-10.00"))
+
+
+class ReservationLifecycleTests(TestCase):
+    """Reservations transition ACTIVE -> CONSUMED on fulfilment (partial-aware),
+    -> RELEASED on cancellation, and ATP reflects only active holds."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(name="Resv LC Co")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-RL", name="P")
+        InventoryBalance.objects.create(tenant=self.t, product=self.p, location=self.loc,
+                                        on_hand=Decimal("50"), reserved=Decimal("0"))
+
+    def _reserve(self, qty, ref="ORD-1"):
+        from core.services.inventory import reserve_stock
+        reserve_stock(tenant=self.t, product=self.p, location=self.loc, qty=Decimal(qty),
+                      ref_type="ORDER", ref_id=ref)
+
+    def _bal(self):
+        return InventoryBalance.objects.get(tenant=self.t, product=self.p, location=self.loc)
+
+    def test_full_fulfilment_consumes(self):
+        from core.services.inventory import consume_reservations
+        from core.models import InventoryReservation
+        self._reserve("8")
+        self.assertEqual(self._bal().reserved, Decimal("8.00"))
+        consumed = consume_reservations(tenant=self.t, ref_type="ORDER", ref_id="ORD-1")
+        self.assertEqual(consumed, Decimal("8.00"))
+        self.assertEqual(self._bal().reserved, Decimal("0.00"))  # ATP restored
+        r = InventoryReservation.objects.get(tenant=self.t, ref_id="ORD-1")
+        self.assertEqual(r.status, InventoryReservation.Status.CONSUMED)
+
+    def test_partial_fulfilment_splits(self):
+        from core.services.inventory import consume_reservations
+        from core.models import InventoryReservation
+        self._reserve("8")
+        consumed = consume_reservations(tenant=self.t, ref_type="ORDER", ref_id="ORD-1", qty=Decimal("3"))
+        self.assertEqual(consumed, Decimal("3.00"))
+        self.assertEqual(self._bal().reserved, Decimal("5.00"))  # 5 still held
+        active = InventoryReservation.objects.get(tenant=self.t, ref_id="ORD-1",
+                                                  status=InventoryReservation.Status.ACTIVE)
+        self.assertEqual(active.qty, Decimal("5.00"))
+        consumed_row = InventoryReservation.objects.get(tenant=self.t, ref_id="ORD-1",
+                                                        status=InventoryReservation.Status.CONSUMED)
+        self.assertEqual(consumed_row.qty, Decimal("3.00"))
+
+    def test_cancellation_releases(self):
+        from core.services.inventory import release_reservations
+        from core.models import InventoryReservation
+        self._reserve("8")
+        release_reservations(tenant=self.t, ref_type="ORDER", ref_id="ORD-1")
+        self.assertEqual(self._bal().reserved, Decimal("0.00"))
+        self.assertEqual(InventoryReservation.objects.get(tenant=self.t, ref_id="ORD-1").status,
+                         InventoryReservation.Status.RELEASED)
+
+    def test_atp_excludes_consumed(self):
+        from core.services.inventory import consume_reservations
+        self._reserve("20")
+        b = self._bal()
+        self.assertEqual(b.on_hand - b.reserved, Decimal("30.00"))  # 50 - 20 held
+        consume_reservations(tenant=self.t, ref_type="ORDER", ref_id="ORD-1", qty=Decimal("20"))
+        b = self._bal()
+        self.assertEqual(b.on_hand - b.reserved, Decimal("50.00"))  # hold cleared
+
+    def test_expire_stale_reservations(self):
+        import datetime
+        from django.utils import timezone
+        from core.services.inventory import expire_stale_reservations
+        from core.models import InventoryReservation
+        self._reserve("4")
+        # Backdate the reservation so it looks stale.
+        InventoryReservation.objects.filter(tenant=self.t, ref_id="ORD-1").update(
+            created_at=timezone.make_aware(datetime.datetime(2026, 1, 1, 0, 0, 0)))
+        n = expire_stale_reservations(
+            tenant=self.t, older_than=timezone.make_aware(datetime.datetime(2026, 3, 1, 0, 0, 0)))
+        self.assertEqual(n, 1)
+        self.assertEqual(self._bal().reserved, Decimal("0.00"))
+
+
 class LandedCostTests(TestCase):
     def setUp(self):
         from core.models import Location

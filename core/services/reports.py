@@ -14,7 +14,7 @@ from django.db.models import F, Sum
 
 from core.models import (
     GLAccount, JournalLine, CustomerInvoice, SupplierInvoice, InventoryBalance,
-    InventoryCostLayer, Product,
+    InventoryCostLayer, InventoryMovement, Product,
 )
 
 DEBIT_NORMAL = {GLAccount.Type.ASSET, GLAccount.Type.EXPENSE, GLAccount.Type.COGS}
@@ -297,14 +297,21 @@ def inventory_analytics(tenant, date_from, date_to, location_ids=None):
         e["value"] = e["value"].quantize(Decimal("0.01"))
     by_location = sorted(loc_map.values(), key=lambda r: r["value"], reverse=True)
 
-    # Lot / serial / expiry detail.
+    # Lot / serial / expiry detail. Value each lot from its OWN remaining cost
+    # layers (lot-specific cost), consistent with lot-scoped FIFO costing. Fall
+    # back to the product's average/standard cost only when the lot has no cost
+    # layer (e.g. non-FIFO products, or pre-costing legacy lots) (lot-valuation fix).
+    from core.services.inventory import lot_layer_unit_cost
     lots = []
     lot_qs = (InventoryLotBalance.objects.filter(tenant=tenant, on_hand__gt=0)
               .select_related("product", "location").order_by("expiry_date", "product__sku"))
     if location_ids is not None:
         lot_qs = lot_qs.filter(location_id__in=location_ids)
     for lb in lot_qs:
-        cost = lb.product.average_cost or lb.product.standard_cost or ZERO
+        lot_cost = lot_layer_unit_cost(tenant, lb.product, lb.location,
+                                       lot_code=lb.lot_code, serial_number=lb.serial_number,
+                                       expiry_date=lb.expiry_date)
+        cost = lot_cost if lot_cost is not None else (lb.product.average_cost or lb.product.standard_cost or ZERO)
         lots.append({
             "product": lb.product, "location": lb.location, "lot": lb.lot_code,
             "serial": lb.serial_number, "expiry": lb.expiry_date, "qty": lb.on_hand,
@@ -327,6 +334,127 @@ def inventory_analytics(tenant, date_from, date_to, location_ids=None):
         "cogs": cogs, "turnover": turnover, "days_inventory": days_inventory,
         "period_days": period_days,
     }
+
+
+def inventory_gl_reconciliation(tenant, date_from=None, date_to=None, site_id=None,
+                                account_key="inventory"):
+    """Reconcile the inventory subledger (InventoryMovement.value) against the GL
+    inventory control account, so a missed/duplicated/failed posting is caught
+    instead of drifting silently.
+
+    Returns opening/movement-debits/movement-credits/closing for the subledger,
+    the GL account's closing balance, and the variance (subledger - GL), plus
+    drill-down lists of the movement IDs and journal-entry IDs in the window.
+
+    Sign convention: InventoryMovement.value is +inbound / -outbound, matching
+    the inventory account's debit-normal balance (debits - credits).
+
+    Scope: reconcile at tenant level (optionally a period). A `site_id` filter is
+    supported, but note inter-site transfers post inventory movements at both
+    sites yet create no GL entry, so per-site variance can be non-zero by design;
+    the tenant-level (no site filter) figure is the authoritative control check.
+    """
+    from core.services.gl import DEFAULT_ACCOUNT_CODES
+    ZERO = Decimal("0.00")
+    code = DEFAULT_ACCOUNT_CODES[account_key]
+    account = GLAccount.objects.filter(tenant=tenant, code=code).first()
+
+    # ---- Subledger (inventory movements) ----
+    mv = InventoryMovement.objects.filter(tenant=tenant, value__isnull=False)
+    if site_id is not None:
+        mv = mv.filter(site_id=site_id)
+
+    def _mv_sum(qs):
+        return qs.aggregate(s=Sum("value"))["s"] or ZERO
+
+    opening_sub = ZERO
+    period_mv = mv
+    if date_from is not None:
+        opening_sub = _mv_sum(mv.filter(created_at__date__lt=date_from))
+        period_mv = period_mv.filter(created_at__date__gte=date_from)
+    if date_to is not None:
+        period_mv = period_mv.filter(created_at__date__lte=date_to)
+    movement_debits = _mv_sum(period_mv.filter(value__gt=0))
+    movement_credits = -(_mv_sum(period_mv.filter(value__lt=0)))  # positive magnitude
+    closing_sub = opening_sub + movement_debits - movement_credits
+
+    # ---- GL inventory control account ----
+    gl = JournalLine.objects.filter(entry__tenant=tenant, account__code=code)
+    if site_id is not None:
+        gl = gl.filter(entry__site_id=site_id)
+
+    def _gl_net(qs):
+        a = qs.aggregate(d=Sum("debit"), c=Sum("credit"))
+        return (a["d"] or ZERO) - (a["c"] or ZERO)
+
+    opening_gl = ZERO
+    period_gl = gl
+    if date_from is not None:
+        opening_gl = _gl_net(gl.filter(entry__entry_date__lt=date_from))
+        period_gl = period_gl.filter(entry__entry_date__gte=date_from)
+    if date_to is not None:
+        period_gl = period_gl.filter(entry__entry_date__lte=date_to)
+    gl_agg = period_gl.aggregate(d=Sum("debit"), c=Sum("credit"))
+    gl_debits = gl_agg["d"] or ZERO
+    gl_credits = gl_agg["c"] or ZERO
+    closing_gl = opening_gl + gl_debits - gl_credits
+
+    variance = (closing_sub - closing_gl).quantize(Decimal("0.01"))
+
+    return {
+        "account_code": code,
+        "account": account,
+        "date_from": date_from,
+        "date_to": date_to,
+        "site_id": site_id,
+        # Subledger
+        "opening_subledger": opening_sub.quantize(Decimal("0.01")),
+        "movement_debits": movement_debits.quantize(Decimal("0.01")),
+        "movement_credits": movement_credits.quantize(Decimal("0.01")),
+        "closing_subledger": closing_sub.quantize(Decimal("0.01")),
+        # GL
+        "opening_gl": opening_gl.quantize(Decimal("0.01")),
+        "gl_debits": gl_debits.quantize(Decimal("0.01")),
+        "gl_credits": gl_credits.quantize(Decimal("0.01")),
+        "closing_gl": closing_gl.quantize(Decimal("0.01")),
+        # Result
+        "variance": variance,
+        "balanced": variance == Decimal("0.00"),
+        # Drill-down
+        "movement_ids": list(period_mv.order_by("id").values_list("id", flat=True)),
+        "journal_entry_ids": sorted(set(period_gl.values_list("entry_id", flat=True))),
+    }
+
+
+def inventory_gl_reconciliation_by_location(tenant, date_from=None, date_to=None):
+    """Subledger inventory value per location (movements only), as drill-down for
+    the control-account reconciliation. The GL inventory account is not split by
+    location, so this is the subledger side only."""
+    ZERO = Decimal("0.00")
+    mv = InventoryMovement.objects.filter(tenant=tenant, value__isnull=False)
+    if date_from is not None:
+        mv = mv.filter(created_at__date__gte=date_from)
+    if date_to is not None:
+        mv = mv.filter(created_at__date__lte=date_to)
+    rows = (mv.values("location_id", "location__name")
+            .annotate(value=Sum("value")).order_by("location__name"))
+    return [{"location_id": r["location_id"], "location": r["location__name"],
+             "value": (r["value"] or ZERO).quantize(Decimal("0.01"))} for r in rows]
+
+
+def check_inventory_gl_variance(tenant=None, tolerance=Decimal("0.01"), as_of=None):
+    """Periodic control check: flag tenants whose inventory subledger and GL
+    control account differ by more than `tolerance` (as-of `as_of`, default all
+    history). Returns a list of reconciliation dicts that breach tolerance."""
+    from core.models import Tenant
+    tenants = [tenant] if tenant is not None else list(Tenant.objects.all())
+    flagged = []
+    for t in tenants:
+        rec = inventory_gl_reconciliation(t, date_to=as_of)
+        if abs(rec["variance"]) > tolerance:
+            rec["tenant"] = t
+            flagged.append(rec)
+    return flagged
 
 
 def cash_flow_summary(tenant, date_from=None, date_to=None):
