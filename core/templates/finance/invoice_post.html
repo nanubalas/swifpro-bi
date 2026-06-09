@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Post Supplier Invoice - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'invoice_detail' inv.id %}{% endblock %}
 {% block body %}
 <div class="card card-soft">
   <div class="card-body p-4">

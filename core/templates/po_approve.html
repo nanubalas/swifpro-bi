@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Approve PO {{ po.po_number }} - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'po_detail' po.id %}{% endblock %}
 {% block body %}
 <div class="card card-soft">
   <div class="card-body p-4">
