@@ -1,6 +1,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.db.models import Sum, F
+from django.core.exceptions import ValidationError
 from core.models import (
     InventoryBalance, InventoryLotBalance, InventoryBinBalance, InventoryMovement,
     InventoryReservation, InventoryCostLayer, InventoryIssueCost, Product,
@@ -92,6 +93,46 @@ def select_fefo_lots(*, tenant, product, location, qty):
 
 
 @transaction.atomic
+def _guard_serial_movement(tenant, product, location, qty_delta, lot_code, serial_number, expiry_date):
+    """Enforce serial identity + 0/1 cardinality for serial-tracked products on
+    every stock-affecting movement, INDEPENDENT of tenant.block_negative_stock.
+
+    A serial number is a unique physical unit, so its on-hand is only ever 0 or 1:
+      * receipt / return / transfer-in : 0 -> 1
+      * sale / issue / write-off / RTS / transfer-out : 1 -> 0
+    The guard raises a friendly ValidationError (surfaced in forms/API, not a 500)
+    when a serial is missing, already in stock (duplicate receipt), or not
+    currently available (issuing something that isn't there). Non-serial products
+    are unaffected. Runs before any balance is written, so a rejected movement
+    leaves no trace."""
+    if not getattr(product, "track_serial", False) or qty_delta == 0:
+        return
+    if not serial_number:
+        raise ValidationError(
+            f"{product.sku} is serial-tracked — a serial number is required for this movement.")
+    if qty_delta > 0:
+        # Inbound: the serial must not already be on hand anywhere at this location
+        # (across any lot/expiry row), so it can never be received twice.
+        on_hand = (InventoryLotBalance.objects
+                   .filter(tenant=tenant, product=product, location=location, serial_number=serial_number)
+                   .aggregate(s=Sum("on_hand"))["s"] or Decimal("0.00"))
+        if on_hand + qty_delta > 1:
+            raise ValidationError(
+                f"Serial {serial_number} for {product.sku} is already in stock at "
+                f"{location.name} — it cannot be received again.")
+    else:
+        # Outbound: the exact serial row being relieved must hold the unit.
+        lb = (InventoryLotBalance.objects
+              .filter(tenant=tenant, product=product, location=location,
+                      lot_code=lot_code, serial_number=serial_number, expiry_date=expiry_date)
+              .first())
+        current = (lb.on_hand if lb else Decimal("0.00"))
+        if current + qty_delta < 0:
+            raise ValidationError(
+                f"Serial {serial_number} for {product.sku} is not available at "
+                f"{location.name} — it cannot be issued.")
+
+
 def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_type, ref_id,
                    notes=None, lot_code=None, serial_number=None, expiry_date=None, unit_cost=None,
                    user=None, bin=None):
@@ -107,6 +148,10 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
     # receipts both read the same prior on-hand/average and the last writer
     # clobbers the other's moving-average (corrupted COGS/valuation).
     product = Product.objects.select_for_update().get(pk=product.pk)
+
+    # Serial-tracked products: require a serial and enforce 0/1 cardinality before
+    # touching any balance (always on, regardless of block_negative_stock).
+    _guard_serial_movement(tenant, product, location, qty_delta, lot_code, serial_number, expiry_date)
 
     # Quantity on hand BEFORE this movement (company-wide, for the average).
     # Read AFTER the product lock so it reflects any just-committed movement.

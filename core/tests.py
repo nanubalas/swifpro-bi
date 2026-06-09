@@ -7477,3 +7477,210 @@ class BackNavCoverageTests(TestCase):
             self.assertEqual(resp.status_code, 200, f"{url} did not return 200")
             self.assertContains(resp, f'data-back-url="{expected}"',
                                 msg_prefix=f"{url} missing back_url {expected}")
+
+
+class SerialCorrectnessTests(TestCase):
+    """Serial-number correctness package: ledger cardinality guard, AR-path serial
+    carry-through + COGS, and serial-aware stock adjustments."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Customer
+        self.t = Tenant.objects.create(name="Serial Co")          # signal seeds GL
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.loc2 = Location.objects.create(tenant=self.t, name="WH2")
+        self.sp = Product.objects.create(tenant=self.t, sku="SN-PROD", name="Serial Widget",
+                                         cost_method=Product.CostMethod.FIFO, track_serial=True)
+        self.plain = Product.objects.create(tenant=self.t, sku="PLAIN", name="Plain")
+        self.cust = Customer.objects.create(tenant=self.t, name="Acme")
+        self.user = User.objects.create_user("seru", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+
+    # ---- helpers -----------------------------------------------------------
+    def _recv(self, serial, cost="7.00", product=None, location=None, tenant=None):
+        from core.services.inventory import apply_movement
+        return apply_movement(
+            tenant=tenant or self.t, product=product or self.sp, location=location or self.loc,
+            movement_type="RECEIVE", qty_delta=Decimal("1"), ref_type="T", ref_id="r" + serial,
+            unit_cost=Decimal(cost), serial_number=serial)
+
+    def _lot(self, serial, location=None, tenant=None):
+        from core.models import InventoryLotBalance
+        return InventoryLotBalance.objects.filter(
+            tenant=tenant or self.t, product=self.sp, location=location or self.loc,
+            serial_number=serial).first()
+
+    # ---- Part 1: cardinality guard ----------------------------------------
+    def test_valid_receipt_0_to_1(self):
+        self._recv("SN1")
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("1.00"))
+
+    def test_duplicate_receipt_blocked(self):
+        from django.core.exceptions import ValidationError
+        self._recv("SN1")
+        with self.assertRaises(ValidationError):
+            self._recv("SN1")
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("1.00"))  # unchanged
+
+    def test_serial_on_hand_cannot_exceed_one(self):
+        from django.core.exceptions import ValidationError
+        from core.services.inventory import apply_movement
+        with self.assertRaises(ValidationError):
+            apply_movement(tenant=self.t, product=self.sp, location=self.loc,
+                           movement_type="RECEIVE", qty_delta=Decimal("2"),
+                           ref_type="T", ref_id="x", unit_cost=Decimal("7.00"), serial_number="SN1")
+
+    def test_issue_below_zero_blocked_even_without_flag(self):
+        from django.core.exceptions import ValidationError
+        from core.services.inventory import apply_movement
+        self.assertFalse(self.t.block_negative_stock)   # default off
+        with self.assertRaises(ValidationError):        # serial not in stock
+            apply_movement(tenant=self.t, product=self.sp, location=self.loc,
+                           movement_type="SALE", qty_delta=Decimal("-1"),
+                           ref_type="T", ref_id="y", serial_number="GHOST")
+
+    def test_serial_required_on_movement(self):
+        from django.core.exceptions import ValidationError
+        from core.services.inventory import apply_movement
+        with self.assertRaises(ValidationError):
+            apply_movement(tenant=self.t, product=self.sp, location=self.loc,
+                           movement_type="SALE", qty_delta=Decimal("-1"), ref_type="T", ref_id="z")
+
+    def test_valid_sale_1_to_0(self):
+        from core.services.inventory import apply_movement
+        self._recv("SN1")
+        apply_movement(tenant=self.t, product=self.sp, location=self.loc, movement_type="SALE",
+                       qty_delta=Decimal("-1"), ref_type="T", ref_id="s", serial_number="SN1")
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("0.00"))
+
+    def test_valid_return_0_to_1(self):
+        from core.services.inventory import apply_movement
+        self._recv("SN1")
+        apply_movement(tenant=self.t, product=self.sp, location=self.loc, movement_type="SALE",
+                       qty_delta=Decimal("-1"), ref_type="T", ref_id="s", serial_number="SN1")
+        apply_movement(tenant=self.t, product=self.sp, location=self.loc, movement_type="RETURN",
+                       qty_delta=Decimal("1"), ref_type="RMA", ref_id="r", serial_number="SN1")
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("1.00"))
+
+    # ---- Part 2: AR path ---------------------------------------------------
+    def _invoice(self, serial=None, product=None):
+        from core.models import CustomerInvoice, CustomerInvoiceLine
+        inv = CustomerInvoice.objects.create(
+            tenant=self.t, customer=self.cust, invoice_number="INV-" + (serial or "x"),
+            location=self.loc, status=CustomerInvoice.Status.DRAFT)
+        CustomerInvoiceLine.objects.create(
+            invoice=inv, product=product or self.sp, qty=Decimal("1"),
+            unit_price=Decimal("10.00"), serial_number=serial)
+        return inv
+
+    def test_invoice_line_carries_serial(self):
+        inv = self._invoice(serial="SN1")
+        self.assertEqual(inv.lines.first().serial_number, "SN1")
+
+    def test_invoice_cogs_posts_with_serial_and_issue_cost(self):
+        from core.services.gl import post_customer_invoice
+        from core.models import InventoryMovement, InventoryIssueCost, JournalEntry
+        self._recv("SN1", cost="7.00")
+        inv = self._invoice(serial="SN1")
+        post_customer_invoice(inv, user=self.user)
+        mv = InventoryMovement.objects.get(tenant=self.t, ref_type="AR_INVOICE", product=self.sp)
+        self.assertEqual(mv.serial_number, "SN1")
+        self.assertEqual(mv.value, Decimal("-7.00"))             # the serial's own layer cost
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("0.00"))
+        ic = InventoryIssueCost.objects.get(movement=mv)
+        self.assertEqual(ic.serial_number, "SN1")
+        self.assertIsNotNone(ic.cost_layer)                      # linked to the serial's layer
+        self.assertTrue(JournalEntry.objects.filter(tenant=self.t, ref_type="COGS", ref_id=inv.invoice_number).exists())
+
+    def test_issue_serial_product_without_serial_blocked(self):
+        from django.core.exceptions import ValidationError
+        from core.services.gl import post_customer_invoice
+        from core.models import CustomerInvoice
+        self._recv("SN1")
+        inv = self._invoice(serial=None)                         # serial-tracked, no serial
+        with self.assertRaises(ValidationError):
+            post_customer_invoice(inv, user=self.user)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, CustomerInvoice.Status.DRAFT)   # atomic rollback
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("1.00"))  # stock untouched
+
+    def test_order_to_invoice_preserves_serial(self):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.views import _invoice_from_lines
+        order = CustomerOrder.objects.create(tenant=self.t, customer=self.cust, order_number="SO-1")
+        CustomerOrderLine.objects.create(order=order, product=self.sp, qty=Decimal("1"),
+                                         unit_price=Decimal("10"), serial_number="SN1")
+        inv = _invoice_from_lines(self.t, self.cust, "GBP", "", "", order, "source_order", self.user)
+        self.assertEqual(inv.lines.first().serial_number, "SN1")
+
+    def test_quote_to_order_preserves_serial(self):
+        from core.models import SalesQuote, SalesQuoteLine, CustomerOrder, CustomerOrderLine
+        from core.views import _copy_sales_lines
+        q = SalesQuote.objects.create(tenant=self.t, customer=self.cust, quote_number="Q-1")
+        SalesQuoteLine.objects.create(quote=q, product=self.sp, qty=Decimal("1"),
+                                      unit_price=Decimal("10"), serial_number="SN1")
+        order = CustomerOrder.objects.create(tenant=self.t, customer=self.cust, order_number="SO-2")
+        _copy_sales_lines(q, order, CustomerOrderLine, "order")
+        self.assertEqual(order.lines.first().serial_number, "SN1")
+
+    # ---- Part 3: stock adjustment -----------------------------------------
+    def test_stock_adjustment_writeoff_with_serial(self):
+        from core.models import StockAdjustment, InventoryMovement
+        from core.views import _post_stock_adjustment
+        self._recv("SN1")
+        adj = StockAdjustment.objects.create(
+            tenant=self.t, product=self.sp, location=self.loc,
+            reason=StockAdjustment.Reason.WRITE_OFF, qty_delta=Decimal("-1"), serial_number="SN1")
+        _post_stock_adjustment(adj, self.user)
+        adj.refresh_from_db()
+        self.assertEqual(adj.status, StockAdjustment.Status.POSTED)
+        mv = InventoryMovement.objects.get(tenant=self.t, ref_type="STOCK_ADJ", ref_id=str(adj.id))
+        self.assertEqual(mv.serial_number, "SN1")
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("0.00"))
+
+    def test_stock_adjustment_serial_product_without_serial_blocked(self):
+        from core.forms import StockAdjustmentForm
+        form = StockAdjustmentForm(data={
+            "product": self.sp.id, "location": self.loc.id,
+            "reason": "WRITE_OFF", "qty_delta": "-1"})
+        self.assertFalse(form.is_valid())
+        self.assertIn("serial_number", form.errors)
+
+    # ---- Regression: existing paths still work -----------------------------
+    def test_channel_sales_path_still_works(self):
+        from core.models import SalesOrder, SalesOrderLine, InventoryMovement
+        from core.views import _post_sales_order
+        self._recv("SN1")
+        order = SalesOrder.objects.create(tenant=self.t, order_number="CH-1",
+                                          ship_from_location=self.loc)
+        SalesOrderLine.objects.create(order=order, product=self.sp, qty=Decimal("1"),
+                                      serial_number="SN1", unit_price=Decimal("10"))
+        _post_sales_order(order)
+        mv = InventoryMovement.objects.get(tenant=self.t, ref_type="SALES_ORDER", product=self.sp)
+        self.assertEqual(mv.serial_number, "SN1")
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("0.00"))
+
+    def test_transfer_with_serial_still_works(self):
+        from core.models import InventoryTransfer, InventoryTransferLine
+        from core.views import _post_transfer
+        self._recv("SN1")
+        tr = InventoryTransfer.objects.create(
+            tenant=self.t, transfer_number="TR-1", from_location=self.loc, to_location=self.loc2)
+        InventoryTransferLine.objects.create(transfer=tr, product=self.sp, qty=Decimal("1"),
+                                             serial_number="SN1")
+        _post_transfer(tr, None)
+        self.assertEqual(self._lot("SN1", location=self.loc).on_hand, Decimal("0.00"))
+        self.assertEqual(self._lot("SN1", location=self.loc2).on_hand, Decimal("1.00"))
+
+    def test_tenant_isolation(self):
+        from core.models import OrgMembership
+        other = Tenant.objects.create(name="Other Serial Co")
+        oloc = Location.objects.create(tenant=other, name="OWH")
+        op = Product.objects.create(tenant=other, sku="SN-PROD", name="Serial Widget",
+                                    cost_method=Product.CostMethod.FIFO, track_serial=True)
+        self._recv("SN1")                                        # tenant A
+        # Same serial in another tenant is independent (no clash).
+        self._recv("SN1", product=op, location=oloc, tenant=other)
+        self.assertEqual(self._lot("SN1").on_hand, Decimal("1.00"))         # A unaffected
+        from core.models import InventoryLotBalance
+        ob = InventoryLotBalance.objects.get(tenant=other, product=op, location=oloc, serial_number="SN1")
+        self.assertEqual(ob.on_hand, Decimal("1.00"))

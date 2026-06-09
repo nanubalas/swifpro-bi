@@ -166,11 +166,13 @@ class ProductForm(TenantModelForm):
 class StockAdjustmentForm(TenantModelForm):
     class Meta:
         model = StockAdjustment
-        fields = ["product", "location", "bin", "reason", "supplier", "qty_delta", "notes"]
+        fields = ["product", "location", "bin", "lot_code", "serial_number", "expiry_date",
+                  "reason", "supplier", "qty_delta", "notes"]
         help_texts = {
             "qty_delta": "Negative to remove stock (damage / loss / return to supplier); positive to add found stock.",
             "supplier": "For 'Return to supplier' only — raises a purchase credit note that reduces Accounts Payable.",
             "bin": "Optional bin (must belong to the chosen location).",
+            "serial_number": "Required for serial-tracked products — the specific unit being adjusted.",
         }
 
     def __init__(self, *args, **kwargs):
@@ -200,6 +202,12 @@ class StockAdjustmentForm(TenantModelForm):
                 self.add_error("qty_delta", "A return to supplier must remove stock (negative quantity).")
         if bin_ and location and bin_.location_id != location.id:
             self.add_error("bin", "Bin must belong to the chosen location.")
+        # Serial-tracked products must name the specific unit being adjusted, so
+        # damage / write-off / loss is traceable (the ledger enforces this too).
+        product = cleaned.get("product")
+        if product is not None and getattr(product, "track_serial", False) \
+                and qty is not None and qty != 0 and not (cleaned.get("serial_number") or "").strip():
+            self.add_error("serial_number", f"{product.sku} is serial-tracked — enter the serial number being adjusted.")
         return cleaned
 
 
@@ -630,7 +638,8 @@ CustomerInvoiceLineFormSet = inlineformset_factory(
     CustomerInvoice,
     CustomerInvoiceLine,
     form=TenantModelForm,
-    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code"),
+    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code",
+            "lot_code", "serial_number", "expiry_date"),
     extra=1,
     can_delete=True
 )
@@ -788,7 +797,8 @@ class SalesQuoteForm(TenantModelForm):
 
 SalesQuoteLineFormSet = inlineformset_factory(
     SalesQuote, SalesQuoteLine, form=TenantModelForm,
-    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code"),
+    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code",
+            "lot_code", "serial_number", "expiry_date"),
     extra=1, can_delete=True,
 )
 
@@ -816,7 +826,8 @@ class CustomerOrderForm(TenantModelForm):
 
 CustomerOrderLineFormSet = inlineformset_factory(
     CustomerOrder, CustomerOrderLine, form=TenantModelForm,
-    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code"),
+    fields=("product", "description", "qty", "uom", "unit_price", "discount_pct", "tax_code",
+            "lot_code", "serial_number", "expiry_date"),
     extra=1, can_delete=True,
 )
 
