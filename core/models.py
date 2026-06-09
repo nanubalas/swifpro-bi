@@ -1071,6 +1071,12 @@ class StockAdjustment(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
     bin = models.ForeignKey("Bin", on_delete=models.SET_NULL, null=True, blank=True, related_name="stock_adjustments")
+    # Optional lot/serial of the unit being adjusted. Required for serial-tracked
+    # products (enforced in the inventory ledger), so damage / write-off / loss is
+    # traceable to the specific unit and valued at its own cost layer.
+    lot_code = models.CharField(max_length=50, blank=True, null=True)
+    serial_number = models.CharField(max_length=100, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
     reason = models.CharField(max_length=20, choices=Reason.choices, default=Reason.ADJUSTMENT)
     # For RETURN_SUPPLIER: who the goods go back to (drives a purchase credit note).
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name="stock_returns")
@@ -1638,6 +1644,13 @@ class _SalesLine(models.Model):
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"), blank=True)
     tax_code = models.ForeignKey("TaxCode", on_delete=models.PROTECT, blank=True, null=True)
+    # Optional lot/serial identity carried through to stock relief on invoice
+    # issue. Required at issue time for serial-tracked products (enforced in the
+    # inventory ledger), so the exact unit shipped is recorded and COGS uses its
+    # own cost layer.
+    lot_code = models.CharField(max_length=50, blank=True, null=True)
+    serial_number = models.CharField(max_length=100, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
 
     class Meta:
         abstract = True
@@ -2003,6 +2016,11 @@ class CustomerInvoiceLine(models.Model):
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"), blank=True)  # % off this line
     tax_code = models.ForeignKey(TaxCode, on_delete=models.PROTECT, blank=True, null=True)
+    # Optional lot/serial identity used when COGS relieves stock on issue.
+    # Required for serial-tracked products (enforced in the inventory ledger).
+    lot_code = models.CharField(max_length=50, blank=True, null=True)
+    serial_number = models.CharField(max_length=100, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
 
     class Meta:
         unique_together = ("invoice", "product", "description")

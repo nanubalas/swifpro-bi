@@ -2262,6 +2262,7 @@ def _post_stock_adjustment(adj, user):
         ref_type="STOCK_ADJ", ref_id=str(adj.id),
         notes=(adj.get_reason_display() + (f": {adj.notes}" if adj.notes else "")), user=user,
         bin=adj.bin,
+        lot_code=adj.lot_code, serial_number=adj.serial_number, expiry_date=adj.expiry_date,
     )
     value = getattr(movement, "value", None) or Decimal("0.00")
     fields = ["status", "posted_at", "approved_by"]
@@ -2322,7 +2323,13 @@ def adjustment_create(request):
                       detail=f"{adj.product.sku} {adj.qty_delta} ({adj.get_reason_display()}) - awaiting approval")
             messages.warning(request, f"Adjustment for {adj.product.sku} needs approval (value {adj.estimated_value}). It's pending.")
         else:
-            _post_stock_adjustment(adj, request.user)
+            try:
+                _post_stock_adjustment(adj, request.user)
+            except ValidationError as e:
+                # e.g. serial not available / missing — roll back and report cleanly.
+                transaction.set_rollback(True)
+                messages.error(request, "; ".join(e.messages))
+                return render(request, "inventory\adjustment_form.html", {"tenant": tenant, "form": form})
             log_audit(action="STOCK_ADJUSTED", request=request, user=request.user, tenant=tenant,
                       detail=f"{adj.product.sku} {adj.qty_delta} ({adj.get_reason_display()})")
             messages.success(request, f"Stock adjusted: {adj.product.sku} {adj.qty_delta}.")
@@ -2338,7 +2345,12 @@ def adjustment_approve(request, adj_id):
     tenant = _get_default_tenant(request)
     adj = get_object_or_404(StockAdjustment, id=adj_id, tenant=tenant)
     if request.method == "POST" and adj.status == StockAdjustment.Status.PENDING:
-        _post_stock_adjustment(adj, request.user)
+        try:
+            _post_stock_adjustment(adj, request.user)
+        except ValidationError as e:
+            transaction.set_rollback(True)
+            messages.error(request, "; ".join(e.messages))
+            return redirect("adjustment_list")
         log_audit(action="STOCK_ADJ_APPROVED", request=request, user=request.user, tenant=tenant,
                   detail=f"{adj.product.sku} {adj.qty_delta} ({adj.get_reason_display()})")
         messages.success(request, f"Adjustment approved and posted: {adj.product.sku} {adj.qty_delta}.")
@@ -5006,12 +5018,16 @@ SALES_DOC_READ = [ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY]
 
 
 def _copy_sales_lines(src, dest, line_model, fk_name):
-    """Copy product/qty/price/discount/tax lines from one sales doc to another."""
+    """Copy product/qty/price/discount/tax lines from one sales doc to another,
+    carrying lot/serial identity so it survives quote -> order conversion."""
     for l in src.lines.all():
         line_model.objects.create(**{
             fk_name: dest, "product": l.product, "description": l.description,
             "qty": l.qty, "uom": getattr(l, "uom", None), "unit_price": l.unit_price,
             "discount_pct": l.discount_pct, "tax_code": l.tax_code,
+            "lot_code": getattr(l, "lot_code", None),
+            "serial_number": getattr(l, "serial_number", None),
+            "expiry_date": getattr(l, "expiry_date", None),
         })
 
 
@@ -5146,7 +5162,10 @@ def _invoice_from_lines(tenant, customer, currency, notes, terms, src, line_attr
         CustomerInvoiceLine.objects.create(
             invoice=inv, product=l.product, description=l.description, qty=l.qty,
             uom=getattr(l, "uom", None),
-            unit_price=l.unit_price, discount_pct=l.discount_pct, tax_code=l.tax_code)
+            unit_price=l.unit_price, discount_pct=l.discount_pct, tax_code=l.tax_code,
+            lot_code=getattr(l, "lot_code", None),
+            serial_number=getattr(l, "serial_number", None),
+            expiry_date=getattr(l, "expiry_date", None))
     return inv
 
 

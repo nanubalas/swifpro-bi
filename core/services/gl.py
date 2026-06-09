@@ -99,12 +99,19 @@ def _post_invoice_cogs(inv, user=None):
     for line in product_lines:
         # Relieve stock in the product's base unit (line qty may be in a sell UOM).
         base_qty = to_base_qty(line.product, line.qty or Decimal("0.00"), getattr(line, "uom", None))
+        # Carry the line's lot/serial identity through to stock relief so the exact
+        # unit is recorded and COGS draws from its own cost layer. For serial-
+        # tracked products the inventory ledger requires this and rejects a
+        # missing/unavailable serial (raising ValidationError up to the issue view).
         movement = apply_movement(
             tenant=tenant, product=line.product, location=location,
             movement_type=InventoryMovement.MovementType.SALE,
             qty_delta=base_qty * Decimal("-1"),
             ref_type="AR_INVOICE", ref_id=inv.invoice_number,
             notes=f"Invoice {inv.invoice_number}", user=user,
+            lot_code=getattr(line, "lot_code", None),
+            serial_number=getattr(line, "serial_number", None),
+            expiry_date=getattr(line, "expiry_date", None),
         )
         cogs_total += -(movement.value or Decimal("0.00"))
 

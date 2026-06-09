@@ -34,8 +34,9 @@
             <thead class="table-light">
               <tr><th style="width:24%">Product</th><th style="width:18%">Description</th>
                   <th class="text-end" style="width:8%">Qty</th><th style="width:10%">UOM</th><th class="text-end" style="width:13%">Unit price</th>
-                  <th class="text-end" style="width:8%">Disc %</th><th style="width:12%">Tax</th>
-                  <th class="text-center" style="width:7%">Remove</th></tr>
+                  <th class="text-end" style="width:8%">Disc %</th><th style="width:11%">Tax</th>
+                  <th style="width:11%">Serial</th>
+                  <th class="text-center" style="width:6%">Remove</th></tr>
             </thead>
             <tbody id="lines-body">
               {% for f in formset %}
@@ -44,6 +45,7 @@
                 <td>{{ f.product }}</td><td>{{ f.description }}</td>
                 <td class="text-end">{{ f.qty }}</td><td>{{ f.uom }}</td><td class="text-end">{{ f.unit_price }}</td>
                 <td class="text-end">{{ f.discount_pct }}</td><td>{{ f.tax_code }}</td>
+                <td>{{ f.serial_number }}</td>
                 <td class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
               </tr>
               {% endfor %}
@@ -57,6 +59,7 @@
             <td>{{ formset.empty_form.product }}</td><td>{{ formset.empty_form.description }}</td>
             <td class="text-end">{{ formset.empty_form.qty }}</td><td>{{ formset.empty_form.uom }}</td><td class="text-end">{{ formset.empty_form.unit_price }}</td>
             <td class="text-end">{{ formset.empty_form.discount_pct }}</td><td>{{ formset.empty_form.tax_code }}</td>
+            <td>{{ formset.empty_form.serial_number }}</td>
             <td class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
           </tr>
         </template>
