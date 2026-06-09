@@ -128,9 +128,10 @@ class Tenant(models.Model):
     # (0 = no threshold; a posted-direct expense skips the approval step).
     expense_approval_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
-    # When on, an outbound movement that would drive a location's on-hand below
-    # zero is rejected instead of silently creating negative stock (H7). Off by
-    # default to preserve the existing "allow with warning" behaviour.
+    # Strict stock control. When on, the system refuses to: drive a location's
+    # on-hand below zero (H7), issue more of a lot/serial than is on hand (M6),
+    # or reserve more than is available to promise (M7). Off by default to
+    # preserve the existing "allow with warning" behaviour.
     block_negative_stock = models.BooleanField(default=False)
 
     def __str__(self):

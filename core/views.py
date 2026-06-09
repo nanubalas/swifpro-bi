@@ -2056,20 +2056,26 @@ def receive_po(request, po_id):
                     status=GoodsReceipt.Status.DRAFT,
                 )
 
-                # Optional single landed cost (MVP)
+                # Optional single landed cost (MVP). A malformed amount must abort
+                # the whole receipt (caught below) rather than be silently dropped:
+                # otherwise stock capitalizes without its landed cost and no error
+                # surfaces (M13).
                 lc_name = (request.POST.get("landed_cost_name") or "").strip()
                 lc_amount_raw = (request.POST.get("landed_cost_amount") or "").strip()
                 if lc_name and lc_amount_raw:
                     try:
-                        LandedCostCharge.objects.create(
-                            tenant=tenant,
-                            receipt=receipt,
-                            name=lc_name,
-                            amount=Decimal(lc_amount_raw),
-                            currency_code=po.currency_code,
-                        )
-                    except Exception:
-                        pass
+                        lc_amount = Decimal(lc_amount_raw)
+                    except InvalidOperation:
+                        raise ValueError(f"Invalid landed cost amount '{lc_amount_raw}'.")
+                    if lc_amount < Decimal("0.00"):
+                        raise ValueError("Landed cost amount cannot be negative.")
+                    LandedCostCharge.objects.create(
+                        tenant=tenant,
+                        receipt=receipt,
+                        name=lc_name,
+                        amount=lc_amount,
+                        currency_code=po.currency_code,
+                    )
 
                 # Pass 1: validate + collect received lines and the goods total.
                 received_lines = []
@@ -3723,8 +3729,38 @@ def cycle_count_post(request, cc_id):
     if cc.status != CycleCount.Status.APPROVED:
         return redirect("cycle_count_detail", cc_id=cc.id)
 
+    # Staleness guard: the variance was snapshotted at submit/approval. If stock
+    # has moved since, applying the frozen variance would post a wrong
+    # correction (M5). Re-read the live system qty per line; if anything changed,
+    # refresh the variances and bounce the count back for re-approval instead of
+    # posting. Posting therefore only ever applies a variance that matches the
+    # current book, making the resulting on-hand equal the counted quantity.
+    def _live_system_qty(line):
+        if line.lot_code or line.serial_number or line.expiry_date:
+            lb = InventoryLotBalance.objects.filter(
+                tenant=tenant, product=line.product, location=cc.location,
+                lot_code=line.lot_code, serial_number=line.serial_number,
+                expiry_date=line.expiry_date).first()
+            return lb.on_hand if lb else Decimal("0.00")
+        bal = InventoryBalance.objects.filter(
+            tenant=tenant, product=line.product, location=cc.location).first()
+        return bal.on_hand if bal else Decimal("0.00")
+
+    lines = list(cc.lines.select_related("product").all())
+    if any(_live_system_qty(line) != line.system_qty for line in lines):
+        for line in lines:
+            sys_qty = _live_system_qty(line)
+            line.system_qty = sys_qty
+            line.variance_qty = Decimal(line.counted_qty) - sys_qty
+            line.save(update_fields=["system_qty", "variance_qty"])
+        cc.status = CycleCount.Status.SUBMITTED
+        cc.save(update_fields=["status"])
+        messages.warning(request, "Stock changed since this count was approved - the variances "
+                                  "were refreshed. Please review and re-approve before posting.")
+        return redirect("cycle_count_detail", cc_id=cc.id)
+
     # Post variances as ADJUSTMENT movements
-    for line in cc.lines.select_related("product").all():
+    for line in lines:
         if Decimal(line.variance_qty) == Decimal("0.00"):
             continue
         apply_movement(
