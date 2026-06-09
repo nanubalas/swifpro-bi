@@ -1536,6 +1536,128 @@ class FifoCostingTests(TestCase):
         self.assertEqual(val["total"], Decimal("40.00"))
 
 
+class CriticalInventoryFixTests(TestCase):
+    """Regression tests for the Critical inventory-costing fixes C5/C6/C7/C10."""
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Crit Co")
+        self.wh_a = Location.objects.create(tenant=self.tenant, name="WH-A")
+        self.wh_b = Location.objects.create(tenant=self.tenant, name="WH-B")
+
+    # ---- C5: FIFO layers are scoped per location ----
+    def test_c5_fifo_outbound_only_consumes_its_own_location_layers(self):
+        from core.services.inventory import apply_movement
+        from core.models import InventoryCostLayer
+        p = Product.objects.create(tenant=self.tenant, sku="SKU-C5", name="P",
+                                   cost_method=Product.CostMethod.FIFO)
+        # 10 @ 2.00 into A, 10 @ 9.00 into B.
+        apply_movement(tenant=self.tenant, product=p, location=self.wh_a,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="a1",
+                       unit_cost=Decimal("2.00"))
+        apply_movement(tenant=self.tenant, product=p, location=self.wh_b,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="b1",
+                       unit_cost=Decimal("9.00"))
+        # Sell 5 from B -> must cost 5 @ 9.00 = 45 (B's own layer), NOT A's 2.00.
+        sale = apply_movement(tenant=self.tenant, product=p, location=self.wh_b,
+                              movement_type="SALE", qty_delta=Decimal("-5"), ref_type="T", ref_id="s1")
+        self.assertEqual(sale.value, Decimal("-45.00"))
+        # A's layer is untouched; B's layer reduced to 5 remaining.
+        self.assertEqual(InventoryCostLayer.objects.get(product=p, location=self.wh_a).qty_remaining, Decimal("10.00"))
+        self.assertEqual(InventoryCostLayer.objects.get(product=p, location=self.wh_b).qty_remaining, Decimal("5.00"))
+
+    # ---- C6: FIFO transfer is value-neutral (re-layers at consumed cost) ----
+    def test_c6_fifo_transfer_preserves_total_value(self):
+        from core.services.inventory import apply_movement
+        from core.services import reports
+        from core.models import InventoryTransfer, InventoryTransferLine
+        p = Product.objects.create(tenant=self.tenant, sku="SKU-C6", name="P",
+                                   cost_method=Product.CostMethod.FIFO)
+        # Two layers into A at different costs: 10 @ 2.00 and 10 @ 8.00 -> value 100.
+        apply_movement(tenant=self.tenant, product=p, location=self.wh_a,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="a1",
+                       unit_cost=Decimal("2.00"))
+        apply_movement(tenant=self.tenant, product=p, location=self.wh_a,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="a2",
+                       unit_cost=Decimal("8.00"))
+        before = reports.stock_valuation(self.tenant)["total"]
+        self.assertEqual(before, Decimal("100.00"))
+
+        # Transfer 15 from A to B (consumes 10@2 + 5@8 = 60 on the OUT side).
+        tr = InventoryTransfer.objects.create(tenant=self.tenant, transfer_number="TR-1",
+                                              from_location=self.wh_a, to_location=self.wh_b)
+        InventoryTransferLine.objects.create(transfer=tr, product=p, qty=Decimal("15"))
+        from core.views import _post_transfer
+        _post_transfer(tr)
+
+        # Total inventory value unchanged by an internal transfer.
+        after = reports.stock_valuation(self.tenant)["total"]
+        self.assertEqual(after, Decimal("100.00"))
+        # B now holds a layer worth exactly the cost relieved on the OUT side (60).
+        from core.models import InventoryCostLayer
+        b_val = sum((l.qty_remaining * l.unit_cost for l in
+                     InventoryCostLayer.objects.filter(product=p, location=self.wh_b)), Decimal("0.00"))
+        self.assertEqual(b_val.quantize(Decimal("0.01")), Decimal("60.00"))
+
+    # ---- C7: cancelling an issued invoice reverses COGS + restores stock ----
+    def test_c7_cancel_issued_invoice_restores_stock_and_reverses_cogs(self):
+        from core.services.inventory import apply_movement
+        from core.services.gl import reverse_invoice_cogs
+        from core.models import JournalEntry, GLAccount
+        # Tenant whose signal seeds GL accounts.
+        t = Tenant.objects.create(name="Crit AR Co")
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-C7", name="P")
+        apply_movement(tenant=t, product=p, location=loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="r1", unit_cost=Decimal("3.00"))
+        cust = Customer.objects.create(tenant=t, name="Cust")
+        inv = CustomerInvoice.objects.create(tenant=t, customer=cust, invoice_number="INV-C7", location=loc)
+        std = TaxCode.objects.get(tenant=t, code="STD")
+        CustomerInvoiceLine.objects.create(invoice=inv, product=p, description="P",
+                                           qty=Decimal("4"), unit_price=Decimal("10.00"), tax_code=std)
+        post_customer_invoice(inv)
+
+        bal = InventoryBalance.objects.get(tenant=t, product=p, location=loc)
+        self.assertEqual(bal.on_hand, Decimal("6.00"))  # 10 - 4 sold
+        cogs = GLAccount.objects.get(tenant=t, code="5000")
+        self.assertEqual(_account_balance(t, "5000"), Decimal("12.00"))  # 4 @ 3.00
+
+        # Cancel -> stock back to 10, COGS net zero.
+        reverse_invoice_cogs(inv, user=None)
+        bal.refresh_from_db()
+        self.assertEqual(bal.on_hand, Decimal("10.00"))
+        self.assertEqual(_account_balance(t, "5000"), Decimal("0.00"))
+
+        # Idempotent: a second call does nothing.
+        reverse_invoice_cogs(inv, user=None)
+        bal.refresh_from_db()
+        self.assertEqual(bal.on_hand, Decimal("10.00"))
+        self.assertEqual(_account_balance(t, "5000"), Decimal("0.00"))
+
+    # ---- C10: moving-average reads on-hand under the product lock ----
+    def test_c10_sequential_receipts_keep_correct_average(self):
+        from core.services.inventory import apply_movement
+        p = Product.objects.create(tenant=self.tenant, sku="SKU-C10", name="P")
+        apply_movement(tenant=self.tenant, product=p, location=self.wh_a,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="1",
+                       unit_cost=Decimal("2.00"))
+        # Second receipt at a different location must still fold into the
+        # company-wide average using the up-to-date prior on-hand (20 total).
+        apply_movement(tenant=self.tenant, product=p, location=self.wh_b,
+                       movement_type="RECEIVE", qty_delta=Decimal("10"), ref_type="T", ref_id="2",
+                       unit_cost=Decimal("4.00"))
+        p.refresh_from_db()
+        self.assertEqual(p.average_cost, Decimal("3.0000"))  # (20+40)/20
+
+
+def _account_balance(tenant, code):
+    """Net debit balance (debits - credits) for a GL account, across all entries."""
+    from core.models import JournalLine
+    from django.db.models import Sum
+    agg = JournalLine.objects.filter(entry__tenant=tenant, account__code=code).aggregate(
+        d=Sum("debit"), c=Sum("credit"))
+    return (agg["d"] or Decimal("0.00")) - (agg["c"] or Decimal("0.00"))
+
+
 class LandedCostTests(TestCase):
     def setUp(self):
         from core.models import Location

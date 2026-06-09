@@ -15,15 +15,16 @@ def _total_on_hand(tenant, product):
     return agg["s"] or Decimal("0.00")
 
 
-def _consume_fifo_layers(tenant, product, qty, fallback_cost):
-    """Consume `qty` from the product's oldest FIFO layers; return the total
-    cost consumed. If layers run dry (negative stock allowed), the shortfall is
-    valued at `fallback_cost`."""
+def _consume_fifo_layers(tenant, product, qty, fallback_cost, location):
+    """Consume `qty` from the oldest FIFO layers *at this location*; return the
+    total cost consumed. Layers are scoped per location so an outbound at one
+    warehouse never relieves another warehouse's stock. If layers run dry
+    (negative stock allowed), the shortfall is valued at `fallback_cost`."""
     remaining = qty
     cost = Decimal("0.00")
     layers = (InventoryCostLayer.objects
               .select_for_update()
-              .filter(tenant=tenant, product=product, qty_remaining__gt=0)
+              .filter(tenant=tenant, product=product, location=location, qty_remaining__gt=0)
               .order_by("received_at", "id"))
     for layer in layers:
         if remaining <= 0:
@@ -49,7 +50,14 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
     average cost. Every movement stores unit_cost + signed value so the GL
     and stock-valuation reports can rely on it.
     """
+    # Lock the product row FIRST so concurrent movements for the same product
+    # serialise through the valuation maths. Without this, two simultaneous
+    # receipts both read the same prior on-hand/average and the last writer
+    # clobbers the other's moving-average (corrupted COGS/valuation).
+    product = Product.objects.select_for_update().get(pk=product.pk)
+
     # Quantity on hand BEFORE this movement (company-wide, for the average).
+    # Read AFTER the product lock so it reflects any just-committed movement.
     prior_qty = _total_on_hand(tenant, product)
 
     bal, _ = InventoryBalance.objects.select_for_update().get_or_create(
@@ -98,7 +106,7 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
             # FIFO products also get a cost layer.
             if is_fifo:
                 InventoryCostLayer.objects.create(
-                    tenant=tenant, product=product,
+                    tenant=tenant, product=product, location=location,
                     qty_received=qty_delta, qty_remaining=qty_delta,
                     unit_cost=cost_in, ref_type=ref_type, ref_id=str(ref_id),
                 )
@@ -111,7 +119,7 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
             move_unit_cost = product.standard_cost or prior_avg
             value = (qty_delta * move_unit_cost).quantize(CENTS, rounding=ROUND_HALF_UP)
         elif is_fifo:
-            cost = _consume_fifo_layers(tenant, product, out_qty, prior_avg)
+            cost = _consume_fifo_layers(tenant, product, out_qty, prior_avg, location)
             value = (-cost).quantize(CENTS, rounding=ROUND_HALF_UP)
             move_unit_cost = (cost / out_qty).quantize(COST_DP, rounding=ROUND_HALF_UP) if out_qty else prior_avg
         else:

@@ -110,6 +110,55 @@ def _post_invoice_cogs(inv, user=None):
     return cogs_total
 
 @transaction.atomic
+def reverse_invoice_cogs(inv, user=None):
+    """Restore stock and reverse the COGS journal for a cancelled AR invoice.
+
+    Cancelling an issued invoice backs out revenue/AR, but the goods it shipped
+    must also come back: otherwise COGS stays expensed and stock stays depleted,
+    so the ledger no longer matches physical stock (C7). Idempotent - keyed on
+    the invoice number it does nothing if already reversed."""
+    from core.models import InventoryMovement
+    from core.services.inventory import apply_movement
+
+    tenant = inv.tenant
+
+    # Reverse the COGS entry (DR Inventory / CR COGS) once.
+    cogs_je = (JournalEntry.objects
+               .filter(tenant=tenant, ref_type="COGS", ref_id=inv.invoice_number)
+               .order_by("-id").first())
+    already_reversed = JournalEntry.objects.filter(
+        tenant=tenant, ref_type="COGS_CANCEL", ref_id=inv.invoice_number).exists()
+    if cogs_je and not already_reversed:
+        rev = JournalEntry.objects.create(
+            tenant=tenant, site_id=cogs_je.site_id, entry_date=timezone.localdate(),
+            ref_type="COGS_CANCEL", ref_id=inv.invoice_number,
+            memo=f"Reverse COGS {inv.invoice_number}", posted_by=user, posted_at=timezone.now())
+        for l in cogs_je.lines.all():
+            JournalLine.objects.create(entry=rev, account=l.account,
+                                       description="COGS reversal", debit=l.credit, credit=l.debit)
+
+    # Restore stock for each original SALE movement, at the exact cost relieved,
+    # and to the same location. Guard on the reversing ref so a re-cancel is a
+    # no-op even if the COGS JE was missing.
+    stock_already_restored = InventoryMovement.objects.filter(
+        tenant=tenant, ref_type="AR_INVOICE_CANCEL", ref_id=inv.invoice_number).exists()
+    if not stock_already_restored:
+        sale_moves = InventoryMovement.objects.filter(
+            tenant=tenant, ref_type="AR_INVOICE", ref_id=inv.invoice_number,
+            movement_type=InventoryMovement.MovementType.SALE)
+        for m in sale_moves:
+            apply_movement(
+                tenant=tenant, product=m.product, location=m.location,
+                movement_type=InventoryMovement.MovementType.RETURN,
+                qty_delta=(m.qty_delta or Decimal("0.00")) * Decimal("-1"),
+                ref_type="AR_INVOICE_CANCEL", ref_id=inv.invoice_number,
+                notes=f"Cancel invoice {inv.invoice_number}", user=user,
+                unit_cost=m.unit_cost,
+                lot_code=m.lot_code, serial_number=m.serial_number, expiry_date=m.expiry_date,
+            )
+
+
+@transaction.atomic
 def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
     if inv.status == "POSTED":
         je = JournalEntry.objects.filter(tenant=inv.tenant, ref_type="AP_INVOICE", ref_id=inv.invoice_number).order_by("-id").first()
