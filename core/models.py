@@ -703,15 +703,33 @@ class PurchaseOrderLine(models.Model):
     po = models.ForeignKey(PurchaseOrder, related_name="lines", on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     ordered_qty = models.DecimalField(max_digits=12, decimal_places=2)
+    # NON-AUTHORITATIVE CACHE. The source of truth for received quantity is the
+    # set of POSTED GoodsReceiptLines linked to this line's stable identity
+    # (root_line). This field is rebuilt from those receipts by
+    # purchasing.sync_po_line_received(); never increment it in place (M17).
     received_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
     tax_code = models.ForeignKey("TaxCode", on_delete=models.SET_NULL, null=True, blank=True, related_name="po_lines")
+    # Stable line identity that survives PO amendments/versioning. The original
+    # (v1) line has root_line=None and is its own root; every amended clone of
+    # that logical line points back to it. Receipts aggregate by this identity
+    # so received/open quantities never drift between versions (M17).
+    root_line = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="line_versions")
 
     class Meta:
         unique_together = ("po", "product")
 
     @property
+    def stable_line_id(self):
+        """Id of the logical line across all PO versions (this line if it's the root)."""
+        return self.root_line_id or self.id
+
+    @property
     def open_qty(self):
+        # ordered (this version) - received (total across the stable identity,
+        # held in the received_qty cache). Correct on the current version even
+        # when a receipt posted against a superseded version.
         return self.ordered_qty - self.received_qty
 
     @property
@@ -1060,12 +1078,19 @@ class InventoryCostLayer(models.Model):
     """A FIFO cost layer: a tranche of stock received at a known unit cost.
 
     Used only for products whose cost_method is FIFO. Outbound movements
-    consume layers oldest-first (by received_at, id)."""
+    consume layers oldest-first (by received_at, id). For lot/serial-tracked
+    stock the layer is tagged with the lot, so an issue of a specific lot is
+    costed from that lot's own layers (specific identification / FEFO), not the
+    global FIFO queue (M6)."""
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="cost_layers")
     # Layers are scoped to the location that received the stock so FIFO
     # consumption only relieves stock physically held at that location.
     location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name="cost_layers")
+    # Lot identity of the tranche (null for non-lot-tracked stock).
+    lot_code = models.CharField(max_length=50, blank=True, null=True)
+    serial_number = models.CharField(max_length=100, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
     received_at = models.DateTimeField(default=timezone.now)
     qty_received = models.DecimalField(max_digits=12, decimal_places=2)
     qty_remaining = models.DecimalField(max_digits=12, decimal_places=2)
@@ -1078,8 +1103,31 @@ class InventoryCostLayer(models.Model):
         indexes = [
             models.Index(fields=["tenant", "product", "qty_remaining"]),
             models.Index(fields=["tenant", "product", "location", "qty_remaining"]),
+            models.Index(fields=["tenant", "product", "location", "lot_code", "qty_remaining"]),
         ]
         ordering = ["received_at", "id"]
+
+
+class InventoryIssueCost(models.Model):
+    """Audit linkage of an outbound movement to the cost layer(s) it consumed.
+
+    One row per (issue movement, cost layer) consumed, recording the quantity
+    costed, the layer's unit cost and the resulting cost. Lets COGS be traced
+    back to the exact lot/layer that was issued (M6)."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    movement = models.ForeignKey(InventoryMovement, on_delete=models.CASCADE, related_name="issue_costs")
+    cost_layer = models.ForeignKey(InventoryCostLayer, on_delete=models.PROTECT, null=True, blank=True,
+                                   related_name="issue_costs")
+    lot_code = models.CharField(max_length=50, blank=True, null=True)
+    serial_number = models.CharField(max_length=100, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
+    qty = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=4)
+    total_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        indexes = [models.Index(fields=["tenant", "movement"])]
 
 
 # ---------- Phase 2 (Channel Sync) ----------
@@ -1227,7 +1275,13 @@ class GoodsReceipt(models.Model):
 
 class GoodsReceiptLine(models.Model):
     receipt = models.ForeignKey(GoodsReceipt, related_name="lines", on_delete=models.CASCADE)
+    # The exact versioned PO line received against, kept for audit/history.
     po_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT, related_name="receipt_lines")
+    # The stable PO-line identity (po_line's root). Received quantities aggregate
+    # by this so a receipt against a superseded version still feeds the current
+    # version's open/received quantities (M17).
+    root_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT, null=True, blank=True,
+                                  related_name="receipt_lines_by_root")
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     qty_received = models.DecimalField(max_digits=12, decimal_places=2)
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2)

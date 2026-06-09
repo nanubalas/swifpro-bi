@@ -1889,6 +1889,169 @@ class MediumInventoryFixTests(TestCase):
         self.assertTrue(InventoryMovement.objects.filter(tenant=t, ref_type="CYCLE_COUNT").exists())
 
 
+class StablePoReceiptTests(TestCase):
+    """M17: GoodsReceiptLines are the source of truth for received/open qty;
+    quantities must not drift across PO amendments/versions."""
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Stable PO Co")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="S")
+        self.product = Product.objects.create(tenant=self.tenant, sku="SKU-STB", name="P")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH")
+        self.po = PurchaseOrder.objects.create(
+            tenant=self.tenant, po_number="PO-STB", supplier=self.supplier,
+            status=PurchaseOrder.Status.SUBMITTED, version=1)
+        self.line = PurchaseOrderLine.objects.create(
+            po=self.po, product=self.product, ordered_qty=Decimal("10"), unit_cost=Decimal("3.00"))
+        self.user = User.objects.create_user("stbu", password="pw")
+        self.user.groups.add(Group.objects.get_or_create(name="Admin")[0])
+        UserProfile.objects.create(user=self.user, tenant=self.tenant)
+        self.client.login(username="stbu", password="pw")
+        self._grn_seq = 0
+
+    def _post_receipt(self, po_line, qty):
+        """Create a POSTED goods receipt against a (possibly old) PO line and
+        re-derive received_qty, mirroring what receive_po does."""
+        from core.models import GoodsReceipt, GoodsReceiptLine
+        from core.services.purchasing import sync_po_line_received
+        self._grn_seq += 1
+        grn = GoodsReceipt.objects.create(
+            tenant=self.tenant, po=po_line.po, grn_number=f"GRN-STB-{self._grn_seq}",
+            received_to=self.loc, status=GoodsReceipt.Status.POSTED)
+        GoodsReceiptLine.objects.create(
+            receipt=grn, po_line=po_line, root_line_id=(po_line.root_line_id or po_line.id),
+            product=po_line.product, qty_received=Decimal(qty), unit_cost=po_line.unit_cost)
+        sync_po_line_received(po_line)
+        return grn
+
+    def _current_line(self):
+        from core.models import PurchaseOrderLine
+        return PurchaseOrderLine.objects.get(po__tenant=self.tenant, po__is_current=True,
+                                             product=self.product)
+
+    def test_amend_after_partial_receipt_keeps_open_qty(self):
+        # Receive 4 of 10, then amend.
+        self._post_receipt(self.line, "4")
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.received_qty, Decimal("4.00"))
+        self.assertEqual(self.line.open_qty, Decimal("6.00"))
+
+        resp = self.client.post(f"/po/{self.po.id}/amend/", {"reason": "price change"})
+        self.assertEqual(resp.status_code, 302)
+        cur = self._current_line()
+        self.assertEqual(cur.po.version, 2)
+        # The new version inherits the received total; open is still 6 (not 10).
+        self.assertEqual(cur.received_qty, Decimal("4.00"))
+        self.assertEqual(cur.open_qty, Decimal("6.00"))
+
+    def test_receipt_against_old_version_reflects_in_current(self):
+        self._post_receipt(self.line, "4")
+        self.client.post(f"/po/{self.po.id}/amend/", {"reason": "amend"})
+        cur = self._current_line()
+
+        # A late receipt posts against the ORIGINAL (superseded) PO line.
+        self._post_receipt(self.line, "3")
+
+        cur.refresh_from_db()
+        self.line.refresh_from_db()
+        # Current version shows the full 7 received / 3 open.
+        self.assertEqual(cur.received_qty, Decimal("7.00"))
+        self.assertEqual(cur.open_qty, Decimal("3.00"))
+        # No drift: the old version reports the same stable total.
+        self.assertEqual(self.line.received_qty, Decimal("7.00"))
+
+    def test_multiple_versions_no_drift(self):
+        self._post_receipt(self.line, "2")
+        self.client.post(f"/po/{self.po.id}/amend/", {"reason": "v2"})
+        v2 = self._current_line()
+        self._post_receipt(self.line, "2")  # against v1 line
+        self.client.post(f"/po/{v2.po.id}/amend/", {"reason": "v3"})
+        v3 = self._current_line()
+        self._post_receipt(v2, "3")  # against v2 line
+
+        from core.models import PurchaseOrderLine
+        totals = {l.po.version: l.received_qty for l in
+                  PurchaseOrderLine.objects.filter(po__tenant=self.tenant, product=self.product)
+                  .select_related("po")}
+        # Every version reports the same stable received total (2+2+3 = 7).
+        self.assertEqual(set(totals.values()), {Decimal("7.00")})
+        v3.refresh_from_db()
+        self.assertEqual(v3.open_qty, Decimal("3.00"))  # 10 ordered - 7 received
+
+
+class LotScopedCostingTests(TestCase):
+    """M6: lot-tracked FIFO stock is costed from the issued lot's own layer
+    (specific identification / FEFO), not the global FIFO queue or average."""
+
+    def setUp(self):
+        import datetime
+        self.tenant = Tenant.objects.create(name="Lot Cost Co")
+        self.loc = Location.objects.create(tenant=self.tenant, name="WH")
+        self.product = Product.objects.create(
+            tenant=self.tenant, sku="SKU-LOT", name="P",
+            cost_method=Product.CostMethod.FIFO, track_lots=True, track_expiry=True)
+        self.early = datetime.date(2026, 1, 1)
+        self.late = datetime.date(2027, 1, 1)
+
+    def _receive(self, lot, expiry, qty, cost, ref):
+        from core.services.inventory import apply_movement
+        return apply_movement(
+            tenant=self.tenant, product=self.product, location=self.loc,
+            movement_type="RECEIVE", qty_delta=Decimal(qty), ref_type="T", ref_id=ref,
+            unit_cost=Decimal(cost), lot_code=lot, expiry_date=expiry)
+
+    def test_fefo_selects_earliest_expiring_lot(self):
+        from core.services.inventory import select_fefo_lots
+        # LATE lot received first, EARLY lot second (so FIFO order != FEFO order).
+        self._receive("LATE", self.late, "5", "2.00", "r1")
+        self._receive("EARLY", self.early, "5", "9.00", "r2")
+        picks = select_fefo_lots(tenant=self.tenant, product=self.product, location=self.loc, qty=Decimal("3"))
+        self.assertEqual(picks[0][0].lot_code, "EARLY")  # earliest expiry first
+        self.assertEqual(picks[0][1], Decimal("3.00"))
+
+    def test_cogs_follows_issued_lot_not_global_fifo(self):
+        from core.services.inventory import apply_movement
+        from core.models import InventoryIssueCost
+        # LATE lot is older (would be picked by global FIFO) and cheaper (2.00);
+        # EARLY lot is newer but pricier (9.00). Company average would be 5.50.
+        self._receive("LATE", self.late, "5", "2.00", "r1")
+        self._receive("EARLY", self.early, "5", "9.00", "r2")
+
+        # Issue the EARLY lot (as FEFO would): COGS must be 9.00/unit, not 2.00
+        # (global FIFO) and not 5.50 (average).
+        sale = apply_movement(
+            tenant=self.tenant, product=self.product, location=self.loc,
+            movement_type="SALE", qty_delta=Decimal("-2"), ref_type="T", ref_id="s1",
+            lot_code="EARLY", expiry_date=self.early)
+        self.assertEqual(sale.value, Decimal("-18.00"))     # 2 @ 9.00
+        self.assertEqual(sale.unit_cost, Decimal("9.0000"))
+
+        # Issue-cost trail links the consumption to the EARLY lot's layer.
+        ic = InventoryIssueCost.objects.get(movement=sale)
+        self.assertEqual(ic.lot_code, "EARLY")
+        self.assertEqual(ic.unit_cost, Decimal("9.0000"))
+        self.assertEqual(ic.total_cost, Decimal("18.00"))
+        self.assertEqual(ic.cost_layer.lot_code, "EARLY")
+
+        # Issuing the other lot is costed at its own 2.00.
+        sale2 = apply_movement(
+            tenant=self.tenant, product=self.product, location=self.loc,
+            movement_type="SALE", qty_delta=Decimal("-1"), ref_type="T", ref_id="s2",
+            lot_code="LATE", expiry_date=self.late)
+        self.assertEqual(sale2.value, Decimal("-2.00"))     # 1 @ 2.00
+
+    def test_non_lot_issue_unchanged_global_fifo(self):
+        # Regression: with no lot specified, costing is the original global FIFO.
+        from core.services.inventory import apply_movement
+        self._receive("LATE", self.late, "5", "2.00", "r1")
+        self._receive("EARLY", self.early, "5", "9.00", "r2")
+        sale = apply_movement(
+            tenant=self.tenant, product=self.product, location=self.loc,
+            movement_type="SALE", qty_delta=Decimal("-6"), ref_type="T", ref_id="s1")
+        # Oldest-first across all layers: 5 @ 2.00 + 1 @ 9.00 = 19.00.
+        self.assertEqual(sale.value, Decimal("-19.00"))
+
+
 class LandedCostTests(TestCase):
     def setUp(self):
         from core.models import Location
