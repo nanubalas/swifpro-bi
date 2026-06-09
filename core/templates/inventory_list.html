@@ -3,10 +3,21 @@
 {% block body %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h2 class="fw-bold mb-0">Inventory Balances</h2>
-  <span class="text-muted small"><i class="bi bi-geo-alt me-1"></i>{{ active_site_name }}</span>
+  <div class="d-flex align-items-center gap-3">
+    <form method="get" class="d-flex align-items-center gap-2">
+      <label class="text-muted small mb-0" for="location">Location</label>
+      <select name="location" id="location" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All locations</option>
+        {% for loc in locations %}
+          <option value="{{ loc.id }}" {% if location == loc.id|stringformat:'s' %}selected{% endif %}>{{ loc.name }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    <span class="text-muted small"><i class="bi bi-geo-alt me-1"></i>{{ active_site_name }}</span>
+  </div>
 </div>
 
-<div class="card"><div class="card-body p-0">
+<div class="card mb-3"><div class="card-body p-0">
   <table class="table table-hover align-middle mb-0">
     <thead class="table-light"><tr><th>SKU</th><th>Product</th><th>Location</th><th class="text-end">On hand</th><th class="text-end">Reserved</th></tr></thead>
     <tbody>
@@ -24,4 +35,30 @@
     </tbody>
   </table>
 </div></div>
+
+{% if bin_balances %}
+<div class="card"><div class="card-body">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="fw-semibold mb-0">By bin</h5>
+    <span class="text-muted small">On-hand per bin (a breakdown of the location balance above).</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-2">
+      <thead class="table-light"><tr><th>SKU</th><th>Product</th><th>Location</th><th>Bin</th><th class="text-end">On hand</th></tr></thead>
+      <tbody>
+        {% for bb in bin_balances %}
+        <tr>
+          <td>{{ bb.product.sku }}</td>
+          <td>{{ bb.product.name }}</td>
+          <td>{{ bb.location.name }}</td>
+          <td><span class="badge text-bg-light">{{ bb.bin.code }}</span></td>
+          <td class="text-end">{{ bb.on_hand }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="form-text small mb-0">Bin reservations are not yet tracked — reservations remain at location/lot level for now. Bins show only stock recorded against a bin since bin tracking was enabled.</p>
+</div></div>
+{% endif %}
 {% endblock %}

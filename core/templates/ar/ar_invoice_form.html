@@ -41,13 +41,14 @@
             <table class="table table-bordered align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:26%">Product</th>
-                  <th style="width:20%">Description</th>
-                  <th class="text-end" style="width:9%">Qty</th>
-                  <th class="text-end" style="width:14%">Unit Price</th>
-                  <th class="text-end" style="width:9%">Disc %</th>
-                  <th style="width:14%">Tax</th>
-                  <th class="text-center" style="width:8%">Remove</th>
+                  <th style="width:24%">Product</th>
+                  <th style="width:18%">Description</th>
+                  <th class="text-end" style="width:8%">Qty</th>
+                  <th style="width:10%">UOM</th>
+                  <th class="text-end" style="width:13%">Unit Price</th>
+                  <th class="text-end" style="width:8%">Disc %</th>
+                  <th style="width:12%">Tax</th>
+                  <th class="text-center" style="width:7%">Remove</th>
                 </tr>
               </thead>
               <tbody id="lines-body">
@@ -56,6 +57,7 @@
                   <td>{{ f.product }}</td>
                   <td>{{ f.description }}</td>
                   <td class="text-end">{{ f.qty }}</td>
+                  <td>{{ f.uom }}</td>
                   <td class="text-end">{{ f.unit_price }}</td>
                   <td class="text-end">{{ f.discount_pct }}</td>
                   <td>{{ f.tax_code }}</td>
@@ -65,12 +67,14 @@
               </tbody>
             </table>
           </div>
+          <p class="form-text small mb-0">Leave UOM blank to sell in the product's base unit; stock is relieved and COGS booked in the base unit per the conversion rules.</p>
 
           <template id="empty-form-template">
             <tr class="line-row">
               <td>{{ formset.empty_form.product }}</td>
               <td>{{ formset.empty_form.description }}</td>
               <td class="text-end">{{ formset.empty_form.qty }}</td>
+              <td>{{ formset.empty_form.uom }}</td>
               <td class="text-end">{{ formset.empty_form.unit_price }}</td>
               <td class="text-end">{{ formset.empty_form.discount_pct }}</td>
               <td>{{ formset.empty_form.tax_code }}</td>

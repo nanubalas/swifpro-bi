@@ -65,6 +65,7 @@
                   <th>SKU</th>
                   <th>Description</th>
                   <th class="text-end">Open Qty</th>
+                  <th>UOM</th>
                   <th>Lot</th><th>Serial</th><th>Expiry</th><th class="text-end">Receive Now</th>
                 </tr>
               </thead>
@@ -73,6 +74,7 @@
             <tr>
               <td>{{ sl.po_line.product.sku }}<div class="text-muted small">{{ sl.po_line.product.name }}</div></td>
               <td class="text-end">{{ sl.open_qty|floatformat:2 }}</td>
+              <td>{% if sl.po_line.uom %}{{ sl.po_line.uom.code }}{% else %}<span class="text-muted">base</span>{% endif %}</td>
               <td style="width:160px">
                 <input class="form-control form-control-sm text-end" name="recv_{{ sl.id }}" placeholder="0" />
               </td>

@@ -146,8 +146,8 @@
       <tr>
         <td>{{ line.product.sku }}</td>
         <td>{{ line.product.name }}</td>
-        <td class="text-end">{{ line.ordered_qty|floatformat:2 }}</td>
-        <td class="text-end">{{ line.unit_cost|floatformat:2 }}</td>
+        <td class="text-end">{{ line.ordered_qty|floatformat:2 }}{% if line.uom %} <span class="text-muted small">{{ line.uom.code }}</span>{% endif %}</td>
+        <td class="text-end">{{ line.unit_cost|floatformat:2 }}{% if line.uom %}<span class="text-muted small">/{{ line.uom.code }}</span>{% endif %}</td>
         <td class="text-end">{{ line.line_total|money:tenant.currency_code }}</td>
       </tr>
       {% endfor %}

@@ -18,7 +18,7 @@
         {% for l in doc.lines.all %}
         <tr>
           <td>{% if l.description %}{{ l.description }}{% elif l.product %}{{ l.product.name }}{% else %}-{% endif %}</td>
-          <td class="text-end">{{ l.qty|floatformat:2 }}</td>
+          <td class="text-end">{{ l.qty|floatformat:2 }}{% if l.uom %} <span class="text-muted small">{{ l.uom.code }}</span>{% endif %}</td>
           <td class="text-end">{{ l.unit_price|money:currency }}</td>
           <td class="text-end">{% if l.discount_pct %}{{ l.discount_pct|floatformat:2 }}%{% else %}-{% endif %}</td>
           <td class="text-end">{{ l.tax_code.code|default:'-' }}</td>

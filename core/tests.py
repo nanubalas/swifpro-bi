@@ -2562,6 +2562,63 @@ class UomSalesTests(TestCase):
         self.assertEqual(cogs.total_debit, Decimal("72.00"))  # 24 EACH @ 3.00
 
 
+class UiPassRenderTests(TestCase):
+    """Smoke-test the UI-pass templates render (UOM dropdowns, transfer states,
+    bin section, reports help)."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="UI Pass Co")
+        self.user = User.objects.create_user("uip", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="uip", password="pw")
+
+    def test_form_and_report_pages_render(self):
+        from django.urls import reverse
+        for name in ["po_create", "quote_create", "corder_create", "sales_order_create",
+                     "ar_invoice_create", "inventory_list", "reports_index"]:
+            resp = self.client.get(reverse(name))
+            self.assertEqual(resp.status_code, 200, f"{name} did not render: {resp.status_code}")
+        # Reports page documents the control commands.
+        resp = self.client.get(reverse("reports_index"))
+        self.assertContains(resp, "reconcile_cycle_count_valuation")
+        self.assertContains(resp, "check_inventory_gl")
+
+    def test_inventory_list_shows_bin_section(self):
+        from django.urls import reverse
+        from core.models import Bin
+        from core.services.inventory import apply_movement
+        loc = Location.objects.create(tenant=self.t, name="WH")
+        b = Bin.objects.create(tenant=self.t, location=loc, code="A1")
+        p = Product.objects.create(tenant=self.t, sku="SKU-UIB", name="P")
+        apply_movement(tenant=self.t, product=p, location=loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("5"), ref_type="T", ref_id="1", unit_cost=Decimal("2.00"), bin=b)
+        resp = self.client.get(reverse("inventory_list"))
+        self.assertContains(resp, "By bin")
+        self.assertContains(resp, "A1")
+
+    def test_transfer_detail_renders_in_each_state(self):
+        from core.models import InventoryTransfer, InventoryTransferLine
+        from core.services.inventory import apply_movement
+        from core.views import _dispatch_transfer
+        a = Location.objects.create(tenant=self.t, name="A", type=Location.Type.WAREHOUSE)
+        b = Location.objects.create(tenant=self.t, name="B", type=Location.Type.WAREHOUSE)
+        p = Product.objects.create(tenant=self.t, sku="SKU-UIT", name="P")
+        apply_movement(tenant=self.t, product=p, location=a, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="1", unit_cost=Decimal("2.00"))
+        tr = InventoryTransfer.objects.create(tenant=self.t, transfer_number="TR-UI",
+                                              from_location=a, to_location=b)
+        InventoryTransferLine.objects.create(transfer=tr, product=p, qty=Decimal("4"))
+        # Draft shows the Dispatch action.
+        resp = self.client.get(f"/transfers/{tr.id}/")
+        self.assertContains(resp, "Dispatch")
+        # Dispatched shows the in-transit banner and the receive form.
+        _dispatch_transfer(tr)
+        resp = self.client.get(f"/transfers/{tr.id}/")
+        self.assertContains(resp, "In transit")
+        self.assertContains(resp, "Receive into")
+
+
 class BinBalanceTests(TestCase):
     """Bin-level on-hand tracking (a sub-balance of the location balance)."""
 

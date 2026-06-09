@@ -26,7 +26,7 @@ from core.models import (
     RecurringInvoice, RecurringInvoiceLine,
     OrgMembership, AuditLog, AccessRequest, UserProfile, UserPermissionOverride
 )
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from core import roles as roles_mod
 from core.access import (
     get_active_role, get_memberships, default_landing_url, SESSION_TENANT_KEY,
@@ -2193,9 +2193,10 @@ def receive_po(request, po_id):
                 else:
                     po.status = PurchaseOrder.Status.PARTIALLY_RECEIVED
                 po.save(update_fields=["status"])
-        except ValueError as e:
-            # Validation failure (over-receipt / nothing received): roll back and re-prompt.
-            messages.error(request, str(e))
+        except (ValueError, ValidationError) as e:
+            # Validation failure (over-receipt / nothing received / missing UOM
+            # conversion): roll back and re-prompt with a clear message.
+            messages.error(request, "; ".join(e.messages) if isinstance(e, ValidationError) else str(e))
             return redirect("receive_po", po_id=po.id)
 
         messages.success(request, "Receipt posted.")
@@ -2230,8 +2231,15 @@ def inventory_list(request):
     locations = Location.objects.filter(tenant=tenant)
     if allowed is not None:
         locations = locations.filter(id__in=allowed)
+    # Bin-level balances (where stock is binned). Scoped to the same locations.
+    from core.services.inventory import bin_balances as _bin_balances
+    bins = _bin_balances(tenant)
+    if allowed is not None:
+        bins = bins.filter(location_id__in=allowed)
+    if loc_id:
+        bins = bins.filter(location_id=loc_id)
     return render(request, "inventory_list.html", {
-        "tenant": tenant, "balances": balances,
+        "tenant": tenant, "balances": balances, "bin_balances": list(bins),
         "locations": locations.order_by("name"), "location": loc_id})
 
 
@@ -3336,7 +3344,11 @@ def sales_order_post(request, order_id):
     tenant = _get_default_tenant(request)
     order = get_object_or_404(SalesOrder, id=order_id, tenant=tenant)
     if request.method == "POST":
-        shortages = _post_sales_order(order) or []
+        try:
+            shortages = _post_sales_order(order) or []
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+            return redirect("sales_order_detail", order_id=order.id)
         if shortages:
             sample = ", ".join([f"{s['sku']}@{s['location']} short {s['short_by']}" for s in shortages[:6]])
             more = "" if len(shortages) <= 6 else f" (+{len(shortages)-6} more)"
@@ -3881,7 +3893,9 @@ def transfer_create(request):
 def transfer_detail(request, transfer_id):
     tenant = _get_default_tenant(request)
     transfer = get_object_or_404(InventoryTransfer, id=transfer_id, tenant=tenant)
-    return render(request, "transfers/transfer_detail.html", {"tenant": tenant, "transfer": transfer})
+    any_received = any((l.received_qty or Decimal("0.00")) > 0 for l in transfer.lines.all())
+    return render(request, "transfers/transfer_detail.html",
+                  {"tenant": tenant, "transfer": transfer, "any_received": any_received})
 
 
 @login_required
@@ -4605,7 +4619,11 @@ def ar_invoice_issue(request, invoice_id):
         if not ok:
             messages.error(request, f"Cannot issue this invoice. {reason}")
             return redirect("ar_invoice_detail", invoice_id=inv.id)
-        post_customer_invoice(inv, user=request.user)
+        try:
+            post_customer_invoice(inv, user=request.user)
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+            return redirect("ar_invoice_detail", invoice_id=inv.id)
         return redirect("ar_invoice_detail", invoice_id=inv.id)
     return render(request, "ar/ar_invoice_issue.html", {"tenant": tenant, "inv": inv})
 

@@ -28,7 +28,14 @@
             <td class="fw-semibold"><a class="text-decoration-none" href="/transfers/{{ t.id }}/">{{ t.transfer_number }}</a></td>
             <td>{{ t.from_location.name }}</td>
             <td>{{ t.to_location.name }}</td>
-            <td><span class="badge text-bg-light">{{ t.status }}</span></td>
+            <td>
+              {% if t.status == "DRAFT" %}<span class="badge text-bg-secondary">Draft</span>
+              {% elif t.status == "DISPATCHED" %}<span class="badge text-bg-warning">In transit</span>
+              {% elif t.status == "RECEIVED" %}<span class="badge text-bg-success">Received</span>
+              {% elif t.status == "POSTED" %}<span class="badge text-bg-success">Posted</span>
+              {% elif t.status == "CANCELLED" %}<span class="badge text-bg-danger">Cancelled</span>
+              {% else %}<span class="badge text-bg-light">{{ t.status }}</span>{% endif %}
+            </td>
             <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="/transfers/{{ t.id }}/">Open</a></td>
           </tr>
           {% empty %}

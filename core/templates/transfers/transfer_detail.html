@@ -1,23 +1,50 @@
 {% extends "base.html" %}
 {% block title %}Transfer {{ transfer.transfer_number }} - SwifPro BI{% endblock %}
 {% block body %}
+{% load money %}
 <div class="d-flex justify-content-between align-items-start mb-4">
   <div>
     <h2 class="fw-bold mb-1">Transfer {{ transfer.transfer_number }}</h2>
     <div class="text-muted">
-      {{ transfer.from_location.name }} → {{ transfer.to_location.name }}
+      <span class="fw-semibold">{{ transfer.from_location.name }}</span>
+      → <span class="fw-semibold">{{ transfer.to_location.name }}</span>
       <span class="mx-2">•</span>
-      <span class="badge text-bg-light">{{ transfer.status }}</span>
+      {% if transfer.status == "DRAFT" %}<span class="badge text-bg-secondary">Draft</span>
+      {% elif transfer.status == "DISPATCHED" %}
+        {% if any_received %}<span class="badge text-bg-info">Partially received (in transit)</span>
+        {% else %}<span class="badge text-bg-warning">Dispatched / in transit</span>{% endif %}
+      {% elif transfer.status == "RECEIVED" %}<span class="badge text-bg-success">Received</span>
+      {% elif transfer.status == "POSTED" %}<span class="badge text-bg-success">Posted (one-step)</span>
+      {% elif transfer.status == "CANCELLED" %}<span class="badge text-bg-danger">Cancelled</span>
+      {% else %}<span class="badge text-bg-light">{{ transfer.status }}</span>{% endif %}
     </div>
   </div>
   <div class="d-flex gap-2">
-{% if transfer.status != "POSTED" %}
-      <a class="btn btn-success" href="/transfers/{{ transfer.id }}/post/">Post</a>
+    {% if transfer.status == "DRAFT" %}
+      <form method="post" action="/transfers/{{ transfer.id }}/dispatch/">{% csrf_token %}
+        <button class="btn btn-warning" type="submit">Dispatch (to transit)</button>
+      </form>
+      <a class="btn btn-outline-success" href="/transfers/{{ transfer.id }}/post/">Post in one step</a>
+      <form method="post" action="/transfers/{{ transfer.id }}/cancel/">{% csrf_token %}
+        <button class="btn btn-outline-danger" type="submit">Cancel</button>
+      </form>
+    {% elif transfer.status == "DISPATCHED" %}
+      <form method="post" action="/transfers/{{ transfer.id }}/cancel/"
+            onsubmit="return confirm('Cancel this transfer and return in-transit stock to {{ transfer.from_location.name }}?');">
+        {% csrf_token %}<button class="btn btn-outline-danger" type="submit">Cancel &amp; return to source</button>
+      </form>
     {% endif %}
   </div>
 </div>
 
-<div class="card card-soft">
+{% if transfer.status == "DISPATCHED" %}
+<div class="alert alert-warning d-flex align-items-center" role="alert">
+  <i class="bi bi-truck me-2"></i>
+  <div><strong>In transit.</strong> This stock has left {{ transfer.from_location.name }} and is not available on-hand at either location until received. Its value sits in <em>Inventory In Transit</em> (owned by the source site).</div>
+</div>
+{% endif %}
+
+<div class="card card-soft mb-3">
   <div class="card-body">
     <h5 class="fw-semibold mb-3">Lines</h5>
     <div class="table-responsive">
@@ -27,6 +54,11 @@
             <th>SKU</th>
             <th>Description</th>
             <th class="text-end">Qty</th>
+            {% if transfer.status == "DISPATCHED" or transfer.status == "RECEIVED" %}
+            <th class="text-end">Dispatched</th>
+            <th class="text-end">Received</th>
+            <th class="text-end">In transit</th>
+            {% endif %}
             <th>Lot</th>
             <th>Serial</th>
             <th>Expiry</th>
@@ -38,16 +70,57 @@
             <td class="fw-semibold">{{ l.product.sku }}</td>
             <td>{{ l.product.name }}</td>
             <td class="text-end">{{ l.qty|floatformat:2 }}</td>
+            {% if transfer.status == "DISPATCHED" or transfer.status == "RECEIVED" %}
+            <td class="text-end">{{ l.dispatched_qty|floatformat:2 }}</td>
+            <td class="text-end">{{ l.received_qty|floatformat:2 }}</td>
+            <td class="text-end {% if l.in_transit_qty > 0 %}text-warning fw-semibold{% endif %}">{{ l.in_transit_qty|floatformat:2 }}</td>
+            {% endif %}
             <td>{{ l.lot_code|default:"-" }}</td>
             <td>{{ l.serial_number|default:"-" }}</td>
             <td>{% if l.expiry_date %}{{ l.expiry_date|date:"d M Y" }}{% else %}-{% endif %}</td>
           </tr>
           {% empty %}
-          <tr><td colspan="6" class="text-center text-muted py-4">No lines.</td></tr>
+          <tr><td colspan="9" class="text-center text-muted py-4">No lines.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
 </div>
+
+{% if transfer.status == "DISPATCHED" %}
+<div class="card card-soft">
+  <div class="card-body">
+    <h5 class="fw-semibold mb-3">Receive into {{ transfer.to_location.name }}</h5>
+    <form method="post" action="/transfers/{{ transfer.id }}/receive/">
+      {% csrf_token %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-2">
+          <thead class="table-light">
+            <tr><th>SKU</th><th class="text-end">In transit</th><th style="width:180px">Receive now</th></tr>
+          </thead>
+          <tbody>
+            {% for l in transfer.lines.all %}{% if l.in_transit_qty > 0 %}
+            <tr>
+              <td>{{ l.product.sku }}</td>
+              <td class="text-end">{{ l.in_transit_qty|floatformat:2 }}</td>
+              <td><input class="form-control form-control-sm text-end" name="recv_{{ l.id }}"
+                         placeholder="{{ l.in_transit_qty|floatformat:2 }}" /></td>
+            </tr>
+            {% endif %}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="form-text mb-2">Leave a row blank to receive its full in-transit quantity.</div>
+      <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" name="close_short" id="close_short">
+        <label class="form-check-label" for="close_short">
+          Close short — write off any quantity still in transit as a loss (DR Inventory Adjustments / CR Inventory In Transit).
+        </label>
+      </div>
+      <button class="btn btn-success" type="submit">Receive</button>
+    </form>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

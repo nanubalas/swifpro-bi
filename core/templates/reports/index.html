@@ -60,4 +60,30 @@
     </a>
   </div>
 </div>
+
+<h5 class="fw-semibold mt-4 mb-2">Inventory control tools</h5>
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card card-soft h-100"><div class="card-body">
+      <h6 class="fw-semibold mb-1"><i class="bi bi-clipboard-check me-1"></i>Inventory ↔ GL reconciliation</h6>
+      <p class="text-muted small mb-2">Flags any tenant whose inventory subledger drifts from the GL control account (1000). Run on a schedule:</p>
+      <pre class="bg-light border rounded p-2 small mb-2"><code>python manage.py check_inventory_gl
+python manage.py check_inventory_gl --tolerance 0.50</code></pre>
+      <p class="form-text small mb-0">Tenant-level figures are authoritative. Per-location is subledger-only — inter-site transfers post no GL entry, so site-level isn't expected to balance.</p>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card card-soft h-100"><div class="card-body">
+      <h6 class="fw-semibold mb-1"><i class="bi bi-arrow-repeat me-1"></i>Cycle-count valuation catch-up</h6>
+      <p class="text-muted small mb-2">Revalues historical cycle-count movements that used product-average to lot/serial-specific cost, posting auditable revaluation entries. <strong>Run dry-run first</strong> — it only reports until you pass <code>--apply</code>; it never rewrites the original movements.</p>
+      <pre class="bg-light border rounded p-2 small mb-2"><code># 1) Review (no changes):
+python manage.py reconcile_cycle_count_valuation
+# 2) Apply, treating periods up to a close date as locked
+#    (those corrections post into the current open period,
+#     referencing the original movement):
+python manage.py reconcile_cycle_count_valuation --apply --lock-date 2026-03-31</code></pre>
+      <p class="form-text small mb-0">Idempotent — re-running never double-corrects. Lots with no cost layer fall back to the product average (documented).</p>
+    </div></div>
+  </div>
+</div>
 {% endblock %}

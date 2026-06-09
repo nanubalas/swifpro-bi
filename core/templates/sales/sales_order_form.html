@@ -62,14 +62,15 @@
             <table class="table table-bordered align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:32%">Product</th>
-                  <th style="width:18%">Ship From</th>
-                  <th class="text-end" style="width:10%">Qty</th>
-                  <th class="text-end" style="width:12%">Unit Price</th>
-                  <th style="width:10%">Lot</th>
-                  <th style="width:10%">Serial</th>
+                  <th style="width:30%">Product</th>
+                  <th style="width:16%">Ship From</th>
+                  <th class="text-end" style="width:9%">Qty</th>
+                  <th style="width:9%">UOM</th>
+                  <th class="text-end" style="width:11%">Unit Price</th>
+                  <th style="width:9%">Lot</th>
+                  <th style="width:9%">Serial</th>
                   <th style="width:8%">Expiry</th>
-                  <th class="text-center" style="width:8%">Remove</th>
+                  <th class="text-center" style="width:7%">Remove</th>
                 </tr>
               </thead>
 
@@ -79,6 +80,7 @@
                   <td>{{ f.product }}</td>
                   <td>{{ f.ship_from_location }}</td>
                   <td class="text-end">{{ f.qty }}</td>
+                  <td>{{ f.uom }}</td>
                   <td class="text-end">{{ f.unit_price }}</td>
                   <td>{{ f.lot_code }}</td>
                   <td>{{ f.serial_number }}</td>
@@ -93,12 +95,14 @@
               </tbody>
             </table>
           </div>
+          <p class="form-text small mb-0">Leave UOM blank to use the product's base unit; stock is relieved in the base unit per the conversion rules.</p>
 
           <template id="empty-form-template">
             <tr class="line-row">
               <td>{{ formset.empty_form.product }}</td>
               <td>{{ formset.empty_form.ship_from_location }}</td>
               <td class="text-end">{{ formset.empty_form.qty }}</td>
+              <td>{{ formset.empty_form.uom }}</td>
               <td class="text-end">{{ formset.empty_form.unit_price }}</td>
               <td>{{ formset.empty_form.lot_code }}</td>
               <td>{{ formset.empty_form.serial_number }}</td>
