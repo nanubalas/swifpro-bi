@@ -286,14 +286,20 @@ def po_amend(request, po_id):
             expected_date=po.expected_date,
             notes=po.notes,
         )
+        from core.services.purchasing import sync_po_line_received
         for line in po.lines.all():
-            PurchaseOrderLine.objects.create(
+            new_line = PurchaseOrderLine.objects.create(
                 po=new_po,
                 product=line.product,
                 ordered_qty=line.ordered_qty,
-                received_qty=line.received_qty,
                 unit_cost=line.unit_cost,
+                # Carry the stable identity forward so receipts against any
+                # version feed this line's open/received quantities (M17).
+                root_line_id=(line.root_line_id or line.id),
             )
+            # received_qty is a cache: rebuild it from actual receipts rather
+            # than statically copying the old version's counter.
+            sync_po_line_received(new_line)
 
         po.is_current = False
         po.save(update_fields=["is_current"])
@@ -2118,7 +2124,9 @@ def receive_po(request, po_id):
                 ratio = (landed_total / goods_total) if goods_total > 0 else Decimal("0.00")
 
                 # Pass 2: create GRN lines, apply costed movements.
+                from core.services.purchasing import sync_po_line_received
                 inventory_value = Decimal("0.00")
+                touched_lines = []
                 for item in received_lines:
                     sl = item["sl"]
                     qty = item["qty"]
@@ -2127,6 +2135,9 @@ def receive_po(request, po_id):
 
                     GoodsReceiptLine.objects.create(
                         receipt=receipt, po_line=sl.po_line, product=sl.po_line.product,
+                        # Link to the stable PO-line identity so this receipt
+                        # counts toward the current version's open/received (M17).
+                        root_line_id=(sl.po_line.root_line_id or sl.po_line_id),
                         qty_received=qty, unit_cost=base_cost,
                         lot_code=item["lot_code"], serial_number=item["serial"], expiry_date=item["expiry"],
                     )
@@ -2144,11 +2155,22 @@ def receive_po(request, po_id):
                     )
                     # Actual capitalized value (standard products differ from cost).
                     inventory_value += movement.value or Decimal("0.00")
+                    # Shipment line tracks its own (version-specific) progress.
                     sl.received_qty += qty
                     sl.save(update_fields=["received_qty"])
-                    pol = sl.po_line
-                    pol.received_qty += qty
-                    pol.save(update_fields=["received_qty"])
+                    touched_lines.append(sl.po_line)
+
+                # Mark the receipt POSTED *and persist it* before syncing, so the
+                # received_qty rebuild (which sums POSTED receipts from the DB)
+                # includes this one.
+                receipt.status = GoodsReceipt.Status.POSTED
+                receipt.posted_at = received_at
+                receipt.save(update_fields=["status", "posted_at"])
+
+                # Rebuild received_qty from the actual receipts for every stable
+                # identity we touched (writes to all versions of each line).
+                for pol in touched_lines:
+                    sync_po_line_received(pol)
 
                 # Capitalize: DR Inventory (at cost basis) / CR GRNI (goods) / CR
                 # Accruals (landed) / +/- Purchase Price Variance (standard costing).
@@ -2157,15 +2179,13 @@ def receive_po(request, po_id):
                                        inventory_value=inventory_value,
                                        site_id=getattr(dest_location, "site_id", None))
 
-                # Update PO status
+                # Update PO status (refresh lines so open_qty reflects the sync).
+                po.refresh_from_db()
                 if all((l.open_qty == Decimal("0.00") for l in po.lines.all())):
                     po.status = PurchaseOrder.Status.RECEIVED
                 else:
                     po.status = PurchaseOrder.Status.PARTIALLY_RECEIVED
                 po.save(update_fields=["status"])
-
-                receipt.status = GoodsReceipt.Status.POSTED
-                receipt.save(update_fields=["status"])
         except ValueError as e:
             # Validation failure (over-receipt / nothing received): roll back and re-prompt.
             messages.error(request, str(e))

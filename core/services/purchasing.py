@@ -9,6 +9,61 @@ from django.utils import timezone
 from core.models import SupplierPriceHistory
 
 
+# ---------------------------------------------------------------------------
+# PO-line received quantity (M17): GoodsReceiptLines are the source of truth.
+# ---------------------------------------------------------------------------
+
+def root_line_id_of(po_line):
+    """The stable identity id for a PO line (the line itself if it's the root)."""
+    return po_line.root_line_id or po_line.id
+
+
+def received_qty_for_root(tenant, root_line_id):
+    """Total quantity received (POSTED GRNs only) against a stable PO-line identity."""
+    from django.db.models import Sum
+    from core.models import GoodsReceiptLine, GoodsReceipt
+    agg = (GoodsReceiptLine.objects
+           .filter(receipt__tenant=tenant, root_line_id=root_line_id,
+                   receipt__status=GoodsReceipt.Status.POSTED)
+           .aggregate(s=Sum("qty_received")))
+    return agg["s"] or Decimal("0.00")
+
+
+def sync_po_line_received(po_line):
+    """Recompute the received_qty cache for a PO line's stable identity from the
+    actual POSTED GoodsReceiptLines, and write it to every version of that line.
+
+    This is the only sanctioned way to update received_qty. Returns the total.
+    """
+    from django.db.models import Q
+    from core.models import PurchaseOrderLine
+    root_id = root_line_id_of(po_line)
+    total = received_qty_for_root(po_line.po.tenant_id, root_id)
+    # All versions of this logical line share the same received total.
+    (PurchaseOrderLine.objects
+     .filter(Q(id=root_id) | Q(root_line_id=root_id))
+     .update(received_qty=total))
+    return total
+
+
+def rebuild_all_received(tenant=None):
+    """Rebuild every PO line's received_qty cache from GoodsReceiptLines.
+
+    Safe to run any time (idempotent); used by the data migration and available
+    for ops if a cache is ever suspected stale."""
+    from core.models import PurchaseOrderLine
+    qs = PurchaseOrderLine.objects.select_related("po")
+    if tenant is not None:
+        qs = qs.filter(po__tenant=tenant)
+    seen_roots = set()
+    for line in qs:
+        root_id = root_line_id_of(line)
+        if root_id in seen_roots:
+            continue
+        seen_roots.add(root_id)
+        sync_po_line_received(line)
+
+
 def record_supplier_price(*, tenant, supplier, product, unit_cost, source, reference=None,
                           currency_code="GBP", recorded_at=None):
     """Record a supplier+product unit cost. Idempotent per (supplier, product,

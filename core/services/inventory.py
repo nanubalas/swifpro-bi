@@ -1,9 +1,9 @@
 from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, F
 from core.models import (
     InventoryBalance, InventoryLotBalance, InventoryMovement, InventoryReservation,
-    InventoryCostLayer, Product,
+    InventoryCostLayer, InventoryIssueCost, Product,
 )
 
 CENTS = Decimal("0.01")
@@ -15,28 +15,61 @@ def _total_on_hand(tenant, product):
     return agg["s"] or Decimal("0.00")
 
 
-def _consume_fifo_layers(tenant, product, qty, fallback_cost, location):
-    """Consume `qty` from the oldest FIFO layers *at this location*; return the
-    total cost consumed. Layers are scoped per location so an outbound at one
-    warehouse never relieves another warehouse's stock. If layers run dry
+def _consume_fifo_layers(tenant, product, qty, fallback_cost, location,
+                         lot_code=None, serial_number=None, expiry_date=None):
+    """Consume `qty` from the oldest FIFO layers *at this location*; return
+    (total_cost, consumed) where consumed is a list of (layer, qty_taken,
+    unit_cost) entries (layer is None for any uncovered shortfall).
+
+    Layers are scoped per location so an outbound at one warehouse never
+    relieves another warehouse's stock (C5). When a lot/serial/expiry is given,
+    only that lot's layers are consumed, so the issue is costed from the lot it
+    actually issued rather than the global FIFO queue (M6). If layers run dry
     (negative stock allowed), the shortfall is valued at `fallback_cost`."""
     remaining = qty
     cost = Decimal("0.00")
-    layers = (InventoryCostLayer.objects
-              .select_for_update()
-              .filter(tenant=tenant, product=product, location=location, qty_remaining__gt=0)
-              .order_by("received_at", "id"))
-    for layer in layers:
+    consumed = []
+    qs = (InventoryCostLayer.objects
+          .select_for_update()
+          .filter(tenant=tenant, product=product, location=location, qty_remaining__gt=0))
+    if lot_code or serial_number or expiry_date:
+        qs = qs.filter(lot_code=lot_code, serial_number=serial_number, expiry_date=expiry_date)
+    for layer in qs.order_by("received_at", "id"):
         if remaining <= 0:
             break
         take = min(remaining, layer.qty_remaining)
         cost += take * layer.unit_cost
         layer.qty_remaining -= take
         layer.save(update_fields=["qty_remaining"])
+        consumed.append((layer, take, layer.unit_cost))
         remaining -= take
     if remaining > 0:
-        cost += remaining * (fallback_cost or Decimal("0.0000"))
-    return cost
+        fb = fallback_cost or Decimal("0.0000")
+        cost += remaining * fb
+        consumed.append((None, remaining, fb))
+    return cost, consumed
+
+
+def select_fefo_lots(*, tenant, product, location, qty):
+    """Pick lot balances to issue earliest-expiry-first (then oldest), returning
+    [(InventoryLotBalance, qty_to_take)] until `qty` is satisfied or stock runs
+    out. Lots without an expiry sort last. Identifies the actual lot to issue
+    under FEFO; callers issue those lots so each is costed from its own cost
+    layers (M6). Does not move stock itself."""
+    remaining = Decimal(qty)
+    picks = []
+    if remaining <= 0:
+        return picks
+    lots = (InventoryLotBalance.objects
+            .filter(tenant=tenant, product=product, location=location, on_hand__gt=0)
+            .order_by(F("expiry_date").asc(nulls_last=True), "id"))
+    for lb in lots:
+        if remaining <= 0:
+            break
+        take = min(remaining, lb.on_hand)
+        picks.append((lb, take))
+        remaining -= take
+    return picks
 
 
 @transaction.atomic
@@ -103,6 +136,7 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
     prior_avg = product.average_cost or Decimal("0.0000")
     is_fifo = product.cost_method == Product.CostMethod.FIFO
     is_standard = product.cost_method == Product.CostMethod.STANDARD
+    consumed = []  # FIFO layers relieved by an outbound (for the issue-cost trail)
 
     if qty_delta > 0:
         if is_standard:
@@ -123,10 +157,12 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
                     new_avg = ((prior_qty * prior_avg) + (qty_delta * cost_in)) / new_qty
                     product.average_cost = new_avg.quantize(COST_DP, rounding=ROUND_HALF_UP)
                     product.save(update_fields=["average_cost"])
-            # FIFO products also get a cost layer.
+            # FIFO products also get a cost layer, tagged with the lot it was
+            # received under so a later issue of that lot is costed from it (M6).
             if is_fifo:
                 InventoryCostLayer.objects.create(
                     tenant=tenant, product=product, location=location,
+                    lot_code=lot_code, serial_number=serial_number, expiry_date=expiry_date,
                     qty_received=qty_delta, qty_remaining=qty_delta,
                     unit_cost=cost_in, ref_type=ref_type, ref_id=str(ref_id),
                 )
@@ -139,7 +175,12 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
             move_unit_cost = product.standard_cost or prior_avg
             value = (qty_delta * move_unit_cost).quantize(CENTS, rounding=ROUND_HALF_UP)
         elif is_fifo:
-            cost = _consume_fifo_layers(tenant, product, out_qty, prior_avg, location)
+            # Consume the issued lot's layers (specific identification) when a lot
+            # is given, else the global FIFO queue. `consumed` feeds the issue-cost
+            # audit trail below.
+            cost, consumed = _consume_fifo_layers(
+                tenant, product, out_qty, prior_avg, location,
+                lot_code=lot_code, serial_number=serial_number, expiry_date=expiry_date)
             value = (-cost).quantize(CENTS, rounding=ROUND_HALF_UP)
             move_unit_cost = (cost / out_qty).quantize(COST_DP, rounding=ROUND_HALF_UP) if out_qty else prior_avg
         else:
@@ -164,6 +205,17 @@ def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_t
         serial_number=serial_number,
         expiry_date=expiry_date,
     )
+
+    # Record the issue-cost trail: which layer(s) this outbound consumed, the
+    # quantity costed and the resulting cost, so COGS is traceable to the exact
+    # lot/layer issued (M6).
+    for layer, take, layer_unit_cost in consumed:
+        InventoryIssueCost.objects.create(
+            tenant=tenant, movement=movement, cost_layer=layer,
+            lot_code=lot_code, serial_number=serial_number, expiry_date=expiry_date,
+            qty=take, unit_cost=layer_unit_cost,
+            total_cost=(take * layer_unit_cost).quantize(CENTS, rounding=ROUND_HALF_UP),
+        )
     return movement
 
 
