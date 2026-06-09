@@ -1658,6 +1658,103 @@ def _account_balance(tenant, code):
     return (agg["d"] or Decimal("0.00")) - (agg["c"] or Decimal("0.00"))
 
 
+class HighInventoryFixTests(TestCase):
+    """Regression tests for the High inventory findings H1/H7/H8/H14."""
+
+    # ---- H1: post_cogs is idempotent on (tenant, ref) ----
+    def test_h1_post_cogs_idempotent_on_ref(self):
+        from core.services.gl import post_cogs
+        from core.models import JournalEntry
+        t = Tenant.objects.create(name="H1 Co")  # signal seeds GL accounts
+        je1 = post_cogs(t, Decimal("50.00"), "SO-1")
+        je2 = post_cogs(t, Decimal("50.00"), "SO-1")
+        self.assertEqual(je1.id, je2.id)
+        self.assertEqual(
+            JournalEntry.objects.filter(tenant=t, ref_type="COGS", ref_id="SO-1").count(), 1)
+        self.assertEqual(_account_balance(t, "5000"), Decimal("50.00"))  # COGS booked once
+
+    # ---- H7: optional negative-stock block ----
+    def test_h7_block_negative_stock_rejects_oversell(self):
+        from core.services.inventory import apply_movement
+        from django.core.exceptions import ValidationError
+        t = Tenant.objects.create(name="H7 Co", block_negative_stock=True)
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-H7", name="P")
+        apply_movement(tenant=t, product=p, location=loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("5"), ref_type="T", ref_id="1", unit_cost=Decimal("2.00"))
+        with self.assertRaises(ValidationError):
+            apply_movement(tenant=t, product=p, location=loc, movement_type="SALE",
+                           qty_delta=Decimal("-10"), ref_type="T", ref_id="2")
+        # The rejected movement rolled back: on-hand untouched, no SALE recorded.
+        bal = InventoryBalance.objects.get(tenant=t, product=p, location=loc)
+        self.assertEqual(bal.on_hand, Decimal("5.00"))
+        self.assertFalse(InventoryMovement.objects.filter(tenant=t, movement_type="SALE").exists())
+
+    def test_h7_default_tenant_still_allows_negative(self):
+        from core.services.inventory import apply_movement
+        t = Tenant.objects.create(name="H7 Allow Co")  # block_negative_stock defaults False
+        loc = Location.objects.create(tenant=t, name="WH")
+        p = Product.objects.create(tenant=t, sku="SKU-H7B", name="P")
+        apply_movement(tenant=t, product=p, location=loc, movement_type="SALE",
+                       qty_delta=Decimal("-3"), ref_type="T", ref_id="1")
+        bal = InventoryBalance.objects.get(tenant=t, product=p, location=loc)
+        self.assertEqual(bal.on_hand, Decimal("-3.00"))
+
+    # ---- H8: GRNI clears against the bill; price variance to PPV ----
+    def test_h8_grni_clears_with_price_variance(self):
+        from core.models import (PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine,
+                                  SupplierInvoice, SupplierInvoiceLine)
+        from core.services.gl import post_inventory_receipt, post_supplier_invoice
+        t = Tenant.objects.create(name="H8 Co")
+        supplier = Supplier.objects.create(tenant=t, name="S")
+        p = Product.objects.create(tenant=t, sku="SKU-H8", name="P")
+        loc = Location.objects.create(tenant=t, name="WH")
+        po = PurchaseOrder.objects.create(tenant=t, po_number="PO-H8", supplier=supplier)
+        pol = PurchaseOrderLine.objects.create(po=po, product=p, ordered_qty=Decimal("10"), unit_cost=Decimal("5.00"))
+        grn = GoodsReceipt.objects.create(tenant=t, po=po, grn_number="GRN-H8", received_to=loc,
+                                          status=GoodsReceipt.Status.POSTED)
+        GoodsReceiptLine.objects.create(receipt=grn, po_line=pol, product=p,
+                                        qty_received=Decimal("10"), unit_cost=Decimal("5.00"))
+        # Received goods value = 50: receipt credits GRNI 50.
+        post_inventory_receipt(t, Decimal("50.00"), grn.grn_number)
+        self.assertEqual(_account_balance(t, "2100"), Decimal("-50.00"))  # GRNI credit
+
+        # Supplier bills 10 @ 6.00 = 60 net -> 10 unfavourable price variance.
+        std = TaxCode.objects.get(tenant=t, code="STD")
+        inv = SupplierInvoice.objects.create(tenant=t, supplier=supplier, po=po, receipt=grn,
+                                             invoice_number="SINV-H8")
+        SupplierInvoiceLine.objects.create(invoice=inv, product=p, qty=Decimal("10"),
+                                           unit_cost=Decimal("6.00"), tax_code=std)
+        je = post_supplier_invoice(inv)
+
+        self.assertEqual(je.total_debit, je.total_credit)
+        self.assertEqual(_account_balance(t, "2100"), Decimal("0.00"))   # GRNI fully cleared
+        self.assertEqual(_account_balance(t, "5100"), Decimal("10.00"))  # PPV holds the variance
+        self.assertEqual(_account_balance(t, "2000"), Decimal("-72.00"))  # AP = 60 + 20% VAT
+
+    # ---- H14: per-location analytics value FIFO from layers ----
+    def test_h14_by_location_fifo_uses_layer_cost(self):
+        from django.utils import timezone
+        from core.services.inventory import apply_movement
+        from core.services import reports
+        t = Tenant.objects.create(name="H14 Co")
+        a = Location.objects.create(tenant=t, name="A")
+        b = Location.objects.create(tenant=t, name="B")
+        p = Product.objects.create(tenant=t, sku="SKU-H14", name="P", cost_method=Product.CostMethod.FIFO)
+        apply_movement(tenant=t, product=p, location=a, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="a", unit_cost=Decimal("2.00"))
+        apply_movement(tenant=t, product=p, location=b, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="b", unit_cost=Decimal("8.00"))
+        # Company average is now 5.00; per-location FIFO must NOT use that.
+        today = timezone.localdate()
+        res = reports.inventory_analytics(t, today, today)
+        by_loc = {e["location"].id: e["value"] for e in res["by_location"]}
+        self.assertEqual(by_loc[a.id], Decimal("20.00"))  # 10 @ 2.00, not 10 @ 5.00
+        self.assertEqual(by_loc[b.id], Decimal("80.00"))  # 10 @ 8.00, not 10 @ 5.00
+        # Per-location total reconciles to the grand current_value.
+        self.assertEqual(sum(by_loc.values()), res["current_value"])
+
+
 class LandedCostTests(TestCase):
     def setUp(self):
         from core.models import Location

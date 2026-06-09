@@ -188,8 +188,26 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
         posted_at=timezone.now(),
     )
 
-    # DR GRNI (assume inventory already received)
-    JournalLine.objects.create(entry=je, account=_acc(tenant, "grni"), description="GRNI", debit=subtotal, credit=Decimal("0.00"))
+    # Clear GRNI at the value the goods were *received* at, and book any
+    # difference vs. the billed value to Purchase Price Variance (H8). Receiving
+    # credited GRNI at the receipt's goods value; billing the supplier at a
+    # different price would otherwise leave a permanent unreconciled GRNI
+    # balance. When no receipt is linked, fall back to clearing at the billed
+    # subtotal (legacy behaviour).
+    receipt = getattr(inv, "receipt", None)
+    received_value = None
+    if receipt is not None:
+        received_value = sum((l.qty_received * l.unit_cost for l in receipt.lines.all()), Decimal("0.00"))
+    grni_value = received_value if received_value is not None else subtotal
+    price_variance = subtotal - grni_value  # >0 billed above receipt (unfavourable)
+
+    # DR GRNI (clear the goods-received accrual)
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "grni"), description="GRNI", debit=grni_value, credit=Decimal("0.00"))
+    # DR/CR Purchase Price Variance for any billed-vs-received difference.
+    if price_variance > Decimal("0.00"):
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "ppv"), description="Purchase price variance", debit=price_variance, credit=Decimal("0.00"))
+    elif price_variance < Decimal("0.00"):
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "ppv"), description="Purchase price variance", debit=Decimal("0.00"), credit=-price_variance)
     # DR VAT Input (reclaimable)
     if tax and tax != Decimal("0.00"):
         JournalLine.objects.create(entry=je, account=_acc(tenant, "vat_input"), description="VAT Input", debit=tax, credit=Decimal("0.00"))
@@ -476,10 +494,19 @@ def reverse_payment(payment, user=None):
 
 @transaction.atomic
 def post_cogs(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
-    """Expense cost of goods sold: DR COGS / CR Inventory."""
+    """Expense cost of goods sold: DR COGS / CR Inventory.
+
+    Idempotent on (tenant, ref_id): if a COGS entry already exists for this ref
+    it is returned unchanged, so a retried/duplicated post never books a second
+    COGS journal (H1). Mirrors the guards on the sibling posters."""
     value = Decimal(value)
     if value <= Decimal("0.00"):
         return None
+    existing = (JournalEntry.objects
+                .filter(tenant=tenant, ref_type="COGS", ref_id=str(ref_id))
+                .order_by("-id").first())
+    if existing:
+        return existing
     je = JournalEntry.objects.create(
         tenant=tenant, site_id=site_id, entry_date=entry_date or timezone.now().date(),
         ref_type="COGS", ref_id=str(ref_id), memo=f"COGS {ref_id}",

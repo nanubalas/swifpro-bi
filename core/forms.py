@@ -361,6 +361,8 @@ class TenantSettingsForm(TenantModelForm):
             "expense_approval_threshold",
             # Credit control / dunning
             "dunning_enabled", "dunning_interval_days",
+            # Inventory controls
+            "block_negative_stock",
         ]
         widgets = {
             "invoice_footer": forms.Textarea(attrs={"rows": 2}),

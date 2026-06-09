@@ -264,7 +264,20 @@ def inventory_analytics(tenant, date_from, date_to, location_ids=None):
     val = stock_valuation(tenant, location_ids=location_ids)
     current_value = val["total"]
 
-    # Value on hand per location (at moving-average / standard cost).
+    # Per (product, location) FIFO value from remaining layers, so FIFO stock is
+    # valued at its actual layer cost at each location instead of the company
+    # average. Without this the per-location totals don't reconcile to the
+    # grand total or to a site's inventory GL account (H14).
+    fifo_loc_value = {}
+    flayer_qs = InventoryCostLayer.objects.filter(tenant=tenant, qty_remaining__gt=0)
+    if location_ids is not None:
+        flayer_qs = flayer_qs.filter(location_id__in=location_ids)
+    for row in (flayer_qs.values("product", "location")
+                .annotate(v=Sum(F("qty_remaining") * F("unit_cost")))):
+        fifo_loc_value[(row["product"], row["location"])] = row["v"] or ZERO
+
+    # Value on hand per location (FIFO from layers; others at moving-average /
+    # standard cost).
     loc_map = {}
     bal_qs = InventoryBalance.objects.filter(tenant=tenant).select_related("product", "location")
     if location_ids is not None:
@@ -272,10 +285,14 @@ def inventory_analytics(tenant, date_from, date_to, location_ids=None):
     for b in bal_qs:
         if not b.on_hand:
             continue
-        cost = b.product.average_cost or b.product.standard_cost or ZERO
+        if b.product.cost_method == Product.CostMethod.FIFO:
+            value = fifo_loc_value.get((b.product_id, b.location_id), ZERO)
+        else:
+            cost = b.product.average_cost or b.product.standard_cost or ZERO
+            value = b.on_hand * cost
         e = loc_map.setdefault(b.location_id, {"location": b.location, "qty": ZERO, "value": ZERO})
         e["qty"] += b.on_hand
-        e["value"] += (b.on_hand * cost)
+        e["value"] += value
     for e in loc_map.values():
         e["value"] = e["value"].quantize(Decimal("0.01"))
     by_location = sorted(loc_map.values(), key=lambda r: r["value"], reverse=True)
