@@ -123,6 +123,7 @@ urlpatterns = [
     path("inventory/adjustments/<int:adj_id>/reject/", views.adjustment_reject, name="adjustment_reject"),
     path("inventory/low-stock/", views.low_stock, name="low_stock"),
     path("inventory/low-stock/reorder/", views.low_stock_reorder, name="low_stock_reorder"),
+    path("inventory/worklist/", views.inventory_worklist, name="inventory_worklist"),
     path("inventory/replenishment/", views.replenishment_plan, name="replenishment_plan"),
     path("inventory/replenishment/reorder/", views.replenishment_reorder, name="replenishment_reorder"),
     path("inventory/replenishment/policy/<int:product_id>/", views.replenishment_policy_edit, name="replenishment_policy_edit"),

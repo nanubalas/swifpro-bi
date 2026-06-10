@@ -8692,3 +8692,131 @@ class SerialReadinessAuditTests(TestCase):
         other = Tenant.objects.create(name="Other Audit Co")
         from core.services.serial_audit import audit_serial_readiness
         self.assertEqual(audit_serial_readiness(tenant=other), [])
+
+
+class InventoryWorklistTests(TestCase):
+    """Operational worklist: stale in-transit transfers + unresolved holds."""
+
+    def setUp(self):
+        import datetime
+        from django.utils import timezone
+        from core.models import OrgMembership
+        self.now = timezone.now()
+        self.t = Tenant.objects.create(name="Worklist Co")
+        self.a = Location.objects.create(tenant=self.t, name="A")
+        self.b = Location.objects.create(tenant=self.t, name="B")
+        self.p = Product.objects.create(tenant=self.t, sku="W1", name="Widget", average_cost=Decimal("4.00"))
+        self.user = User.objects.create_user("wl", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+
+    def _ago(self, days):
+        import datetime
+        return self.now - datetime.timedelta(days=days)
+
+    def _transfer(self, num, *, days, status="DISPATCHED", dispatched="5", received="0"):
+        from core.models import InventoryTransfer, InventoryTransferLine
+        tr = InventoryTransfer.objects.create(
+            tenant=self.t, transfer_number=num, from_location=self.a, to_location=self.b,
+            status=status, dispatched_at=self._ago(days))
+        InventoryTransferLine.objects.create(
+            transfer=tr, product=self.p, qty=Decimal(dispatched),
+            dispatched_qty=Decimal(dispatched), received_qty=Decimal(received),
+            dispatched_unit_cost=Decimal("4.00"))
+        return tr
+
+    def _hold(self, num, *, days, disposition="QUARANTINE", final=None):
+        from core.models import ReturnAuthorization, ReturnLine
+        rma = ReturnAuthorization.objects.create(
+            tenant=self.t, channel="SHOPIFY", rma_number=num, receive_location=self.a,
+            status=ReturnAuthorization.Status.RECEIVED)
+        return ReturnLine.objects.create(
+            rma=rma, product=self.p, qty=Decimal("1"), serial_number="SN-" + num,
+            disposition=disposition, final_disposition=final, inspected_at=self._ago(days))
+
+    # ---- stale transfers ----
+    def test_stale_dispatched_transfer_appears(self):
+        from core.services.worklist import stale_transfers
+        self._transfer("TR-STALE", days=10)
+        rows = stale_transfers(self.t, now=self.now)
+        self.assertEqual([r["transfer_number"] for r in rows], ["TR-STALE"])
+        self.assertEqual(rows[0]["in_transit_qty"], Decimal("5"))
+        self.assertEqual(rows[0]["value"], Decimal("20.00"))   # 5 @ 4.00
+
+    def test_recent_transfer_does_not_appear(self):
+        from core.services.worklist import stale_transfers
+        self._transfer("TR-NEW", days=2)
+        self.assertEqual(stale_transfers(self.t, now=self.now), [])
+
+    def test_fully_received_transfer_does_not_appear(self):
+        from core.services.worklist import stale_transfers
+        self._transfer("TR-DONE", days=10, status="RECEIVED", dispatched="5", received="5")
+        self.assertEqual(stale_transfers(self.t, now=self.now), [])
+
+    def test_partially_received_stale_appears(self):
+        from core.services.worklist import stale_transfers
+        self._transfer("TR-PART", days=10, dispatched="5", received="3")
+        rows = stale_transfers(self.t, now=self.now)
+        self.assertEqual(rows[0]["transfer_number"], "TR-PART")
+        self.assertEqual(rows[0]["in_transit_qty"], Decimal("2"))   # 5 - 3
+
+    # ---- holds ----
+    def test_unresolved_quarantine_appears(self):
+        from core.services.worklist import unresolved_holds
+        self._hold("RMA-Q", days=10)
+        rows = unresolved_holds(self.t, now=self.now)
+        self.assertEqual([r["rma_number"] for r in rows], ["RMA-Q"])
+        self.assertEqual(rows[0]["value"], Decimal("4.00"))
+
+    def test_resolved_quarantine_does_not_appear(self):
+        from core.services.worklist import unresolved_holds
+        from core.models import ReturnLine
+        self._hold("RMA-R", days=10, final=ReturnLine.Disposition.RESTOCK)
+        self.assertEqual(unresolved_holds(self.t, now=self.now), [])
+
+    def test_repair_and_rts_holds_appear(self):
+        from core.services.worklist import unresolved_holds
+        from core.models import ReturnLine
+        self._hold("RMA-REP", days=10, disposition=ReturnLine.Disposition.REPAIR)
+        self._hold("RMA-RTS", days=10, disposition=ReturnLine.Disposition.RETURN_TO_SUPPLIER)
+        nums = {r["rma_number"] for r in unresolved_holds(self.t, now=self.now)}
+        self.assertEqual(nums, {"RMA-REP", "RMA-RTS"})
+
+    def test_age_threshold_filter(self):
+        from core.services.worklist import unresolved_holds
+        self._hold("RMA-5D", days=5)
+        self.assertEqual(unresolved_holds(self.t, days=7, now=self.now), [])      # not old enough
+        self.assertEqual(len(unresolved_holds(self.t, days=3, now=self.now)), 1)  # within tighter window
+
+    # ---- surfacing ----
+    def test_worklist_counts_and_dashboard_card(self):
+        from core.services.worklist import worklist_counts
+        from core.views import _dashboard_kpis
+        self._transfer("TR-C", days=10)
+        self._hold("RMA-C", days=10)
+        counts = worklist_counts(self.t)
+        self.assertEqual(counts, {"stale_transfers": 1, "unresolved_holds": 1})
+        cards = {c["label"]: c["value"] for c in _dashboard_kpis(self.t, "WAREHOUSE")}
+        self.assertEqual(cards["Worklist (stuck stock)"], 2)
+
+    def test_page_renders(self):
+        self._transfer("TR-P", days=10)
+        self._hold("RMA-P", days=10)
+        self.client.login(username="wl", password="pw")
+        resp = self.client.get("/inventory/worklist/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "TR-P")
+        self.assertContains(resp, "RMA-P")
+
+    def test_search_finds_worklist(self):
+        from core.roles import search_nav, ADMIN
+        for q in ("inventory worklist", "stale transfers", "quarantine", "in transit"):
+            urls = [r["url"] for r in search_nav(ADMIN, q, limit=None)]
+            self.assertIn("/inventory/worklist/", urls, f"{q!r} did not find worklist")
+
+    def test_tenant_isolation(self):
+        from core.services.worklist import stale_transfers, unresolved_holds
+        self._transfer("TR-ISO", days=10)
+        self._hold("RMA-ISO", days=10)
+        other = Tenant.objects.create(name="Other Worklist Co")
+        self.assertEqual(stale_transfers(other, now=self.now), [])
+        self.assertEqual(unresolved_holds(other, now=self.now), [])

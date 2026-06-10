@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Inventory Worklist - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'dashboard' %}{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1">Inventory Worklist</h2>
+    <div class="text-muted">Stock stuck in transit or in hold/quarantine — act from the linked pages.</div>
+  </div>
+</div>
+
+<div class="card mb-3"><div class="card-body">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-2"><label class="form-label mb-1 small">Older than (days)</label>
+      <input type="number" min="0" name="days" value="{{ days }}" class="form-control form-control-sm"></div>
+    <div class="col-md-3"><label class="form-label mb-1 small">Location</label>
+      <select name="location" class="form-select form-select-sm"><option value="">All</option>
+        {% for l in locations %}<option value="{{ l.id }}" {% if f_location == l.id|stringformat:'s' %}selected{% endif %}>{{ l.name }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label mb-1 small">Product</label>
+      <select name="product" class="form-select form-select-sm"><option value="">All</option>
+        {% for p in products %}<option value="{{ p.id }}" {% if f_product == p.id|stringformat:'s' %}selected{% endif %}>{{ p.sku }} - {{ p.name }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-1 small">Disposition</label>
+      <select name="disposition" class="form-select form-select-sm"><option value="">All holds</option>
+        {% for v, lbl in hold_dispositions %}<option value="{{ v }}" {% if f_disposition == v %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></div>
+    <div class="col-md-2 d-flex flex-wrap gap-2 align-items-center">
+      <div class="form-check"><input class="form-check-input" type="checkbox" name="high_value" value="1" id="hv" {% if high_value %}checked{% endif %}><label class="form-check-label small" for="hv">High value</label></div>
+      <button class="btn btn-primary btn-sm"><i class="bi bi-search"></i></button>
+      {% if filtered %}<a class="btn btn-outline-secondary btn-sm" href="{% url 'inventory_worklist' %}">Clear</a>{% endif %}
+    </div>
+  </form>
+</div></div>
+
+<div class="card mb-3"><div class="card-body">
+  <h5 class="fw-semibold mb-3"><i class="bi bi-truck me-1"></i>Stale In-Transit Transfers <span class="badge text-bg-light">{{ transfers|length }}</span></h5>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light"><tr>
+        <th>Transfer</th><th>From</th><th>To</th><th>Status</th><th>Dispatched</th>
+        <th class="text-end">Age (d)</th><th>Lines</th><th class="text-end">In-transit qty</th>
+        <th class="text-end">Value</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for t in transfers %}
+        <tr>
+          <td class="fw-semibold">{{ t.transfer_number }}</td>
+          <td class="small">{{ t.from_location }}</td>
+          <td class="small">{{ t.to_location }}</td>
+          <td><span class="badge text-bg-warning">In transit</span></td>
+          <td class="small text-muted">{{ t.dispatched_at|date:"d M Y" }}</td>
+          <td class="text-end {% if t.age_days >= 30 %}text-danger fw-semibold{% endif %}">{{ t.age_days }}</td>
+          <td class="small text-muted">{{ t.summary }}</td>
+          <td class="text-end">{{ t.in_transit_qty|floatformat:2 }}</td>
+          <td class="text-end">{{ t.value|money:tenant.currency_code }}</td>
+          <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="{{ t.url }}">Open</a></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="10" class="text-center text-muted py-4">No stale in-transit transfers. 🎉</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></div>
+
+<div class="card"><div class="card-body">
+  <h5 class="fw-semibold mb-3"><i class="bi bi-pause-circle me-1"></i>Unresolved Quarantine / Hold Returns <span class="badge text-bg-light">{{ holds|length }}</span></h5>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light"><tr>
+        <th>RMA</th><th>Reference</th><th>SKU</th><th>Product</th><th>Serial / Lot</th>
+        <th>Disposition</th><th>Received</th><th class="text-end">Age (d)</th>
+        <th class="text-end">Qty</th><th class="text-end">Value</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for h in holds %}
+        <tr>
+          <td class="fw-semibold">{{ h.rma_number }}</td>
+          <td class="small text-muted">{{ h.reference|default:h.channel }}</td>
+          <td>{{ h.sku }}</td>
+          <td class="small">{{ h.product }}</td>
+          <td class="small">{% if h.serial_number %}<span class="badge text-bg-secondary">{{ h.serial_number }}</span>{% elif h.lot_code %}{{ h.lot_code }}{% else %}—{% endif %}</td>
+          <td>{% if h.disposition == "SCRAP" %}<span class="badge text-bg-danger">{{ h.disposition_label }}</span>{% else %}<span class="badge text-bg-warning">{{ h.disposition_label }}</span>{% endif %}</td>
+          <td class="small text-muted">{{ h.received_at|date:"d M Y" }}</td>
+          <td class="text-end {% if h.age_days >= 30 %}text-danger fw-semibold{% endif %}">{{ h.age_days }}</td>
+          <td class="text-end">{{ h.qty|floatformat:2 }}</td>
+          <td class="text-end">{{ h.value|money:tenant.currency_code }}</td>
+          <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="{{ h.url }}">Resolve</a></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="11" class="text-center text-muted py-4">No unresolved holds. 🎉</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="form-text mt-2">Act from the linked pages: receive / cancel / close-short a transfer, or release / scrap a held return.
+    {% if high_value %}High-value filter uses the stock-adjustment approval threshold.{% endif %}</div>
+</div></div>
+{% endblock %}

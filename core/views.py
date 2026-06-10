@@ -631,16 +631,23 @@ def _dashboard_kpis(tenant, role_code, site_id=None, location_ids=None):
             status__in=[PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.SENT,
                         PurchaseOrder.Status.IN_TRANSIT, PurchaseOrder.Status.PARTIALLY_RECEIVED])).count()
         return {"label": "POs to receive", "value": n, "is_money": False, "icon": "truck", "url": "/po/", "tone": "primary"}
+    def c_worklist():
+        from core.services.worklist import worklist_counts
+        c = worklist_counts(tenant)
+        n = c["stale_transfers"] + c["unresolved_holds"]
+        return {"label": "Worklist (stuck stock)", "value": n, "is_money": False, "icon": "list-task",
+                "url": "/inventory/worklist/", "tone": "warning" if n else "muted",
+                "sub": f"{c['stale_transfers']} in transit · {c['unresolved_holds']} on hold"}
 
     layout = {
         roles_mod.ACCOUNTANT: [c_ar, c_ap, c_overdue, c_bank],
         roles_mod.FINANCE:    [c_ar, c_ap, c_overdue, c_bank],
         roles_mod.SALES:      [c_sales, c_quotes, c_orders, c_overdue],
-        roles_mod.WAREHOUSE:  [c_lowstock, c_pendadj, c_torecv, c_stockval],
+        roles_mod.WAREHOUSE:  [c_lowstock, c_pendadj, c_torecv, c_stockval, c_worklist],
         roles_mod.PURCHASING: [c_openpo, c_req, c_backorder, c_lowstock],
         roles_mod.READONLY:   [c_sales, c_ar, c_stockval],
         roles_mod.MANAGER:    [c_sales, c_openpo, c_lowstock, c_ar],
-        roles_mod.ADMIN:      [c_sales, c_ar, c_lowstock, c_openpo],
+        roles_mod.ADMIN:      [c_sales, c_ar, c_lowstock, c_openpo, c_worklist],
     }
     builders = layout.get(role_code, [])
     cards = []
@@ -2627,6 +2634,51 @@ def replenishment_policy_edit(request, product_id):
         form = ReplenishmentPolicyForm(instance=policy)
     return render(request, "inventory/replenishment_policy_form.html", {
         "tenant": tenant, "form": form, "product": product, "location": location})
+
+
+# ============================
+# Operational worklist: stuck in-transit / unresolved hold-quarantine
+# ============================
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_READONLY])
+def inventory_worklist(request):
+    """Stock stuck in transit or in hold/quarantine, with links to the existing
+    transfer / RMA action pages."""
+    from core.services import worklist as wl
+    from core.models import ReturnLine
+    tenant = _get_default_tenant(request)
+    try:
+        days = int(request.GET.get("days") or wl.DEFAULT_AGE_DAYS)
+    except (TypeError, ValueError):
+        days = wl.DEFAULT_AGE_DAYS
+    f_location = request.GET.get("location") or ""
+    f_product = request.GET.get("product") or ""
+    f_disposition = request.GET.get("disposition") or ""
+    high_value = request.GET.get("high_value") == "1"
+    loc_id = int(f_location) if f_location else None
+    prod_id = int(f_product) if f_product else None
+
+    transfers = wl.stale_transfers(tenant, days=days, location_id=loc_id, product_id=prod_id,
+                                   high_value_only=high_value)
+    holds = wl.unresolved_holds(tenant, days=days, location_id=loc_id, disposition=f_disposition or None,
+                                product_id=prod_id, high_value_only=high_value)
+
+    allowed = active_location_ids(request)  # scope the filter dropdown to the site
+    locations = Location.objects.filter(tenant=tenant)
+    if allowed is not None:
+        locations = locations.filter(id__in=allowed)
+    hold_dispositions = [(d, lbl) for d, lbl in ReturnLine.Disposition.choices
+                         if d in ReturnLine.HOLD_DISPOSITIONS]
+    return render(request, "inventory/worklist.html", {
+        "tenant": tenant, "transfers": transfers, "holds": holds, "days": days,
+        "locations": locations.order_by("name"),
+        "products": Product.objects.filter(tenant=tenant).order_by("sku"),
+        "hold_dispositions": hold_dispositions,
+        "f_location": f_location, "f_product": f_product, "f_disposition": f_disposition,
+        "high_value": high_value,
+        "filtered": bool(f_location or f_product or f_disposition or high_value or days != wl.DEFAULT_AGE_DAYS),
+    })
 
 
 @login_required
