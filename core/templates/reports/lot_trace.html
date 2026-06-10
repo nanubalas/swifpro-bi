@@ -81,7 +81,7 @@
   <div class="table-responsive">
     <table class="table table-sm table-hover align-middle mb-0">
       <thead class="table-light">
-        <tr><th>Date</th><th>Type</th><th>Location</th><th>Bin</th><th class="text-end">Qty</th>
+        <tr><th>Date</th><th>Type</th><th>Location</th><th>Bin</th><th>Lot / Serial</th><th class="text-end">Qty</th>
             <th class="text-end">Unit cost</th><th class="text-end">Value</th><th>Reference / source</th></tr>
       </thead>
       <tbody>
@@ -91,6 +91,7 @@
           <td><span class="badge text-bg-light">{{ row.m.get_movement_type_display }}</span></td>
           <td>{{ row.m.location.name }}</td>
           <td>{% if row.m.bin %}{{ row.m.bin.code }}{% else %}-{% endif %}</td>
+          <td class="small">{% if row.m.serial_number %}<span class="badge text-bg-secondary">{{ row.m.serial_number }}</span>{% elif row.m.lot_code %}{{ row.m.lot_code }}{% else %}-{% endif %}</td>
           <td class="text-end {% if row.m.qty_delta < 0 %}text-danger{% endif %}">{{ row.m.qty_delta }}</td>
           <td class="text-end">{% if row.m.unit_cost != None %}{{ row.m.unit_cost|money:tenant.currency_code }}{% else %}-{% endif %}</td>
           <td class="text-end">{% if row.m.value != None %}{{ row.m.value|money:tenant.currency_code }}{% else %}-{% endif %}</td>
@@ -103,7 +104,7 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="8" class="text-center text-muted py-4">No movements for this lot.</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-4">No movements for this lot.</td></tr>
         {% endfor %}
       </tbody>
     </table>

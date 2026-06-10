@@ -7684,3 +7684,148 @@ class SerialCorrectnessTests(TestCase):
         from core.models import InventoryLotBalance
         ob = InventoryLotBalance.objects.get(tenant=other, product=op, location=oloc, serial_number="SN1")
         self.assertEqual(ob.on_hand, Decimal("1.00"))
+
+
+class SerialPickerUiTests(TestCase):
+    """Serial availability service + picker endpoint + availability page + serial
+    visibility in tables (package 2)."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Customer
+        self.t = Tenant.objects.create(name="Picker Co")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.sp = Product.objects.create(tenant=self.t, sku="SN-P", name="Serial Widget",
+                                         cost_method=Product.CostMethod.FIFO, track_serial=True)
+        self.plain = Product.objects.create(tenant=self.t, sku="PLAIN", name="Plain")
+        self.cust = Customer.objects.create(tenant=self.t, name="Acme")
+        self.user = User.objects.create_user("picku", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="picku", password="pw")
+
+    def _recv(self, serial, cost="7.00"):
+        from core.services.inventory import apply_movement
+        apply_movement(tenant=self.t, product=self.sp, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("1"), ref_type="T", ref_id="r" + serial,
+                       unit_cost=Decimal(cost), serial_number=serial)
+
+    def _issue(self, serial, mtype="SALE"):
+        from core.services.inventory import apply_movement
+        apply_movement(tenant=self.t, product=self.sp, location=self.loc, movement_type=mtype,
+                       qty_delta=Decimal("-1"), ref_type="T", ref_id="i" + serial, serial_number=serial)
+
+    def _avail(self, **kw):
+        from core.services.inventory import available_serials
+        return [r["serial_number"] for r in available_serials(self.t, **kw)]
+
+    # ---- service ----
+    def test_available_returns_only_available(self):
+        self._recv("SN1"); self._recv("SN2")
+        self.assertEqual(set(self._avail()), {"SN1", "SN2"})
+
+    def test_issued_serial_excluded(self):
+        self._recv("SN1"); self._recv("SN2")
+        self._issue("SN1")                       # sold
+        self.assertEqual(set(self._avail()), {"SN2"})
+
+    def test_writeoff_and_rts_excluded(self):
+        self._recv("SN1"); self._recv("SN2")
+        self._issue("SN1", mtype="WRITE_OFF")
+        self._issue("SN2", mtype="RETURN_SUPPLIER")
+        self.assertEqual(self._avail(), [])
+
+    def test_reserved_serial_excluded(self):
+        from core.models import InventoryLotBalance
+        self._recv("SN1")
+        # Mark the unit as held by an active posting (reserved == on_hand).
+        InventoryLotBalance.objects.filter(tenant=self.t, serial_number="SN1").update(reserved=Decimal("1.00"))
+        self.assertEqual(self._avail(), [])
+
+    def test_service_tenant_isolation(self):
+        self._recv("SN1")
+        other = Tenant.objects.create(name="Other Picker Co")
+        from core.services.inventory import available_serials
+        self.assertEqual(available_serials(other), [])
+
+    # ---- endpoint ----
+    def test_options_endpoint_returns_available(self):
+        import json
+        self._recv("SN1")
+        resp = self.client.get(f"/inventory/serials/options/?product={self.sp.id}")
+        data = json.loads(resp.content)
+        self.assertTrue(data["track_serial"])
+        self.assertIn("SN1", [s["serial"] for s in data["serials"]])
+
+    def test_options_endpoint_non_serial_product_empty(self):
+        import json
+        resp = self.client.get(f"/inventory/serials/options/?product={self.plain.id}")
+        data = json.loads(resp.content)
+        self.assertFalse(data["track_serial"])
+        self.assertEqual(data["serials"], [])
+
+    def test_options_endpoint_tenant_scoped(self):
+        import json
+        from core.models import OrgMembership
+        other = Tenant.objects.create(name="Outsider Co")
+        op = Product.objects.create(tenant=other, sku="X", name="X", track_serial=True)
+        resp = self.client.get(f"/inventory/serials/options/?product={op.id}")  # not my tenant
+        data = json.loads(resp.content)
+        self.assertFalse(data["track_serial"])
+
+    # ---- duplicate / qty>1 backend enforcement ----
+    def _invoice_two_lines(self, serial_a, serial_b, qty=Decimal("1")):
+        from core.models import CustomerInvoice, CustomerInvoiceLine
+        inv = CustomerInvoice.objects.create(tenant=self.t, customer=self.cust,
+                                             invoice_number="INV-D", location=self.loc,
+                                             status=CustomerInvoice.Status.DRAFT)
+        CustomerInvoiceLine.objects.create(invoice=inv, product=self.sp, qty=qty,
+                                           unit_price=Decimal("10"), serial_number=serial_a, description="a")
+        if serial_b is not None:
+            CustomerInvoiceLine.objects.create(invoice=inv, product=self.sp, qty=qty,
+                                               unit_price=Decimal("10"), serial_number=serial_b, description="b")
+        return inv
+
+    def test_duplicate_serial_same_document_blocked(self):
+        from django.core.exceptions import ValidationError
+        from core.services.gl import post_customer_invoice
+        self._recv("SN1")
+        inv = self._invoice_two_lines("SN1", "SN1")
+        with self.assertRaises(ValidationError):
+            post_customer_invoice(inv, user=self.user)
+
+    def test_qty_gt_one_with_one_serial_rejected(self):
+        from django.core.exceptions import ValidationError
+        from core.services.gl import post_customer_invoice
+        self._recv("SN1")
+        inv = self._invoice_two_lines("SN1", None, qty=Decimal("2"))
+        with self.assertRaises(ValidationError):
+            post_customer_invoice(inv, user=self.user)
+
+    # ---- availability page ----
+    def test_availability_page_renders_and_filters(self):
+        self._recv("SN1"); self._recv("SN2")
+        resp = self.client.get("/inventory/serials/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "SN1")
+        self.assertContains(resp, "SN2")
+        resp = self.client.get("/inventory/serials/?q=SN1")
+        self.assertContains(resp, "SN1")
+        self.assertNotContains(resp, "SN2")
+
+    # ---- serial visibility in tables ----
+    def test_stock_movements_shows_and_filters_serial(self):
+        self._recv("SN1")
+        resp = self.client.get("/inventory/movements/?serial=SN1")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "SN1")
+
+    def test_lot_trace_shows_serial(self):
+        self._recv("SN1")
+        resp = self.client.get(f"/reports/lot-trace/?product={self.sp.id}&serial=SN1")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "SN1")
+
+    # ---- global search ----
+    def test_global_search_finds_serial_availability(self):
+        from core.roles import search_nav, ADMIN
+        urls = [r["url"] for r in search_nav(ADMIN, "serial availability", limit=None)]
+        self.assertIn("/inventory/serials/", urls)
