@@ -8953,3 +8953,126 @@ class JournalIntegrityTests(TestCase):
             with transaction.atomic():
                 self._entry(ref_type="AP_INVOICE", ref_id="BILL-1")
         self.assertEqual(self.JE.objects.filter(ref_type="AP_INVOICE", ref_id="BILL-1").count(), 1)
+
+
+class BOMLineSequencingTests(TestCase):
+    """BOM component line numbering (line_no): ordering, uniqueness, and that
+    explosion / kit-sale behaviour is unchanged."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(name="BOM Co")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.kit = Product.objects.create(tenant=self.t, sku="KIT", name="Kit")
+        self.c1 = Product.objects.create(tenant=self.t, sku="C1", name="Comp1", average_cost=Decimal("2.00"))
+        self.c2 = Product.objects.create(tenant=self.t, sku="C2", name="Comp2", average_cost=Decimal("3.00"))
+        self.c3 = Product.objects.create(tenant=self.t, sku="C3", name="Comp3", average_cost=Decimal("1.00"))
+
+    def _bom(self, product=None, name="Default BOM"):
+        from core.models import BillOfMaterials
+        return BillOfMaterials.objects.create(tenant=self.t, product=product or self.kit, name=name)
+
+    def _line(self, bom, comp, qty, line_no):
+        from core.models import BillOfMaterialsLine
+        return BillOfMaterialsLine.objects.create(bom=bom, component=comp, qty=Decimal(qty), line_no=line_no)
+
+    def test_default_line_no_is_10(self):
+        from core.models import BillOfMaterialsLine
+        bom = self._bom()
+        ln = BillOfMaterialsLine.objects.create(bom=bom, component=self.c1, qty=Decimal("1"))
+        self.assertEqual(ln.line_no, 10)
+
+    def test_lines_order_by_line_no(self):
+        bom = self._bom()
+        # Insert out of order; query should come back 10, 20, 30.
+        self._line(bom, self.c3, "1", 30)
+        self._line(bom, self.c1, "1", 10)
+        self._line(bom, self.c2, "1", 20)
+        skus = [l.component.sku for l in bom.lines.all()]   # uses Meta.ordering
+        self.assertEqual(skus, ["C1", "C2", "C3"])
+
+    def test_duplicate_line_no_same_bom_rejected(self):
+        from django.db import IntegrityError, transaction
+        bom = self._bom()
+        self._line(bom, self.c1, "1", 10)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self._line(bom, self.c2, "1", 10)   # same (bom, line_no)
+
+    def test_same_line_no_different_boms_allowed(self):
+        bom_a = self._bom(product=self.kit, name="A")
+        kit2 = Product.objects.create(tenant=self.t, sku="KIT2", name="Kit2")
+        bom_b = self._bom(product=kit2, name="B")
+        self._line(bom_a, self.c1, "1", 10)
+        self._line(bom_b, self.c1, "1", 10)   # same line_no, different BOM -> OK
+        self.assertEqual(bom_a.lines.count(), 1)
+        self.assertEqual(bom_b.lines.count(), 1)
+
+    def test_duplicate_component_still_rejected(self):
+        from django.db import IntegrityError, transaction
+        bom = self._bom()
+        self._line(bom, self.c1, "1", 10)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self._line(bom, self.c1, "1", 20)   # same (bom, component)
+
+    def test_explosion_unchanged_by_line_no(self):
+        from core.services.bom import explode_product
+        bom = self._bom()
+        # Deliberately number so display order != insert order.
+        self._line(bom, self.c2, "2", 30)
+        self._line(bom, self.c1, "1", 10)
+        self._line(bom, self.c3, "5", 20)
+        result = explode_product(self.kit, Decimal("2"))
+        # Order follows line_no (10,20,30 -> C1,C3,C2); quantities scale by sell qty.
+        self.assertEqual([(c.sku, q) for c, q in result],
+                         [("C1", Decimal("2")), ("C3", Decimal("10")), ("C2", Decimal("4"))])
+
+    def test_kit_sale_still_works(self):
+        from core.services.inventory import apply_movement
+        from core.views import _post_sales_order
+        from core.models import SalesOrder, SalesOrderLine, JournalEntry
+        bom = self._bom()
+        self._line(bom, self.c1, "1", 10)
+        self._line(bom, self.c2, "2", 20)
+        for c in (self.c1, self.c2):
+            apply_movement(tenant=self.t, product=c, location=self.loc, movement_type="RECEIVE",
+                           qty_delta=Decimal("100"), ref_type="T", ref_id="r" + c.sku,
+                           unit_cost=c.average_cost)
+        order = SalesOrder.objects.create(tenant=self.t, order_number="SO-KIT", ship_from_location=self.loc)
+        SalesOrderLine.objects.create(order=order, product=self.kit, qty=Decimal("3"), unit_price=Decimal("50"))
+        _post_sales_order(order)
+        # Components relieved (3 kits): C1 -3, C2 -6. COGS = 3*2 + 6*3 = 24.
+        from core.models import InventoryBalance
+        self.assertEqual(InventoryBalance.objects.get(tenant=self.t, product=self.c1, location=self.loc).on_hand, Decimal("97"))
+        self.assertEqual(InventoryBalance.objects.get(tenant=self.t, product=self.c2, location=self.loc).on_hand, Decimal("94"))
+        je = JournalEntry.objects.get(tenant=self.t, ref_type="COGS")
+        self.assertEqual(je.total_debit, Decimal("24.00"))
+        self.assertEqual(je.total_debit, je.total_credit)
+
+    def test_formset_saves_line_no(self):
+        from core.forms import BOMLineFormSet
+        from core.models import BillOfMaterialsLine
+        bom = self._bom()
+        data = {
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-line_no": "20", "lines-0-component": str(self.c1.id),
+            "lines-0-qty": "4", "lines-0-uom": "",
+        }
+        fs = BOMLineFormSet(data, instance=bom)
+        self.assertTrue(fs.is_valid(), fs.errors)
+        fs.save()
+        ln = BillOfMaterialsLine.objects.get(bom=bom, component=self.c1)
+        self.assertEqual(ln.line_no, 20)
+
+    def test_formset_rejects_non_positive_line_no(self):
+        from core.forms import BOMLineFormSet
+        bom = self._bom()
+        data = {
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-line_no": "0", "lines-0-component": str(self.c1.id),
+            "lines-0-qty": "1", "lines-0-uom": "",
+        }
+        fs = BOMLineFormSet(data, instance=bom)
+        self.assertFalse(fs.is_valid())

@@ -448,12 +448,29 @@ class BillOfMaterialsForm(TenantModelForm):
         fields = ["product", "name", "is_active"]
 
 
+class BOMLineForm(TenantModelForm):
+    class Meta:
+        model = BillOfMaterialsLine
+        fields = ("line_no", "component", "qty", "uom")
+
+    def clean_line_no(self):
+        n = self.cleaned_data.get("line_no")
+        if n is not None and n < 1:
+            raise forms.ValidationError("Line number must be a positive number (e.g. 10, 20, 30).")
+        return n
+
+
+# extra=0: don't pre-render a blank line (its default line_no=10 would collide on
+# a BOM that already has line 10). New rows are added via the page's "+ Add
+# component" button, which fills the next number in steps of 10. Duplicate
+# line_no / component within one BOM are caught cleanly by the formset's
+# unique_together validation.
 BOMLineFormSet = inlineformset_factory(
     BillOfMaterials,
     BillOfMaterialsLine,
-    form=TenantModelForm,
-    fields=("component", "qty", "uom"),
-    extra=1,
+    form=BOMLineForm,
+    fields=("line_no", "component", "qty", "uom"),
+    extra=0,
     can_delete=True
 )
 

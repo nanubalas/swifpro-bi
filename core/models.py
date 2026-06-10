@@ -656,15 +656,20 @@ class BillOfMaterials(models.Model):
 
 class BillOfMaterialsLine(models.Model):
     bom = models.ForeignKey(BillOfMaterials, on_delete=models.CASCADE, related_name="lines")
+    # ERP-style stable line number (10, 20, 30...) so components keep a fixed
+    # display/order identity and new ones can be inserted between without
+    # renumbering. Display/order only — does not affect explosion quantities.
+    line_no = models.PositiveIntegerField(default=10)
     component = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="bom_component_of")
     qty = models.DecimalField(max_digits=12, decimal_places=2)
     uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, blank=True, null=True)
 
     class Meta:
-        unique_together = ("bom", "component")
+        ordering = ["line_no", "id"]
+        unique_together = [("bom", "component"), ("bom", "line_no")]
 
     def __str__(self):
-        return f"{self.component.sku} x {self.qty}"
+        return f"{self.line_no}. {self.component.sku} x {self.qty}"
 
 
 class PurchaseOrder(models.Model):
