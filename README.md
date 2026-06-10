@@ -4,6 +4,20 @@ A Django, server-rendered **mini-ERP for UK SMEs** - purchasing, inventory,
 sales, and finance in one system of record. Server-rendered with Bootstrap 5
 (no build step), SQLite for dev / PostgreSQL for production.
 
+## Hosted Demo
+
+- **Demo app:** https://swifpro-bi-demo.onrender.com
+- **Release:** v0.1.0-rc3
+- **Quick-start guide:** [docs/user_handbook/Quick_Start_Demo_Guide.md](docs/user_handbook/Quick_Start_Demo_Guide.md)
+- **Full user handbook:** [docs/user_handbook/SwifPro_BI_First_Time_User_Handbook.md](docs/user_handbook/SwifPro_BI_First_Time_User_Handbook.md)
+
+Notes for testers:
+- **Passwords are shared separately** (not stored in the repo or docs).
+- The Render **free instance may sleep** and take **30–60 seconds** to wake on
+  the first request — this is normal.
+- This is a **controlled demo / release candidate, not production ERP** — don't
+  enter real data.
+
 ## Features
 
 **Procurement & inbound**
