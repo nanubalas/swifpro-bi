@@ -1602,6 +1602,18 @@ class ReturnAuthorization(models.Model):
         unique_together = ("tenant", "channel", "rma_number")
 
 class ReturnLine(models.Model):
+    class Disposition(models.TextChoices):
+        RESTOCK = "RESTOCK", "Restock (sellable)"
+        QUARANTINE = "QUARANTINE", "Quarantine (inspection hold)"
+        SCRAP = "SCRAP", "Scrap / write-off"
+        REPAIR = "REPAIR", "Repair / refurbish (hold)"
+        RETURN_TO_SUPPLIER = "RETURN_TO_SUPPLIER", "Return to supplier (hold)"
+
+    # Dispositions that keep the unit owned but OFF sellable stock (routed to a
+    # quarantine/hold location, excluded from availability/ATP). SCRAP relieves
+    # the unit via a write-off; RESTOCK puts it back into sellable stock.
+    HOLD_DISPOSITIONS = {Disposition.QUARANTINE, Disposition.REPAIR, Disposition.RETURN_TO_SUPPLIER}
+
     rma = models.ForeignKey(ReturnAuthorization, related_name="lines", on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     qty = models.DecimalField(max_digits=12, decimal_places=2)
@@ -1609,9 +1621,29 @@ class ReturnLine(models.Model):
     lot_code = models.CharField(max_length=100, blank=True, null=True)
     serial_number = models.CharField(max_length=100, blank=True, null=True)
     expiry_date = models.DateField(blank=True, null=True)
+    # How the returned unit is routed on receipt. Defaults to QUARANTINE so a
+    # return is never silently made sellable — staff pick RESTOCK explicitly.
+    disposition = models.CharField(max_length=20, choices=Disposition.choices, default=Disposition.QUARANTINE)
+    disposition_reason = models.CharField(max_length=200, blank=True, null=True)
+    inspected_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="inspected_return_lines")
+    inspected_at = models.DateTimeField(null=True, blank=True)
+    notes = models.CharField(max_length=255, blank=True, null=True)
 
     class Meta:
         unique_together = ("rma", "product", "lot_code", "serial_number", "expiry_date")
+
+    @property
+    def is_sellable(self):
+        return self.disposition == self.Disposition.RESTOCK
+
+    @property
+    def is_hold(self):
+        return self.disposition in self.HOLD_DISPOSITIONS
+
+    @property
+    def is_scrap(self):
+        return self.disposition == self.Disposition.SCRAP
 
 
 # ============================

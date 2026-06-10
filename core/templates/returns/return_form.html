@@ -62,12 +62,13 @@
             <table class="table table-bordered align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:30%">Product</th>
-                  <th class="text-end" style="width:10%">Qty</th>
-                  <th style="width:20%">Reason</th>
-                  <th style="width:12%">Lot</th>
+                  <th style="width:24%">Product</th>
+                  <th class="text-end" style="width:7%">Qty</th>
+                  <th style="width:15%">Reason</th>
+                  <th style="width:10%">Lot</th>
                   <th style="width:12%">Serial</th>
-                  <th style="width:10%">Expiry</th>
+                  <th style="width:9%">Expiry</th>
+                  <th style="width:17%">Disposition</th>
                   <th class="text-center" style="width:6%">Remove</th>
                 </tr>
               </thead>
@@ -80,6 +81,7 @@
                   <td>{{ f.lot_code }}</td>
                   <td>{{ f.serial_number }}</td>
                   <td>{{ f.expiry_date }}</td>
+                  <td>{{ f.disposition }}</td>
                   <td class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
                 </tr>
                 {% endfor %}
@@ -95,6 +97,7 @@
               <td>{{ formset.empty_form.lot_code }}</td>
               <td>{{ formset.empty_form.serial_number }}</td>
               <td>{{ formset.empty_form.expiry_date }}</td>
+              <td>{{ formset.empty_form.disposition }}</td>
               <td class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
             </tr>
           </template>
@@ -105,7 +108,9 @@
           </div>
 
           <div class="form-text mt-2">
-            Kit policy: returns will restock kit components (same as sales deduction policy).
+            Each line is routed by its <b>disposition</b> on receipt: Restock returns it to sellable stock;
+            Quarantine / Repair / Return-to-supplier hold it off sale; Scrap writes it off. Default is
+            Quarantine, so nothing is made sellable by accident. Kits restock as components.
           </div>
         </div>
       </div>

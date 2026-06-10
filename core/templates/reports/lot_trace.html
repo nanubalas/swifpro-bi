@@ -97,6 +97,7 @@
           <td class="text-end">{% if row.m.value != None %}{{ row.m.value|money:tenant.currency_code }}{% else %}-{% endif %}</td>
           <td class="small">
             {{ row.m.ref_type }} {{ row.m.ref_id }}
+            {% if row.m.notes %}<div class="text-muted">{{ row.m.notes }}</div>{% endif %}
             {% if row.grn %}<div class="text-muted">GRN {{ row.grn.grn_number }}{% if row.po %} · PO {{ row.po.po_number }}{% endif %}{% if row.supplier %} · {{ row.supplier.name }}{% endif %}</div>{% endif %}
             {% for ic in row.issue_costs %}
               <div class="text-muted">Costed {{ ic.qty }} @ {{ ic.unit_cost|money:tenant.currency_code }} = {{ ic.total_cost|money:tenant.currency_code }}{% if ic.cost_layer %} (layer #{{ ic.cost_layer_id }}){% endif %}</div>

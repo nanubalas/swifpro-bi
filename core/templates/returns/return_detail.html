@@ -27,7 +27,7 @@
         <button class="btn btn-primary" name="action" value="approve">Approve</button>
       {% endif %}
       {% if rma.status != "RECEIVED" %}
-        <button class="btn btn-success" name="action" value="receive">Receive & Restock</button>
+        <button class="btn btn-success" name="action" value="receive">Receive &amp; process</button>
       {% endif %}
     </form>
   </div>
@@ -57,7 +57,10 @@
                 <th>SKU</th>
                 <th>Description</th>
                 <th class="text-end">Qty</th>
+                <th>Serial</th>
                 <th>Reason</th>
+                <th>Disposition</th>
+                <th>Outcome</th>
               </tr>
             </thead>
             <tbody>
@@ -66,7 +69,22 @@
                 <td class="fw-semibold">{{ l.product.sku }}</td>
                 <td>{{ l.product.name }}</td>
                 <td class="text-end">{{ l.qty|floatformat:2 }}</td>
+                <td class="small">{% if l.serial_number %}<span class="badge text-bg-secondary">{{ l.serial_number }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
                 <td>{{ l.reason|default:"-" }}</td>
+                <td>
+                  {% if l.disposition == "RESTOCK" %}<span class="badge text-bg-success">Restock</span>
+                  {% elif l.disposition == "SCRAP" %}<span class="badge text-bg-danger">Scrap</span>
+                  {% else %}<span class="badge text-bg-warning">{{ l.get_disposition_display }}</span>{% endif %}
+                  {% if l.disposition_reason %}<div class="text-muted small">{{ l.disposition_reason }}</div>{% endif %}
+                </td>
+                <td class="small">
+                  {% if rma.status == "RECEIVED" %}
+                    {% if l.is_sellable %}<span class="text-success">Sellable</span>
+                    {% elif l.is_scrap %}<span class="text-danger">Written off</span>
+                    {% else %}<span class="text-warning">On hold (not sellable)</span>{% endif %}
+                    {% if l.inspected_at %}<div class="text-muted">Inspected {{ l.inspected_at|date:"d M Y" }}{% if l.inspected_by %} by {{ l.inspected_by.username }}{% endif %}</div>{% endif %}
+                  {% else %}<span class="text-muted">Pending receipt</span>{% endif %}
+                </td>
               </tr>
               {% endfor %}
             </tbody>
@@ -74,7 +92,9 @@
         </div>
 
         <div class="alert alert-info mt-4 mb-0">
-          Kit policy: returns restock kit components (consistent with sales deduction policy).
+          On receipt each line is routed by its disposition — Restock makes stock sellable,
+          Quarantine / Repair / Return-to-supplier hold it off sale, and Scrap writes it off.
+          Kits restock as components.
         </div>
       </div>
     </div>

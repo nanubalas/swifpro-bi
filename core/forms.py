@@ -567,7 +567,7 @@ from core.models import ReturnAuthorization, ReturnLine
 
 class ReturnAuthorizationForm(TenantModelForm):
     action = forms.ChoiceField(
-        choices=(("save", "Save Draft"), ("approve", "Approve"), ("receive", "Receive & Restock")),
+        choices=(("save", "Save Draft"), ("approve", "Approve"), ("receive", "Receive & process")),
         required=False
     )
     class Meta:
@@ -578,7 +578,8 @@ ReturnLineFormSet = inlineformset_factory(
     ReturnAuthorization,
     ReturnLine,
     form=TenantModelForm,
-    fields=("product", "qty", "reason", "lot_code", "serial_number", "expiry_date"),
+    fields=("product", "qty", "reason", "lot_code", "serial_number", "expiry_date",
+            "disposition", "disposition_reason"),
     extra=1,
     can_delete=True
 )

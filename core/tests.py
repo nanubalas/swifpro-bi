@@ -7829,3 +7829,127 @@ class SerialPickerUiTests(TestCase):
         from core.roles import search_nav, ADMIN
         urls = [r["url"] for r in search_nav(ADMIN, "serial availability", limit=None)]
         self.assertIn("/inventory/serials/", urls)
+
+
+class RmaDispositionTests(TestCase):
+    """RMA receipt routes each return line by disposition: restock (sellable),
+    quarantine/repair/RTS (owned hold, not sellable), scrap (write-off + GL)."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="RMA Disp Co")          # signal seeds GL
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.sp = Product.objects.create(tenant=self.t, sku="SN-R", name="Serial Widget",
+                                         cost_method=Product.CostMethod.FIFO, track_serial=True,
+                                         average_cost=Decimal("5.0000"))
+        self.plain = Product.objects.create(tenant=self.t, sku="PLAIN-R", name="Plain",
+                                            average_cost=Decimal("3.0000"))
+        self.user = User.objects.create_user("rmau", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+
+    def _rma(self, disposition, serial="SN1", product=None, qty=Decimal("1"), num=None):
+        from core.models import ReturnAuthorization, ReturnLine
+        rma = ReturnAuthorization.objects.create(
+            tenant=self.t, channel="SHOPIFY",
+            rma_number=num or f"RMA-{disposition}-{serial}", receive_location=self.loc)
+        ReturnLine.objects.create(rma=rma, product=product or self.sp, qty=qty,
+                                  serial_number=serial if (product or self.sp).track_serial else None,
+                                  disposition=disposition)
+        return rma
+
+    def _avail(self):
+        from core.services.inventory import available_serials
+        return [r["serial_number"] for r in available_serials(self.t)]
+
+    def _lot(self, serial):
+        from core.models import InventoryLotBalance
+        return InventoryLotBalance.objects.filter(tenant=self.t, product=self.sp, serial_number=serial).first()
+
+    # ---- dispositions ----
+    def test_restock_makes_serial_available(self):
+        from core.services.returns import receive_return
+        from core.models import ReturnAuthorization
+        rma = self._rma("RESTOCK", "SN1")
+        receive_return(rma, user=self.user)
+        rma.refresh_from_db()
+        self.assertEqual(rma.status, ReturnAuthorization.Status.RECEIVED)
+        self.assertIn("SN1", self._avail())
+        lb = self._lot("SN1")
+        self.assertEqual(lb.on_hand, Decimal("1.00"))
+        self.assertEqual(lb.location_id, self.loc.id)
+
+    def test_quarantine_owned_but_not_available(self):
+        from core.services.returns import receive_return
+        rma = self._rma("QUARANTINE", "SN2")
+        receive_return(rma, user=self.user)
+        self.assertNotIn("SN2", self._avail())            # excluded from availability
+        lb = self._lot("SN2")
+        self.assertEqual(lb.on_hand, Decimal("1.00"))     # still owned
+        self.assertEqual(lb.location.type, "QUARANTINE")  # routed to hold location
+
+    def test_scrap_not_available_and_posts_writeoff_gl(self):
+        from core.services.returns import receive_return
+        from core.models import InventoryMovement, JournalEntry
+        rma = self._rma("SCRAP", "SN3")
+        receive_return(rma, user=self.user)
+        self.assertNotIn("SN3", self._avail())
+        self.assertEqual(self._lot("SN3").on_hand, Decimal("0.00"))   # received then written off
+        wo = InventoryMovement.objects.get(tenant=self.t, ref_type="RMA_SCRAP", product=self.sp)
+        self.assertEqual(wo.movement_type, "WRITE_OFF")
+        self.assertEqual(wo.value, Decimal("-5.00"))                  # the unit's cost
+        self.assertTrue(JournalEntry.objects.filter(tenant=self.t, ref_type="RMA_SCRAP").exists())
+        self.assertEqual(_account_balance(self.t, "5200"), Decimal("5.00"))   # loss booked
+
+    def test_default_disposition_is_quarantine(self):
+        from core.models import ReturnAuthorization, ReturnLine
+        rma = ReturnAuthorization.objects.create(tenant=self.t, channel="SHOPIFY",
+                                                 rma_number="RMA-DEF", receive_location=self.loc)
+        line = ReturnLine.objects.create(rma=rma, product=self.sp, qty=Decimal("1"), serial_number="SNx")
+        self.assertEqual(line.disposition, ReturnLine.Disposition.QUARANTINE)
+
+    def test_repair_and_rts_held_not_available(self):
+        from core.services.returns import receive_return
+        receive_return(self._rma("REPAIR", "SN4"), user=self.user)
+        receive_return(self._rma("RETURN_TO_SUPPLIER", "SN5"), user=self.user)
+        avail = self._avail()
+        self.assertNotIn("SN4", avail)
+        self.assertNotIn("SN5", avail)
+        self.assertEqual(self._lot("SN4").on_hand, Decimal("1.00"))   # owned hold
+
+    def test_traceability_shows_disposition(self):
+        from core.services.returns import receive_return
+        from core.models import InventoryMovement
+        receive_return(self._rma("QUARANTINE", "SN6"), user=self.user)
+        mv = InventoryMovement.objects.get(tenant=self.t, ref_type="RMA", serial_number="SN6")
+        self.assertIn("Quarantine", mv.notes)
+
+    def test_non_serial_restock_and_scrap(self):
+        from core.services.returns import receive_return
+        from core.models import InventoryBalance, InventoryMovement
+        receive_return(self._rma("RESTOCK", serial=None, product=self.plain, qty=Decimal("2"), num="RMA-NS1"),
+                       user=self.user)
+        bal = InventoryBalance.objects.get(tenant=self.t, product=self.plain, location=self.loc)
+        self.assertEqual(bal.on_hand, Decimal("2.00"))
+        receive_return(self._rma("SCRAP", serial=None, product=self.plain, qty=Decimal("1"), num="RMA-NS2"),
+                       user=self.user)
+        self.assertTrue(InventoryMovement.objects.filter(tenant=self.t, ref_type="RMA_SCRAP",
+                                                         product=self.plain).exists())
+
+    def test_idempotent_receive(self):
+        from core.services.returns import receive_return
+        from core.models import InventoryMovement, JournalEntry
+        rma = self._rma("SCRAP", "SN7")
+        receive_return(rma, user=self.user)
+        receive_return(rma, user=self.user)   # second call no-op (status RECEIVED)
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.t, ref_type="RMA",
+                                                          serial_number="SN7").count(), 1)
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.t, ref_type="RMA_SCRAP").count(), 1)
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.t, ref_type="RMA_SCRAP").count(), 1)
+
+    def test_tenant_isolation(self):
+        from core.services.returns import receive_return
+        from core.services.inventory import available_serials
+        receive_return(self._rma("RESTOCK", "SN8"), user=self.user)
+        other = Tenant.objects.create(name="Other RMA Co")
+        self.assertEqual(available_serials(other), [])
+        self.assertIn("SN8", self._avail())

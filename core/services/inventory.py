@@ -492,6 +492,10 @@ def available_serials(tenant, *, product=None, location=None, lot_code=None, exp
     qs = (InventoryLotBalance.objects
           .filter(tenant=tenant, product__track_serial=True, on_hand__gt=F("reserved"))
           .exclude(serial_number__isnull=True).exclude(serial_number="")
+          # Stock held in a quarantine / damaged location is owned but NOT
+          # sellable (RMA quarantine/repair/RTS dispositions route here), so it
+          # never shows as available. Scrapped serials are on_hand 0 -> excluded.
+          .exclude(location__type__in=["QUARANTINE", "DAMAGED"])
           .select_related("product", "location"))
     if product is not None:
         qs = qs.filter(product=product)

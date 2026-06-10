@@ -4627,8 +4627,13 @@ def return_create(request):
                 rma.save()
                 messages.success(request, "RMA approved.")
             elif action == "receive":
-                _receive_rma(rma)
-                messages.success(request, "Return received and restocked.")
+                try:
+                    _receive_rma(rma, user=request.user)
+                    messages.success(request, "Return received and processed per line disposition.")
+                except ValidationError as e:
+                    transaction.set_rollback(True)
+                    messages.error(request, "; ".join(e.messages))
+                    return redirect("return_detail", rma_id=rma.id)
             return redirect("return_detail", rma_id=rma.id)
     else:
         form = ReturnAuthorizationForm(instance=rma)
@@ -4658,37 +4663,20 @@ def return_process(request, rma_id):
             rma.save()
             messages.success(request, "RMA approved.")
         elif action == "receive":
-            _receive_rma(rma)
-            messages.success(request, "Return received and restocked.")
+            try:
+                _receive_rma(rma, user=request.user)
+                messages.success(request, "Return received and processed per line disposition.")
+            except ValidationError as e:
+                transaction.set_rollback(True)
+                messages.error(request, "; ".join(e.messages))
         return redirect("return_detail", rma_id=rma.id)
     return redirect("return_detail", rma_id=rma.id)
 
-def _receive_rma(rma: ReturnAuthorization):
-    if rma.status in (ReturnAuthorization.Status.RECEIVED, ReturnAuthorization.Status.CLOSED):
-        return
-    # allow receiving from DRAFT/APPROVED
-    ref_id = f"{rma.channel}:{rma.rma_number}"
-    for line in rma.lines.select_related("product").all():
-        qty = Decimal(line.qty)
-        if qty <= 0:
-            continue
-        # If returned item is a kit, we restock components (consistent with 'deduct components only')
-        for comp, comp_qty in explode_product(line.product, qty):
-            apply_movement(
-                tenant=rma.tenant,
-                product=comp,
-                location=rma.receive_location,
-                movement_type=InventoryMovement.MovementType.RETURN,
-                qty_delta=comp_qty,
-                ref_type="RMA",
-                ref_id=ref_id,
-                notes="Return received", user=request.user,
-                lot_code=line.lot_code,
-                serial_number=line.serial_number,
-                expiry_date=line.expiry_date,
-            )
-    rma.status = ReturnAuthorization.Status.RECEIVED
-    rma.save()
+def _receive_rma(rma: ReturnAuthorization, user=None):
+    """Receive an RMA, routing each line by its disposition (restock / quarantine
+    / scrap / repair / RTS). Delegates to the returns service."""
+    from core.services.returns import receive_return
+    receive_return(rma, user=user)
 
 
 # ============================
