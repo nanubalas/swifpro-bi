@@ -81,7 +81,19 @@
                   {% if rma.status == "RECEIVED" %}
                     {% if l.is_sellable %}<span class="text-success">Sellable</span>
                     {% elif l.is_scrap %}<span class="text-danger">Written off</span>
-                    {% else %}<span class="text-warning">On hold (not sellable)</span>{% endif %}
+                    {% elif l.hold_resolved %}
+                      {% if l.final_disposition == "RESTOCK" %}<span class="text-success">Released to sellable</span>
+                      {% else %}<span class="text-danger">Scrapped from hold</span>{% endif %}
+                      {% if l.resolved_at %}<div class="text-muted">{{ l.resolved_at|date:"d M Y" }}{% if l.resolved_by %} by {{ l.resolved_by.username }}{% endif %}</div>{% endif %}
+                    {% else %}
+                      <span class="text-warning d-block mb-1">On hold (not sellable)</span>
+                      <form method="post" action="{% url 'return_line_resolve' rma.id l.id %}" class="d-flex gap-1">
+                        {% csrf_token %}
+                        <button class="btn btn-outline-success btn-sm" name="action" value="release">Release</button>
+                        <button class="btn btn-outline-danger btn-sm" name="action" value="scrap"
+                                onclick="return confirm('Scrap and write off this held stock?');">Scrap</button>
+                      </form>
+                    {% endif %}
                     {% if l.inspected_at %}<div class="text-muted">Inspected {{ l.inspected_at|date:"d M Y" }}{% if l.inspected_by %} by {{ l.inspected_by.username }}{% endif %}</div>{% endif %}
                   {% else %}<span class="text-muted">Pending receipt</span>{% endif %}
                 </td>

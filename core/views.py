@@ -4679,6 +4679,34 @@ def _receive_rma(rma: ReturnAuthorization, user=None):
     receive_return(rma, user=user)
 
 
+@login_required
+@role_required([ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE], [ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE])
+@transaction.atomic
+def return_line_resolve(request, rma_id, line_id):
+    """Post-receipt inspection: release a held return line to sellable, or scrap
+    it (write-off + GL). One-way and idempotent (guarded in the service)."""
+    from core.models import ReturnAuthorization, ReturnLine
+    from core.services.returns import resolve_hold
+    tenant = _get_default_tenant(request)
+    rma = get_object_or_404(ReturnAuthorization, id=rma_id, tenant=tenant)
+    line = get_object_or_404(ReturnLine, id=line_id, rma=rma)
+    if request.method == "POST":
+        action = {"release": ReturnLine.Disposition.RESTOCK,
+                  "scrap": ReturnLine.Disposition.SCRAP}.get(request.POST.get("action"))
+        if action is None:
+            messages.error(request, "Choose Release to sellable or Scrap.")
+            return redirect("return_detail", rma_id=rma.id)
+        try:
+            resolve_hold(line, action, user=request.user,
+                         notes=(request.POST.get("notes") or "").strip() or None)
+            messages.success(request, "Released to sellable." if action == ReturnLine.Disposition.RESTOCK
+                             else "Held stock scrapped and written off.")
+        except ValidationError as e:
+            transaction.set_rollback(True)
+            messages.error(request, "; ".join(e.messages))
+    return redirect("return_detail", rma_id=rma.id)
+
+
 # ============================
 # VAT / Tax Codes
 # ============================
