@@ -182,11 +182,33 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
     lines = list(inv.lines.all())
     subtotal = sum((l.qty * l.unit_cost for l in lines), Decimal("0.00"))
     tax = sum((l.tax_amount for l in lines), Decimal("0.00"))
-    total = subtotal + tax
+
+    receipt = getattr(inv, "receipt", None)
+
+    # Landed-cost accrual clearing: receiving credited Accruals (2150) for the
+    # receipt's landed cost; settle it here by reclassifying that accrual into
+    # this invoice's payable (DR Accruals / the amount is added to CR AP). The
+    # accrued landed is cleared on the FIRST supplier invoice posted against the
+    # receipt; later invoices clear the remaining amount only, so the total
+    # cleared across a receipt's invoices never exceeds what was accrued (2150 is
+    # never over-cleared). Assumes the supplier invoice settles the receipt's
+    # landed cost; a separately-billed carrier charge is out of scope.
+    landed_to_clear = Decimal("0.00")
+    if receipt is not None:
+        landed_total = sum((lc.amount for lc in receipt.landed_costs.all()), Decimal("0.00"))
+        if landed_total > Decimal("0.00"):
+            already_cleared = sum(
+                (si.landed_cleared or Decimal("0.00"))
+                for si in SupplierInvoice.objects.filter(
+                    tenant=tenant, receipt=receipt, status="POSTED").exclude(pk=inv.pk))
+            landed_to_clear = landed_total - already_cleared
+            if landed_to_clear < Decimal("0.00"):
+                landed_to_clear = Decimal("0.00")
+
+    total = subtotal + tax + landed_to_clear
 
     ap_site_id = getattr(inv.po, "site_id", None)
     if ap_site_id is None:
-        receipt = getattr(inv, "receipt", None)
         ap_site_id = getattr(getattr(receipt, "received_to", None), "site_id", None)
     je = JournalEntry.objects.create(
         tenant=tenant,
@@ -205,7 +227,6 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
     # different price would otherwise leave a permanent unreconciled GRNI
     # balance. When no receipt is linked, fall back to clearing at the billed
     # subtotal (legacy behaviour).
-    receipt = getattr(inv, "receipt", None)
     received_value = None
     if receipt is not None:
         received_value = sum((l.qty_received * l.unit_cost for l in receipt.lines.all()), Decimal("0.00"))
@@ -219,12 +240,16 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
         JournalLine.objects.create(entry=je, account=_acc(tenant, "ppv"), description="Purchase price variance", debit=price_variance, credit=Decimal("0.00"))
     elif price_variance < Decimal("0.00"):
         JournalLine.objects.create(entry=je, account=_acc(tenant, "ppv"), description="Purchase price variance", debit=Decimal("0.00"), credit=-price_variance)
+    # DR Accruals (2150) to clear the landed-cost accrual booked at receipt.
+    if landed_to_clear > Decimal("0.00"):
+        JournalLine.objects.create(entry=je, account=_acc(tenant, "accruals"), description="Landed cost accrual cleared", debit=landed_to_clear, credit=Decimal("0.00"))
     # DR VAT Input (reclaimable)
     if tax and tax != Decimal("0.00"):
         JournalLine.objects.create(entry=je, account=_acc(tenant, "vat_input"), description="VAT Input", debit=tax, credit=Decimal("0.00"))
-    # CR Accounts Payable (gross)
+    # CR Accounts Payable (goods + VAT + landed-cost settled on this invoice)
     JournalLine.objects.create(entry=je, account=_acc(tenant, "ap"), description="Accounts Payable", debit=Decimal("0.00"), credit=total)
 
+    inv.landed_cleared = landed_to_clear
     inv.status = "POSTED"
     inv.save()
 

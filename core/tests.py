@@ -8244,3 +8244,126 @@ class ReplenishmentTests(TestCase):
         for q in ("reorder planning", "purchase suggestions", "safety stock", "abc analysis"):
             urls = [r["url"] for r in search_nav(ADMIN, q, limit=None)]
             self.assertIn("/inventory/replenishment/", urls, f"{q!r} did not find replenishment")
+
+
+class LandedCostAccrualTests(TestCase):
+    """Landed-cost accrual (2150) is credited at receipt and cleared (DR 2150 /
+    into AP) when the supplier invoice posts — idempotent and bounded."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(name="Landed Co")   # signal seeds GL
+        self.sup = Supplier.objects.create(tenant=self.t, name="S")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.p = Product.objects.create(tenant=self.t, sku="LC", name="P")
+
+    def _receipt(self, num, goods_qty="10", goods_cost="5.00", landed="0.00",
+                 product=None, inventory_value=None):
+        from core.models import PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine, LandedCostCharge
+        from core.services.gl import post_inventory_receipt
+        p = product or self.p
+        goods_qty = Decimal(goods_qty); goods_cost = Decimal(goods_cost); landed = Decimal(landed)
+        po = PurchaseOrder.objects.create(tenant=self.t, po_number="PO-" + num, supplier=self.sup)
+        pol = PurchaseOrderLine.objects.create(po=po, product=p, ordered_qty=goods_qty, unit_cost=goods_cost)
+        grn = GoodsReceipt.objects.create(tenant=self.t, po=po, grn_number="GRN-" + num,
+                                          received_to=self.loc, status=GoodsReceipt.Status.POSTED)
+        GoodsReceiptLine.objects.create(receipt=grn, po_line=pol, product=p,
+                                        qty_received=goods_qty, unit_cost=goods_cost)
+        if landed > 0:
+            LandedCostCharge.objects.create(tenant=self.t, receipt=grn, name="Freight", amount=landed)
+        goods_value = goods_qty * goods_cost
+        inv_val = inventory_value if inventory_value is not None else (goods_value + landed)
+        post_inventory_receipt(self.t, goods_value, grn.grn_number, landed_value=landed, inventory_value=inv_val)
+        return po, grn
+
+    def _invoice(self, po, grn, number, qty="10", cost="5.00", product=None):
+        from core.models import SupplierInvoice, SupplierInvoiceLine
+        inv = SupplierInvoice.objects.create(tenant=self.t, supplier=self.sup, po=po, receipt=grn,
+                                             invoice_number=number)
+        SupplierInvoiceLine.objects.create(invoice=inv, product=product or self.p,
+                                            qty=Decimal(qty), unit_cost=Decimal(cost))  # tax_code None -> no VAT
+        return inv
+
+    # ---- receipt ----
+    def test_receipt_with_landed_credits_accruals(self):
+        self._receipt("R1", landed="20.00")
+        self.assertEqual(_account_balance(self.t, "2150"), Decimal("-20.00"))  # accrual credit
+        self.assertEqual(_account_balance(self.t, "2100"), Decimal("-50.00"))  # GRNI credit
+
+    def test_receipt_without_landed_does_not_touch_2150(self):
+        from core.models import JournalLine
+        self._receipt("R0", landed="0.00")
+        self.assertEqual(_account_balance(self.t, "2150"), Decimal("0.00"))
+        self.assertFalse(JournalLine.objects.filter(entry__tenant=self.t, account__code="2150").exists())
+
+    # ---- invoice clears ----
+    def test_supplier_invoice_clears_accrual_and_grni(self):
+        from core.services.gl import post_supplier_invoice
+        po, grn = self._receipt("R2", landed="20.00")
+        inv = self._invoice(po, grn, "SINV-R2")
+        je = post_supplier_invoice(inv)
+        inv.refresh_from_db()
+        self.assertEqual(je.total_debit, je.total_credit)                      # balanced
+        self.assertEqual(_account_balance(self.t, "2100"), Decimal("0.00"))    # GRNI cleared
+        self.assertEqual(_account_balance(self.t, "2150"), Decimal("0.00"))    # accrual cleared
+        self.assertEqual(inv.landed_cleared, Decimal("20.00"))
+
+    def test_ap_credit_equals_invoice_payable(self):
+        from core.services.gl import post_supplier_invoice
+        po, grn = self._receipt("R3", landed="20.00")
+        inv = self._invoice(po, grn, "SINV-R3")
+        post_supplier_invoice(inv)
+        inv.refresh_from_db()
+        self.assertEqual(inv.total, Decimal("70.00"))                          # 50 goods + 0 VAT + 20 landed
+        self.assertEqual(_account_balance(self.t, "2000"), -inv.total)         # AP credit == payable
+
+    def test_repost_does_not_double_clear(self):
+        from core.services.gl import post_supplier_invoice
+        from core.models import JournalEntry
+        po, grn = self._receipt("R4", landed="20.00")
+        inv = self._invoice(po, grn, "SINV-R4")
+        post_supplier_invoice(inv)
+        post_supplier_invoice(inv)   # idempotent re-post
+        self.assertEqual(_account_balance(self.t, "2150"), Decimal("0.00"))    # not +20 again
+        self.assertEqual(_account_balance(self.t, "2000"), Decimal("-70.00"))  # AP not doubled
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.t, ref_type="AP_INVOICE",
+                                                     ref_id="SINV-R4").count(), 1)
+
+    def test_partial_multiple_invoices_clear_accrual_once(self):
+        from core.services.gl import post_supplier_invoice
+        po, grn = self._receipt("R5", landed="20.00")
+        inv1 = self._invoice(po, grn, "SINV-R5a", qty="6", cost="5.00")
+        inv2 = self._invoice(po, grn, "SINV-R5b", qty="4", cost="5.00")
+        post_supplier_invoice(inv1)
+        post_supplier_invoice(inv2)
+        inv1.refresh_from_db(); inv2.refresh_from_db()
+        self.assertEqual(inv1.landed_cleared, Decimal("20.00"))   # first invoice clears full accrual
+        self.assertEqual(inv2.landed_cleared, Decimal("0.00"))    # second clears nothing (bounded)
+        self.assertEqual(_account_balance(self.t, "2150"), Decimal("0.00"))   # never over-cleared
+
+    def test_trial_balance_no_uncleared_landed_after_invoice(self):
+        from core.services.gl import post_supplier_invoice
+        po, grn = self._receipt("R6", landed="15.00")
+        post_supplier_invoice(self._invoice(po, grn, "SINV-R6"))
+        self.assertEqual(_account_balance(self.t, "2150"), Decimal("0.00"))
+
+    # ---- standard cost documentation ----
+    def test_standard_cost_landed_to_ppv_but_accrual_still_clears(self):
+        from core.services.gl import post_supplier_invoice
+        sp = Product.objects.create(tenant=self.t, sku="LC-STD", name="Std",
+                                    cost_method=Product.CostMethod.STANDARD, standard_cost=Decimal("9.00"))
+        # goods 10@10=100 actual, landed 20, inventory carried at standard 10*9=90.
+        po, grn = self._receipt("R7", goods_qty="10", goods_cost="10.00", landed="20.00",
+                                product=sp, inventory_value=Decimal("90.00"))
+        self.assertEqual(_account_balance(self.t, "1000"), Decimal("90.00"))   # inventory at standard
+        self.assertEqual(_account_balance(self.t, "2150"), Decimal("-20.00"))  # landed still accrued
+        self.assertEqual(_account_balance(self.t, "5100"), Decimal("30.00"))   # PPV absorbs (120-90), incl landed
+        # Invoice still clears the accrual.
+        post_supplier_invoice(self._invoice(po, grn, "SINV-R7", qty="10", cost="10.00", product=sp))
+        self.assertEqual(_account_balance(self.t, "2150"), Decimal("0.00"))
+
+    def test_tenant_isolation(self):
+        from core.services.gl import post_supplier_invoice
+        po, grn = self._receipt("R8", landed="20.00")
+        post_supplier_invoice(self._invoice(po, grn, "SINV-R8"))
+        other = Tenant.objects.create(name="Other Landed Co")
+        self.assertEqual(_account_balance(other, "2150"), Decimal("0.00"))

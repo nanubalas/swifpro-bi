@@ -58,6 +58,17 @@
         </tbody>
       </table>
     </div>
+
+    <div class="row justify-content-end mt-3">
+      <div class="col-md-5">
+        <table class="table table-sm mb-0">
+          <tr><td class="text-muted">Subtotal (goods)</td><td class="text-end">{{ invoice.subtotal|floatformat:2 }}</td></tr>
+          <tr><td class="text-muted">VAT</td><td class="text-end">{{ invoice.tax_total|floatformat:2 }}</td></tr>
+          {% if invoice.landed_cleared %}<tr><td class="text-muted">Landed cost (accrual cleared)</td><td class="text-end">{{ invoice.landed_cleared|floatformat:2 }}</td></tr>{% endif %}
+          <tr class="fw-semibold"><td>Total payable</td><td class="text-end">{{ invoice.total|floatformat:2 }}</td></tr>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}
