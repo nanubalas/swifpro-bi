@@ -9076,3 +9076,61 @@ class BOMLineSequencingTests(TestCase):
         }
         fs = BOMLineFormSet(data, instance=bom)
         self.assertFalse(fs.is_valid())
+
+
+class FeatureVisibilityLabelTests(TestCase):
+    """UI honesty pass: experimental/advisory/local-only badges + warnings render,
+    and channel vs customer order labels are distinct. No business logic."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="Label Co")
+        self.admin = User.objects.create_user("labeladmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="labeladmin", password="pw")
+
+    def test_channel_orders_page_marked_experimental(self):
+        from django.urls import reverse
+        resp = self.client.get(reverse("sales_order_list"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Experimental: this is a manual channel-order posting tool. It is not connected to Shopify/Amazon sync yet.")
+        self.assertContains(resp, "Channel Orders")
+
+    def test_channel_vs_customer_order_nav_labels_distinct(self):
+        from core.roles import sidebar_for_role, ADMIN
+        labels = {url: label for _, items in sidebar_for_role(ADMIN) for (label, url, icon) in items}
+        # The two order pages must not share a label.
+        self.assertEqual(labels.get("/sales-orders/"), "Channel Orders (Experimental)")
+        self.assertEqual(labels.get("/customer-orders/"), "Sales Orders")
+        self.assertNotEqual(labels.get("/sales-orders/"), labels.get("/customer-orders/"))
+
+    def test_bom_page_kits_labelled_not_manufacturing(self):
+        from django.urls import reverse
+        resp = self.client.get(reverse("bom_list"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Does not support work orders or build-to-stock manufacturing yet.")
+        self.assertContains(resp, "Kits / Bundles")
+
+    def test_bins_page_marked_advisory(self):
+        from django.urls import reverse
+        resp = self.client.get(reverse("bin_list"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Bin balances are advisory unless all movements are bin-tagged.")
+        self.assertContains(resp, "Advisory")
+
+    def test_vat_submit_is_local_only(self):
+        import datetime
+        from django.urls import reverse
+        from core.models import VatReturn
+        vr = VatReturn.objects.create(tenant=self.t, period_from=datetime.date(2026, 1, 1),
+                                      period_to=datetime.date(2026, 3, 31))
+        resp = self.client.get(reverse("vat_detail", args=[vr.id]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Mark submitted locally")
+        self.assertContains(resp, "This does not file to HMRC.")
+
+    def test_consolidated_shows_balance_sheet_caveat(self):
+        from django.urls import reverse
+        resp = self.client.get(reverse("consolidated_reports"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Balance-sheet elimination for intra-group AR/AP/equity is not yet complete.")
