@@ -1,0 +1,77 @@
+{% comment %}
+Lightweight serial picker. For serial-tracked products it turns the free-text
+serial input into a datalist-backed selector populated from /inventory/serials/
+options/ (tenant + permission scoped); for non-serial products it disables the
+field. Backend cardinality validation (package 1) remains the source of truth —
+this only makes selection easy and hides unavailable serials. Works with both
+plain forms (name="product"/"serial_number") and formset rows (…-product /
+…-serial_number), and with rows added dynamically.
+{% endcomment %}
+<script>
+(function () {
+  var OPTS_URL = "{% url 'serial_options' %}";
+
+  function locValue() {
+    var sel = document.querySelector('[name="location"], #id_location');
+    return sel ? sel.value : "";
+  }
+  function rowOf(el) { return el.closest("tr") || el.closest(".line-row") || document; }
+  function productFor(serialInput) {
+    return rowOf(serialInput).querySelector('select[name$="-product"], select[name="product"]');
+  }
+  function serialInputs() {
+    return document.querySelectorAll('input[name$="-serial_number"], input[name="serial_number"]');
+  }
+  function ensureList(input) {
+    var id = input.getAttribute("list");
+    if (id && document.getElementById(id)) return document.getElementById(id);
+    id = "sl-" + Math.random().toString(36).slice(2);
+    var dl = document.createElement("datalist"); dl.id = id;
+    input.setAttribute("list", id);
+    (input.parentNode || document.body).appendChild(dl);
+    return dl;
+  }
+  function dedupeOnDocument(input) {
+    var v = (input.value || "").trim();
+    if (!v) { input.setCustomValidity(""); return; }
+    var clash = false;
+    serialInputs().forEach(function (other) {
+      if (other !== input && (other.value || "").trim() === v) clash = true;
+    });
+    input.setCustomValidity(clash ? "This serial is already selected on another line." : "");
+    if (clash) input.reportValidity();
+  }
+  function load(input) {
+    var sel = productFor(input);
+    var pid = sel ? sel.value : "";
+    if (!pid) { input.removeAttribute("disabled"); input.setAttribute("placeholder", ""); return; }
+    fetch(OPTS_URL + "?product=" + encodeURIComponent(pid) + "&location=" + encodeURIComponent(locValue()))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var dl = ensureList(input);
+        if (!d.track_serial) {
+          input.value = ""; input.setAttribute("disabled", "disabled");
+          input.setAttribute("placeholder", "n/a"); dl.innerHTML = "";
+          return;
+        }
+        input.removeAttribute("disabled"); input.setAttribute("placeholder", "Pick a serial…");
+        dl.innerHTML = d.serials.map(function (s) {
+          var label = s.location + (s.lot ? " · lot " + s.lot : "") + (s.cost ? " · " + s.cost : "");
+          return '<option value="' + s.serial + '">' + label + '</option>';
+        }).join("");
+      }).catch(function () {});
+  }
+
+  document.addEventListener("change", function (e) {
+    if (e.target.matches('select[name$="-product"], select[name="product"]')) {
+      var input = rowOf(e.target).querySelector('input[name$="-serial_number"], input[name="serial_number"]');
+      if (input) load(input);
+    } else if (e.target.matches('[name="location"], #id_location')) {
+      serialInputs().forEach(load);
+    } else if (e.target.matches('input[name$="-serial_number"], input[name="serial_number"]')) {
+      dedupeOnDocument(e.target);
+    }
+  });
+  serialInputs().forEach(load);  // wire rows present on load
+})();
+</script>

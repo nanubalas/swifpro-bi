@@ -2469,6 +2469,7 @@ def stock_movements(request):
     product_id = request.GET.get("product") or ""
     location_id = request.GET.get("location") or ""
     mtype = request.GET.get("type") or ""
+    serial = (request.GET.get("serial") or "").strip()
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
 
@@ -2484,6 +2485,8 @@ def stock_movements(request):
         qs = qs.filter(location_id=location_id)
     if mtype:
         qs = qs.filter(movement_type=mtype)
+    if serial:
+        qs = qs.filter(serial_number__icontains=serial)
     if date_from:
         qs = qs.filter(created_at__date__gte=date_from)
     if date_to:
@@ -2501,7 +2504,69 @@ def stock_movements(request):
         "products": Product.objects.filter(tenant=tenant).order_by("sku"),
         "locations": loc_choices.order_by("name"),
         "type_choices": InventoryMovement.MovementType.choices,
-        "filtered": bool(product_id or location_id or mtype or date_from or date_to),
+        "filtered": bool(product_id or location_id or mtype or serial or date_from or date_to),
+        "serial": serial,
+    })
+
+
+# ============================
+# Serial availability (picker endpoint + page)
+# ============================
+
+SERIAL_VIEW_ROLES = [ROLE_ADMIN, ROLE_SALES, ROLE_FINANCE, ROLE_WAREHOUSE, ROLE_PROCUREMENT, ROLE_READONLY]
+
+
+@login_required
+@role_required(SERIAL_VIEW_ROLES)
+def serial_options(request):
+    """JSON of available serials for a product (backs the serial picker on issue/
+    adjust forms). Tenant- and permission-scoped; empty for non-serial products."""
+    from django.http import JsonResponse
+    from core.services.inventory import available_serials
+    tenant = _get_default_tenant(request)
+    pid = request.GET.get("product")
+    product = Product.objects.filter(tenant=tenant, id=pid).first() if pid else None
+    if product is None or not product.track_serial:
+        return JsonResponse({"track_serial": False, "serials": []})
+    loc_id = request.GET.get("location") or None
+    location = Location.objects.filter(tenant=tenant, id=loc_id).first() if loc_id else None
+    rows = available_serials(tenant, product=product, location=location,
+                             search=(request.GET.get("q") or "").strip() or None, limit=200)
+    return JsonResponse({"track_serial": True, "serials": [
+        {"serial": r["serial_number"], "location": r["location"], "lot": r["lot_code"],
+         "expiry": r["expiry_date"].isoformat() if r["expiry_date"] else "",
+         "cost": (str(r["unit_cost"]) if r["unit_cost"] is not None else "")}
+        for r in rows]})
+
+
+@login_required
+@role_required(SERIAL_VIEW_ROLES)
+def serial_list(request):
+    """Serial availability page: every available serial-tracked unit, filterable
+    by product / location / serial search."""
+    from core.services.inventory import available_serials
+    tenant = _get_default_tenant(request)
+    product_id = request.GET.get("product") or ""
+    location_id = request.GET.get("location") or ""
+    search = (request.GET.get("q") or "").strip()
+
+    allowed = active_location_ids(request)  # scope to the selected site
+    product = Product.objects.filter(tenant=tenant, id=product_id).first() if product_id else None
+    location = Location.objects.filter(tenant=tenant, id=location_id).first() if location_id else None
+    rows = available_serials(tenant, product=product, location=location,
+                             search=search or None, limit=1000)
+    if allowed is not None:
+        rows = [r for r in rows if r["location_id"] in allowed]
+
+    loc_choices = Location.objects.filter(tenant=tenant)
+    if allowed is not None:
+        loc_choices = loc_choices.filter(id__in=allowed)
+    return render(request, "inventory/serial_list.html", {
+        "tenant": tenant, "rows": rows,
+        "products": Product.objects.filter(tenant=tenant, track_serial=True).order_by("sku"),
+        "locations": loc_choices.order_by("name"),
+        "product": product_id, "location": location_id, "q": search,
+        "filtered": bool(product_id or location_id or search),
     })
 
 

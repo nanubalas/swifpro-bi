@@ -28,4 +28,5 @@
 <script>
   document.querySelectorAll("form select, form input, form textarea").forEach(e => { if (e.type !== "hidden") e.classList.add("form-control"); });
 </script>
+{% include "inventory/_serial_picker.html" %}
 {% endblock %}

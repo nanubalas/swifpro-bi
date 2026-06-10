@@ -124,6 +124,8 @@ urlpatterns = [
     path("inventory/low-stock/", views.low_stock, name="low_stock"),
     path("inventory/low-stock/reorder/", views.low_stock_reorder, name="low_stock_reorder"),
     path("inventory/movements/", views.stock_movements, name="stock_movements"),
+    path("inventory/serials/", views.serial_list, name="serial_list"),
+    path("inventory/serials/options/", views.serial_options, name="serial_options"),
 
     # Transfers
     path("transfers/", views.transfer_list, name="transfer_list"),

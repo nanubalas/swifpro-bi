@@ -471,3 +471,59 @@ def lot_layer_unit_cost(tenant, product, location, lot_code=None, serial_number=
     if not qty:
         return None
     return (value / qty).quantize(COST_DP, rounding=ROUND_HALF_UP)
+
+
+def available_serials(tenant, *, product=None, location=None, lot_code=None, expiry_date=None,
+                      search=None, limit=None):
+    """Serials currently available to issue/adjust/transfer, for serial picker UIs
+    and the availability page.
+
+    "Available" = a serial-tracked unit whose lot-balance row has on_hand greater
+    than reserved (so it is physically on hand and not already held by an active
+    posting). Because the ledger relieves stock on issue / write-off / RTS /
+    transfer-out, those serials drop to on_hand 0 and are naturally excluded; a
+    serial reserved for another document (reserved == on_hand) is excluded too.
+
+    Returns display dicts: serial_number, sku, product_name, product_id, location,
+    location_id, lot_code, expiry_date, on_hand, received_at, source, unit_cost.
+    Note: bins are not tracked at serial granularity (lot balances are per
+    location), so there is no bin filter here.
+    """
+    qs = (InventoryLotBalance.objects
+          .filter(tenant=tenant, product__track_serial=True, on_hand__gt=F("reserved"))
+          .exclude(serial_number__isnull=True).exclude(serial_number="")
+          .select_related("product", "location"))
+    if product is not None:
+        qs = qs.filter(product=product)
+    if location is not None:
+        qs = qs.filter(location=location)
+    if lot_code:
+        qs = qs.filter(lot_code=lot_code)
+    if expiry_date:
+        qs = qs.filter(expiry_date=expiry_date)
+    if search:
+        qs = qs.filter(serial_number__icontains=search)
+    qs = qs.order_by("product__sku", "serial_number")
+    if limit:
+        qs = qs[:limit]
+
+    out = []
+    for lb in qs:
+        uc = lot_layer_unit_cost(tenant, lb.product, lb.location,
+                                 lot_code=lb.lot_code, serial_number=lb.serial_number,
+                                 expiry_date=lb.expiry_date)
+        layer = (InventoryCostLayer.objects
+                 .filter(tenant=tenant, product=lb.product, location=lb.location,
+                         serial_number=lb.serial_number)
+                 .order_by("received_at", "id").first())
+        out.append({
+            "serial_number": lb.serial_number,
+            "sku": lb.product.sku, "product_name": lb.product.name, "product_id": lb.product_id,
+            "location": lb.location.name, "location_id": lb.location_id,
+            "lot_code": lb.lot_code or "", "expiry_date": lb.expiry_date,
+            "on_hand": lb.on_hand,
+            "received_at": layer.received_at if layer else None,
+            "source": (f"{layer.ref_type} {layer.ref_id}".strip() if layer else ""),
+            "unit_cost": uc,
+        })
+    return out
