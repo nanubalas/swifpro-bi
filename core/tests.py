@@ -8492,3 +8492,122 @@ class PerformanceHardeningTests(TestCase):
         self._recv_serial("SN1", "5.00")
         other = Tenant.objects.create(name="Other Perf Co")
         self.assertEqual(available_serials(other), [])
+
+
+class SerialReadinessAuditTests(TestCase):
+    """Audit-first legacy serial readiness: detect-only, never mutates stock/GL."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(name="Audit Co")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.loc2 = Location.objects.create(tenant=self.t, name="WH2")
+
+    def _sp(self, sku, fifo=False):
+        return Product.objects.create(
+            tenant=self.t, sku=sku, name=sku, track_serial=True,
+            cost_method=Product.CostMethod.FIFO if fifo else Product.CostMethod.AVERAGE)
+
+    def _lot(self, product, serial, on_hand, location=None):
+        from core.models import InventoryLotBalance
+        return InventoryLotBalance.objects.create(
+            tenant=self.t, product=product, location=location or self.loc,
+            serial_number=serial, on_hand=Decimal(on_hand))
+
+    def _types(self, tenant=None):
+        from core.services.serial_audit import audit_serial_readiness
+        return {i["issue_type"] for i in audit_serial_readiness(tenant=tenant or self.t)}
+
+    # ---- detections ----
+    def test_clean_data_reports_no_issues(self):
+        from core.models import InventoryBalance, InventoryCostLayer
+        from core.services.serial_audit import audit_serial_readiness
+        p = self._sp("CLEAN", fifo=True)
+        self._lot(p, "SN1", "1")
+        InventoryBalance.objects.create(tenant=self.t, product=p, location=self.loc, on_hand=Decimal("1"))
+        InventoryCostLayer.objects.create(tenant=self.t, product=p, location=self.loc,
+                                          serial_number="SN1", qty_received=Decimal("1"),
+                                          qty_remaining=Decimal("1"), unit_cost=Decimal("5.00"))
+        self.assertEqual(audit_serial_readiness(tenant=self.t), [])
+
+    def test_onhand_gt_1_detected(self):
+        self._lot(self._sp("GT1"), "SN1", "2")
+        self.assertIn("ONHAND_GT_1", self._types())
+
+    def test_blank_serial_balance_detected(self):
+        self._lot(self._sp("BLANK"), "", "3")
+        self.assertIn("BLANK_SERIAL_BALANCE", self._types())
+
+    def test_blank_serial_movement_detected(self):
+        from core.models import InventoryMovement
+        p = self._sp("MOVE")
+        InventoryMovement.objects.create(tenant=self.t, product=p, location=self.loc,
+                                         movement_type="RECEIVE", qty_delta=Decimal("1"),
+                                         ref_type="LEGACY", ref_id="x", serial_number="")
+        self.assertIn("SERIALLESS_MOVEMENT", self._types())
+
+    def test_duplicate_serial_across_locations_detected(self):
+        p = self._sp("DUP")
+        self._lot(p, "SN1", "1", location=self.loc)
+        self._lot(p, "SN1", "1", location=self.loc2)
+        self.assertIn("DUPLICATE_SERIAL", self._types())
+
+    def test_negative_serial_balance_detected(self):
+        self._lot(self._sp("NEG"), "SN1", "-1")
+        self.assertIn("NEGATIVE_SERIAL_BALANCE", self._types())
+
+    def test_cost_layer_missing_serial_detected(self):
+        from core.models import InventoryCostLayer
+        p = self._sp("LAYER", fifo=True)
+        InventoryCostLayer.objects.create(tenant=self.t, product=p, location=self.loc,
+                                          serial_number="", qty_received=Decimal("5"),
+                                          qty_remaining=Decimal("5"), unit_cost=Decimal("2.00"))
+        self.assertIn("COST_LAYER_MISSING_SERIAL", self._types())
+
+    def test_serial_missing_cost_layer_detected(self):
+        # FIFO serial on hand with no remaining cost layer.
+        self._lot(self._sp("NOLAYER", fifo=True), "SN9", "1")
+        self.assertIn("SERIAL_MISSING_COST_LAYER", self._types())
+
+    def test_untracked_onhand_detected(self):
+        from core.models import InventoryBalance
+        p = self._sp("COVER")
+        self._lot(p, "SN1", "1")                                  # 1 unit on a serial
+        InventoryBalance.objects.create(tenant=self.t, product=p, location=self.loc, on_hand=Decimal("3"))
+        self.assertIn("UNTRACKED_ONHAND", self._types())          # 2 units uncovered
+
+    # ---- safety / isolation ----
+    def test_dry_run_does_not_mutate(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from core.models import AuditLog, InventoryLotBalance
+        lb = self._lot(self._sp("DR"), "SN1", "2")
+        call_command("audit_serial_readiness", "--tenant", self.t.name, stdout=StringIO())
+        self.assertEqual(AuditLog.objects.filter(tenant=self.t).count(), 0)      # nothing written
+        self.assertEqual(InventoryLotBalance.objects.get(pk=lb.pk).on_hand, Decimal("2"))  # unchanged
+
+    def test_apply_writes_audit_flags_only(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from core.models import AuditLog, InventoryLotBalance
+        lb = self._lot(self._sp("AP"), "SN1", "2")
+        call_command("audit_serial_readiness", "--tenant", self.t.name, "--apply", stdout=StringIO())
+        self.assertTrue(AuditLog.objects.filter(tenant=self.t, action="SERIAL_AUDIT").exists())
+        self.assertEqual(InventoryLotBalance.objects.get(pk=lb.pk).on_hand, Decimal("2"))  # stock untouched
+
+    def test_csv_output(self):
+        import os, tempfile
+        from io import StringIO
+        from django.core.management import call_command
+        self._lot(self._sp("CSVP"), "SN1", "2")
+        path = os.path.join(tempfile.mkdtemp(), "out.csv")
+        call_command("audit_serial_readiness", "--tenant", self.t.name, "--csv", path, stdout=StringIO())
+        with open(path, encoding="utf-8") as fh:
+            content = fh.read()
+        self.assertIn("issue_type", content)           # header
+        self.assertIn("ONHAND_GT_1", content)          # at least one row
+
+    def test_tenant_isolation(self):
+        self._lot(self._sp("ISO"), "SN1", "2")          # issue in tenant A
+        other = Tenant.objects.create(name="Other Audit Co")
+        from core.services.serial_audit import audit_serial_readiness
+        self.assertEqual(audit_serial_readiness(tenant=other), [])
