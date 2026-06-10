@@ -957,6 +957,8 @@ class InventoryLotBalance(models.Model):
 
     class Meta:
         unique_together = ("tenant", "product", "location", "lot_code", "serial_number", "expiry_date")
+        # Near-expiry report scans by tenant + expiry window.
+        indexes = [models.Index(fields=["tenant", "expiry_date"])]
 
 
 class InventoryBinBalance(models.Model):
@@ -1078,6 +1080,17 @@ class InventoryMovement(models.Model):
     expiry_date = models.DateField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
 
+    class Meta:
+        # The most-queried table: the stock ledger (date-ordered), reconciliation
+        # (tenant + period), lot/serial traceability, per-product/location lookups
+        # and ref-based idempotency/return lookups.
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),
+            models.Index(fields=["tenant", "product", "location"]),
+            models.Index(fields=["tenant", "ref_type", "ref_id"]),
+            models.Index(fields=["tenant", "serial_number"]),
+        ]
+
 
 class StockAdjustment(models.Model):
     """A manual stock change (correction, damage, write-off/loss, return to
@@ -1165,6 +1178,8 @@ class InventoryCostLayer(models.Model):
             models.Index(fields=["tenant", "product", "qty_remaining"]),
             models.Index(fields=["tenant", "product", "location", "qty_remaining"]),
             models.Index(fields=["tenant", "product", "location", "lot_code", "qty_remaining"]),
+            # Serial-keyed batch fetch for the serial picker / availability page.
+            models.Index(fields=["tenant", "product", "location", "serial_number"]),
         ]
         ordering = ["received_at", "id"]
 

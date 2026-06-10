@@ -53,6 +53,7 @@
       </tbody>
     </table>
   </div>
-  <div class="form-text mt-2">Showing up to 1000 available units. Issued, written-off, returned-to-supplier and reserved serials are excluded.</div>
+  {% include "_pagination.html" %}
+  <div class="form-text mt-2">Issued, written-off, returned-to-supplier and reserved serials are excluded.</div>
 </div></div>
 {% endblock %}

@@ -511,23 +511,49 @@ def available_serials(tenant, *, product=None, location=None, lot_code=None, exp
     if limit:
         qs = qs[:limit]
 
+    rows = list(qs)
+    if not rows:
+        return []
+
+    # Batch the cost-layer lookups (was 2 queries per serial: a weighted-average
+    # unit cost + an earliest-layer source). Pull every relevant layer once,
+    # scoped to the serials/products/locations on this page, and build:
+    #   - val[full key] -> (sum(qty_remaining*unit_cost), sum(qty_remaining)) for
+    #     qty_remaining>0  -> weighted-average unit cost (matches lot_layer_unit_cost)
+    #   - src[(product,location,serial)] -> earliest layer (received_at + ref)
+    pids = {r.product_id for r in rows}
+    lids = {r.location_id for r in rows}
+    serials = {r.serial_number for r in rows}
+    val, src = {}, {}
+    layers = (InventoryCostLayer.objects
+              .filter(tenant=tenant, product_id__in=pids, location_id__in=lids, serial_number__in=serials)
+              .order_by("received_at", "id")
+              .values("product_id", "location_id", "lot_code", "serial_number", "expiry_date",
+                      "qty_remaining", "unit_cost", "received_at", "ref_type", "ref_id"))
+    for l in layers:
+        skey = (l["product_id"], l["location_id"], l["serial_number"])
+        if skey not in src:                 # first = earliest (ordered above)
+            src[skey] = (l["received_at"], (f"{l['ref_type']} {l['ref_id']}".strip()))
+        qr = l["qty_remaining"] or Decimal("0.00")
+        if qr > 0:
+            fkey = (l["product_id"], l["location_id"], l["lot_code"], l["serial_number"], l["expiry_date"])
+            acc = val.setdefault(fkey, [Decimal("0.00"), Decimal("0.00")])
+            acc[0] += qr * (l["unit_cost"] or Decimal("0.0000"))
+            acc[1] += qr
+
     out = []
-    for lb in qs:
-        uc = lot_layer_unit_cost(tenant, lb.product, lb.location,
-                                 lot_code=lb.lot_code, serial_number=lb.serial_number,
-                                 expiry_date=lb.expiry_date)
-        layer = (InventoryCostLayer.objects
-                 .filter(tenant=tenant, product=lb.product, location=lb.location,
-                         serial_number=lb.serial_number)
-                 .order_by("received_at", "id").first())
+    for lb in rows:
+        acc = val.get((lb.product_id, lb.location_id, lb.lot_code, lb.serial_number, lb.expiry_date))
+        uc = (acc[0] / acc[1]).quantize(COST_DP, rounding=ROUND_HALF_UP) if (acc and acc[1]) else None
+        s = src.get((lb.product_id, lb.location_id, lb.serial_number))
         out.append({
             "serial_number": lb.serial_number,
             "sku": lb.product.sku, "product_name": lb.product.name, "product_id": lb.product_id,
             "location": lb.location.name, "location_id": lb.location_id,
             "lot_code": lb.lot_code or "", "expiry_date": lb.expiry_date,
             "on_hand": lb.on_hand,
-            "received_at": layer.received_at if layer else None,
-            "source": (f"{layer.ref_type} {layer.ref_id}".strip() if layer else ""),
+            "received_at": s[0] if s else None,
+            "source": s[1] if s else "",
             "unit_cost": uc,
         })
     return out

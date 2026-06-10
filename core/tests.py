@@ -8367,3 +8367,128 @@ class LandedCostAccrualTests(TestCase):
         post_supplier_invoice(self._invoice(po, grn, "SINV-R8"))
         other = Tenant.objects.create(name="Other Landed Co")
         self.assertEqual(_account_balance(other, "2150"), Decimal("0.00"))
+
+
+class PerformanceHardeningTests(TestCase):
+    """N+1 elimination (available_serials, near-expiry, dashboard low-stock),
+    pagination, and index presence — behaviour must be unchanged."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="Perf Co")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.sp = Product.objects.create(tenant=self.t, sku="SN-PERF", name="Serial",
+                                         cost_method=Product.CostMethod.FIFO, track_serial=True)
+        self.user = User.objects.create_user("perf", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+
+    def _recv_serial(self, serial, cost="7.00"):
+        from core.services.inventory import apply_movement
+        apply_movement(tenant=self.t, product=self.sp, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("1"), ref_type="GRN", ref_id="r" + serial,
+                       unit_cost=Decimal(cost), serial_number=serial)
+
+    # ---- available_serials ----
+    def test_available_serials_values_correct_after_batching(self):
+        from core.services.inventory import available_serials
+        self._recv_serial("SN1", "7.00")
+        self._recv_serial("SN2", "9.00")
+        by_serial = {r["serial_number"]: r for r in available_serials(self.t)}
+        self.assertEqual(set(by_serial), {"SN1", "SN2"})
+        self.assertEqual(by_serial["SN1"]["unit_cost"], Decimal("7.0000"))
+        self.assertEqual(by_serial["SN2"]["unit_cost"], Decimal("9.0000"))
+        self.assertEqual(by_serial["SN1"]["source"], "GRN rSN1")
+        self.assertIsNotNone(by_serial["SN1"]["received_at"])
+
+    def test_available_serials_query_count_is_constant(self):
+        from core.services.inventory import available_serials
+        for i in range(6):
+            self._recv_serial(f"S{i}", "5.00")
+        with self.assertNumQueries(2):          # 1 balances + 1 cost layers, regardless of count
+            rows = available_serials(self.t)
+        self.assertEqual(len(rows), 6)
+
+    def test_available_serials_excludes_unavailable(self):
+        from core.services.inventory import available_serials, apply_movement
+        from core.models import InventoryLotBalance
+        self._recv_serial("AVAIL", "5.00")
+        self._recv_serial("RESV", "5.00")
+        self._recv_serial("SOLD", "5.00")
+        InventoryLotBalance.objects.filter(tenant=self.t, serial_number="RESV").update(reserved=Decimal("1.00"))
+        apply_movement(tenant=self.t, product=self.sp, location=self.loc, movement_type="SALE",
+                       qty_delta=Decimal("-1"), ref_type="T", ref_id="s", serial_number="SOLD")
+        avail = {r["serial_number"] for r in available_serials(self.t)}
+        self.assertEqual(avail, {"AVAIL"})
+
+    # ---- near-expiry ----
+    def test_near_expiry_values_correct_and_batched(self):
+        import datetime
+        from core.services.inventory import apply_movement
+        from core.services.reports import near_expiry_lots
+        from core.models import InventoryLotBalance
+        today = datetime.date(2026, 6, 10)
+        soon = today + datetime.timedelta(days=5)
+        p = Product.objects.create(tenant=self.t, sku="EXP", name="E",
+                                   cost_method=Product.CostMethod.FIFO, track_lots=True, track_expiry=True)
+        apply_movement(tenant=self.t, product=p, location=self.loc, movement_type="RECEIVE",
+                       qty_delta=Decimal("10"), ref_type="T", ref_id="e", unit_cost=Decimal("3.00"),
+                       lot_code="L1", expiry_date=soon)
+        # A lot with no cost layer falls back to product cost.
+        p2 = Product.objects.create(tenant=self.t, sku="EXP2", name="E2",
+                                    average_cost=Decimal("4.00"), track_lots=True, track_expiry=True)
+        InventoryLotBalance.objects.create(tenant=self.t, product=p2, location=self.loc,
+                                           lot_code="L2", expiry_date=soon, on_hand=Decimal("2.00"))
+        with self.assertNumQueries(2):          # 1 lot-balance scan + 1 cost-layer batch
+            rows = near_expiry_lots(self.t, today=today)
+        by_sku = {r["product"].sku: r for r in rows}
+        self.assertEqual(by_sku["EXP"]["value"], Decimal("30.00"))          # 10 @ 3 (layer)
+        self.assertEqual(by_sku["EXP"]["valuation_source"], "lot_layer")
+        self.assertEqual(by_sku["EXP2"]["value"], Decimal("8.00"))          # 2 @ 4 (product cost)
+        self.assertEqual(by_sku["EXP2"]["valuation_source"], "product_cost")
+
+    # ---- dashboard low-stock ----
+    def test_dashboard_low_stock_count_correct(self):
+        from core.views import _dashboard_kpis
+        from core.models import InventoryBalance
+        below = Product.objects.create(tenant=self.t, sku="LOW", name="Low", reorder_level=Decimal("10"))
+        InventoryBalance.objects.create(tenant=self.t, product=below, location=self.loc, on_hand=Decimal("3"))
+        ok = Product.objects.create(tenant=self.t, sku="OK", name="Ok", reorder_level=Decimal("5"))
+        InventoryBalance.objects.create(tenant=self.t, product=ok, location=self.loc, on_hand=Decimal("20"))
+        nostock = Product.objects.create(tenant=self.t, sku="NONE", name="None", reorder_level=Decimal("2"))
+        cards = {c["label"]: c["value"] for c in _dashboard_kpis(self.t, "ADMIN")}
+        self.assertEqual(cards["Low-stock items"], 2)   # LOW (3<10) + NONE (0<2); OK excluded
+
+    # ---- pagination ----
+    def test_paginated_pages_render_and_keep_filters(self):
+        for i in range(60):
+            self._recv_serial(f"P{i:03d}", "5.00")
+        self.client.login(username="perf", password="pw")
+        resp = self.client.get("/inventory/serials/?q=P0")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["page_obj"].number, 1)
+        self.assertIn("q=P0", resp.context["base_qs"])           # filter persists across pages
+        # Second page also renders.
+        resp2 = self.client.get("/inventory/serials/?q=P0&page=2")
+        self.assertEqual(resp2.status_code, 200)
+
+    def test_movements_page_paginates(self):
+        for i in range(60):
+            self._recv_serial(f"M{i:03d}", "5.00")
+        self.client.login(username="perf", password="pw")
+        resp = self.client.get("/inventory/movements/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context["page_obj"].object_list), 50)   # default page size
+        self.assertTrue(resp.context["page_obj"].has_next())
+
+    # ---- indexes ----
+    def test_movement_indexes_present(self):
+        from core.models import InventoryMovement
+        idx_fields = {tuple(i.fields) for i in InventoryMovement._meta.indexes}
+        self.assertIn(("tenant", "created_at"), idx_fields)
+        self.assertIn(("tenant", "ref_type", "ref_id"), idx_fields)
+
+    def test_tenant_isolation_preserved(self):
+        from core.services.inventory import available_serials
+        self._recv_serial("SN1", "5.00")
+        other = Tenant.objects.create(name="Other Perf Co")
+        self.assertEqual(available_serials(other), [])

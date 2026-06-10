@@ -5,9 +5,9 @@ JournalLine):
   - ASSET, EXPENSE accounts are debit-normal:  balance = debit - credit
   - LIABILITY, EQUITY, INCOME accounts are credit-normal: balance = credit - debit
 """
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
-from django.db.models import Sum
+from django.db.models import Sum, F
 from django.utils import timezone
 
 from django.db.models import F, Sum
@@ -470,8 +470,7 @@ def near_expiry_lots(tenant, days=30, location_ids=None, product_id=None, status
     single bucket, or status='all' to include okay lots too. Zero-balance lots
     are excluded unless include_zero=True (audit). `today` is injectable for tests.
     """
-    from core.models import InventoryLotBalance
-    from core.services.inventory import lot_layer_unit_cost
+    from core.models import InventoryLotBalance, InventoryCostLayer
     today = today or timezone.localdate()
     days = int(days)
 
@@ -485,7 +484,9 @@ def near_expiry_lots(tenant, days=30, location_ids=None, product_id=None, status
     if product_id:
         qs = qs.filter(product_id=product_id)
 
-    rows = []
+    # Keep only the lot balances that fall in the requested status window, then
+    # value them from a single batched cost-layer query (was one query per lot).
+    selected = []
     for lb in qs.order_by("expiry_date", "product__sku"):
         days_until = (lb.expiry_date - today).days
         if days_until < 0:
@@ -500,8 +501,28 @@ def near_expiry_lots(tenant, days=30, location_ids=None, product_id=None, status
         elif status != "all" and st == "okay":
             # Default view: expired + near only.
             continue
-        unit = lot_layer_unit_cost(tenant, lb.product, lb.location, lot_code=lb.lot_code,
-                                   serial_number=lb.serial_number, expiry_date=lb.expiry_date)
+        selected.append((lb, st, days_until))
+
+    # Weighted-average remaining unit cost per (product, location, lot, serial,
+    # expiry) from the cost layers of the products/locations on this list.
+    val = {}
+    if selected:
+        pids = {lb.product_id for lb, _, _ in selected}
+        lids = {lb.location_id for lb, _, _ in selected}
+        layers = (InventoryCostLayer.objects
+                  .filter(tenant=tenant, product_id__in=pids, location_id__in=lids, qty_remaining__gt=0)
+                  .values("product_id", "location_id", "lot_code", "serial_number", "expiry_date",
+                          "qty_remaining", "unit_cost"))
+        for l in layers:
+            fkey = (l["product_id"], l["location_id"], l["lot_code"], l["serial_number"], l["expiry_date"])
+            acc = val.setdefault(fkey, [Decimal("0.00"), Decimal("0.00")])
+            acc[0] += (l["qty_remaining"] or ZERO) * (l["unit_cost"] or ZERO)
+            acc[1] += (l["qty_remaining"] or ZERO)
+
+    rows = []
+    for lb, st, days_until in selected:
+        acc = val.get((lb.product_id, lb.location_id, lb.lot_code, lb.serial_number, lb.expiry_date))
+        unit = (acc[0] / acc[1]).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if (acc and acc[1]) else None
         cost = unit if unit is not None else (lb.product.average_cost or lb.product.standard_cost or ZERO)
         on_hand = lb.on_hand or ZERO
         reserved = lb.reserved or ZERO

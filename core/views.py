@@ -72,6 +72,17 @@ from core import permissions as permissions_mod
 
 
 
+def _paginate(request, object_list, per_page=50):
+    """Server-side pagination for list views. Returns (page_obj, base_qs) where
+    base_qs is the current query string minus `page`, so filters/search persist
+    across pages. Out-of-range/invalid pages clamp to a valid page."""
+    from django.core.paginator import Paginator
+    page_obj = Paginator(object_list, per_page).get_page(request.GET.get("page"))
+    params = request.GET.copy()
+    params.pop("page", None)
+    return page_obj, params.urlencode()
+
+
 def _get_default_tenant(request=None):
     # Resolve the active tenant for the request (session org -> membership ->
     # profile -> first tenant). See core.access.
@@ -562,16 +573,20 @@ def _dashboard_kpis(tenant, role_code, site_id=None, location_ids=None):
         return qs.count()
 
     def low_stock_count():
-        # On-hand within the selected site's locations vs the product reorder level.
-        n = 0
-        for p in Product.objects.filter(tenant=tenant, reorder_level__gt=0, is_active=True):
-            bals = InventoryBalance.objects.filter(tenant=tenant, product=p)
-            if location_ids is not None:
-                bals = bals.filter(location_id__in=location_ids)
-            on_hand = bals.aggregate(s=Sum("on_hand"))["s"] or Decimal("0.00")
-            if on_hand < p.reorder_level:
-                n += 1
-        return n
+        # On-hand within the selected site's locations vs the product reorder
+        # level. Bulk-aggregated (one balance query + one product query) instead
+        # of a per-product loop. A product with no balance row in scope counts as
+        # 0 on-hand, matching the previous per-product behaviour.
+        reorder = dict(Product.objects.filter(tenant=tenant, reorder_level__gt=0, is_active=True)
+                       .values_list("id", "reorder_level"))
+        if not reorder:
+            return 0
+        bals = InventoryBalance.objects.filter(tenant=tenant, product_id__in=reorder.keys())
+        if location_ids is not None:
+            bals = bals.filter(location_id__in=location_ids)
+        on_hand = {r["product_id"]: (r["s"] or Decimal("0.00"))
+                   for r in bals.values("product_id").annotate(s=Sum("on_hand"))}
+        return sum(1 for pid, rl in reorder.items() if on_hand.get(pid, Decimal("0.00")) < rl)
 
     def _po_scope(qs):
         return qs.filter(site_id__in=site_ids) if site_ids is not None else qs
@@ -2240,8 +2255,10 @@ def inventory_list(request):
         bins = bins.filter(location_id__in=allowed)
     if loc_id:
         bins = bins.filter(location_id=loc_id)
+    page_obj, base_qs = _paginate(request, balances, per_page=50)
     return render(request, "inventory_list.html", {
-        "tenant": tenant, "balances": balances, "bin_balances": list(bins),
+        "tenant": tenant, "balances": page_obj, "page_obj": page_obj, "base_qs": base_qs,
+        "bin_balances": list(bins),
         "locations": locations.order_by("name"), "location": loc_id})
 
 
@@ -2293,8 +2310,9 @@ def adjustment_list(request):
     allowed = active_location_ids(request)  # scope to the selected site
     if allowed is not None:
         adjustments = adjustments.filter(location_id__in=allowed)
+    page_obj, base_qs = _paginate(request, adjustments, per_page=50)
     return render(request, "inventory/adjustment_list.html", {
-        "tenant": tenant, "adjustments": adjustments,
+        "tenant": tenant, "adjustments": page_obj, "page_obj": page_obj, "base_qs": base_qs,
         "threshold": tenant.stock_adjustment_approval_threshold,
         "can_approve": bool({ROLE_ADMIN, ROLE_PROCUREMENT} & effective_groups(request)) or request.user.is_superuser,
     })
@@ -2639,14 +2657,14 @@ def stock_movements(request):
         qs = qs.filter(created_at__date__gte=date_from)
     if date_to:
         qs = qs.filter(created_at__date__lte=date_to)
-    movements = qs.order_by("-created_at", "-id")[:300]
+    page_obj, base_qs = _paginate(request, qs.order_by("-created_at", "-id"), per_page=50)
 
     loc_choices = Location.objects.filter(tenant=tenant)
     if allowed is not None:
         loc_choices = loc_choices.filter(id__in=allowed)
 
     return render(request, "inventory/stock_movements.html", {
-        "tenant": tenant, "movements": movements,
+        "tenant": tenant, "movements": page_obj, "page_obj": page_obj, "base_qs": base_qs,
         "product": product_id, "location": location_id, "type": mtype,
         "date_from": date_from, "date_to": date_to,
         "products": Product.objects.filter(tenant=tenant).order_by("sku"),
@@ -2709,8 +2727,9 @@ def serial_list(request):
     loc_choices = Location.objects.filter(tenant=tenant)
     if allowed is not None:
         loc_choices = loc_choices.filter(id__in=allowed)
+    page_obj, base_qs = _paginate(request, rows, per_page=50)
     return render(request, "inventory/serial_list.html", {
-        "tenant": tenant, "rows": rows,
+        "tenant": tenant, "rows": page_obj, "page_obj": page_obj, "base_qs": base_qs,
         "products": Product.objects.filter(tenant=tenant, track_serial=True).order_by("sku"),
         "locations": loc_choices.order_by("name"),
         "product": product_id, "location": location_id, "q": search,
@@ -3910,7 +3929,9 @@ from core.models import CycleCount, CycleCountLine, InventoryLotBalance
 def cycle_count_list(request):
     tenant = _get_default_tenant(request)
     qs = CycleCount.objects.filter(tenant=tenant).select_related("location").order_by("-created_at")
-    return render(request, "inventory/cycle_count_list.html", {"tenant": tenant, "cycle_counts": qs})
+    page_obj, base_qs = _paginate(request, qs, per_page=50)
+    return render(request, "inventory/cycle_count_list.html",
+                  {"tenant": tenant, "cycle_counts": page_obj, "page_obj": page_obj, "base_qs": base_qs})
 
 @role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
 @transaction.atomic
@@ -4079,7 +4100,9 @@ def stock_take_list(request):
     tenant = _get_default_tenant(request)
     qs = (StockTakeSession.objects.filter(tenant=tenant)
           .select_related("site", "location").order_by("-created_at"))
-    return render(request, "inventory/stock_take_list.html", {"tenant": tenant, "sessions": qs})
+    page_obj, base_qs = _paginate(request, qs, per_page=50)
+    return render(request, "inventory/stock_take_list.html",
+                  {"tenant": tenant, "sessions": page_obj, "page_obj": page_obj, "base_qs": base_qs})
 
 
 @role_required(read_groups=[ROLE_ADMIN, ROLE_WAREHOUSE], write_groups=[ROLE_ADMIN, ROLE_WAREHOUSE])
