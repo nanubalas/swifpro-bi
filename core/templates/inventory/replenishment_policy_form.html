@@ -8,6 +8,12 @@
     <div class="text-muted mb-3">
       {{ product.sku }} — {{ product.name }}
       · Scope: <b>{% if location %}{{ location.name }}{% else %}Product default (all locations){% endif %}</b>
+      · Base unit: <b>{{ product.base_uom.code|default:product.uom }}</b>
+    </div>
+    <div class="alert alert-info py-2 small">
+      <i class="bi bi-info-circle me-1"></i>
+      Enter every quantity in this product's <b>base unit ({{ product.base_uom.code|default:product.uom }})</b> —
+      not a purchase unit like a case. Suggested buys are computed and shown in base units.
     </div>
     <div class="card"><div class="card-body p-4">
       <form method="post">

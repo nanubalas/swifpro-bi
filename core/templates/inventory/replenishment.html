@@ -9,6 +9,27 @@
   </div>
 </div>
 
+<div class="alert alert-info py-2 small mb-3">
+  <i class="bi bi-info-circle me-1"></i>
+  All quantities (on-hand, reorder point, min/max, safety, MOQ, pack size, suggested buy) are in each product's
+  <b>base unit of measure</b>. Suggested buy refills projected available up to <b>max</b> (or reorder quantity),
+  then is raised to the supplier <b>MOQ</b> and rounded up to the <b>pack-size</b> multiple.
+</div>
+
+{% if excluded_inbound.count %}
+<div class="alert alert-warning py-2 small mb-3">
+  <i class="bi bi-exclamation-triangle me-1"></i>
+  <b>{{ excluded_inbound.count }} open PO line(s)</b> ({{ excluded_inbound.qty|floatformat:2 }} units) are
+  <b>excluded</b> from projected inbound because their receiving location is missing and can't be inferred.
+  Set a receiving location on those POs so the stock counts here.
+  <details class="mt-1"><summary class="text-decoration-underline" style="cursor:pointer;">Show lines</summary>
+    <ul class="mb-0 mt-1">
+      {% for l in excluded_inbound.lines %}<li>{{ l.po_number }} — {{ l.sku }} {{ l.product }} · {{ l.open_qty|floatformat:2 }}</li>{% endfor %}
+    </ul>
+  </details>
+</div>
+{% endif %}
+
 <div class="card mb-3"><div class="card-body">
   <form method="get" class="row g-2 align-items-end">
     <div class="col-md-2"><label class="form-label mb-1 small">Location</label>
@@ -42,7 +63,7 @@
     <div class="table-responsive">
       <table class="table table-hover table-sm align-middle mb-0">
         <thead class="table-light"><tr>
-          <th></th><th>SKU</th><th>Product</th><th>ABC</th><th>Location</th>
+          <th></th><th>SKU</th><th>Product</th><th>ABC</th><th>Location</th><th>UOM</th>
           <th class="text-end">On hand</th><th class="text-end">Avail</th><th class="text-end">Resv</th>
           <th class="text-end">Inbound PO</th><th class="text-end">In-transit</th><th class="text-end">Projected</th>
           <th class="text-end">Safety</th><th class="text-end">ROP</th><th class="text-end">Max</th>
@@ -57,6 +78,7 @@
             <td class="small">{{ r.product.name }}</td>
             <td><span class="badge text-bg-light">{{ r.abc }}</span></td>
             <td class="small">{{ r.location.name }}</td>
+            <td class="small text-muted">{{ r.product.base_uom.code|default:r.product.uom }}</td>
             <td class="text-end">{{ r.on_hand|floatformat:2 }}</td>
             <td class="text-end">{{ r.available|floatformat:2 }}</td>
             <td class="text-end text-muted">{{ r.reserved|floatformat:2 }}</td>
@@ -69,7 +91,8 @@
             <td class="text-end">
               {% if r.suggested_purchase_qty > 0 %}
                 <input type="number" step="0.01" name="qty_{{ r.token }}" value="{{ r.suggested_purchase_qty|floatformat:2 }}"
-                       class="form-control form-control-sm text-end" style="width:90px;display:inline-block;">
+                       class="form-control form-control-sm text-end" style="width:80px;display:inline-block;">
+                <span class="small text-muted">{{ r.product.base_uom.code|default:r.product.uom }}</span>
               {% else %}—{% endif %}
             </td>
             <td class="text-end small">
@@ -89,12 +112,12 @@
             <td class="text-end"><a class="small" href="{% url 'replenishment_policy_edit' r.product.id %}?location={{ r.location.id }}">Settings</a></td>
           </tr>
           {% empty %}
-          <tr><td colspan="20" class="text-center text-muted py-5">Nothing to plan. Set reorder points / min-max on products to populate this board.</td></tr>
+          <tr><td colspan="21" class="text-center text-muted py-5">Nothing to plan. Set reorder points / min-max on products to populate this board.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-    <div class="form-text mt-2">Projected available = on hand + inbound PO + in-transit − reserved. Suggested buy refills to max (or reorder qty), respecting MOQ and pack size. Lines with an open requisition can't be reselected.</div>
+    <div class="form-text mt-2">All quantities are in each product's base UOM (shown in the UOM column). Projected available = on hand + inbound PO + in-transit − reserved. Suggested buy refills to max (or reorder qty), then is raised to MOQ and rounded up to the pack-size multiple. Lines with an open requisition can't be reselected.</div>
   </div></div>
 </form>
 {% endblock %}

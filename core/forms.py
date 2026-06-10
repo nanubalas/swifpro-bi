@@ -216,12 +216,26 @@ class ReplenishmentPolicyForm(TenantModelForm):
         model = ReplenishmentPolicy
         fields = ["min_stock", "max_stock", "safety_stock", "reorder_point", "reorder_quantity",
                   "eoq", "lead_time_days", "preferred_supplier", "moq", "pack_size", "is_active"]
+        # All quantity fields are in the product's BASE unit of measure — the
+        # replenishment calculation works entirely in base units. Labels say so
+        # to stop buyers entering purchase-UOM (e.g. case) values.
+        labels = {
+            "min_stock": "Min stock (base UOM)",
+            "max_stock": "Max stock (base UOM)",
+            "safety_stock": "Safety stock (base UOM)",
+            "reorder_point": "Reorder point (base UOM)",
+            "reorder_quantity": "Reorder quantity (base UOM)",
+            "moq": "MOQ (base UOM)",
+            "pack_size": "Pack-size multiple (base UOM)",
+        }
         help_texts = {
-            "reorder_point": "Reorder when projected available falls below this.",
-            "max_stock": "Suggested orders refill projected available up to this level.",
-            "moq": "Supplier minimum order quantity (orders are bumped up to this).",
-            "pack_size": "Order multiple — suggested quantity rounds up to this (0 = none).",
-            "eoq": "Economic order quantity (informational; not auto-calculated).",
+            "reorder_point": "Reorder when projected available falls below this (base UOM).",
+            "max_stock": "Suggested orders refill projected available up to this level (base UOM).",
+            "safety_stock": "Buffer kept on hand (base UOM).",
+            "reorder_quantity": "Fixed order size used when no max is set (base UOM).",
+            "moq": "Supplier minimum order quantity — orders are raised to this (base UOM).",
+            "pack_size": "Order multiple — suggested quantity rounds up to this (base UOM; 0 = none).",
+            "eoq": "Economic order quantity (informational; not auto-calculated; base UOM).",
         }
 
 

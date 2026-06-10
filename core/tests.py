@@ -8246,6 +8246,87 @@ class ReplenishmentTests(TestCase):
             self.assertIn("/inventory/replenishment/", urls, f"{q!r} did not find replenishment")
 
 
+class ReplenishmentClarityTests(TestCase):
+    """Null receiving-location handling + base-UOM clarity on replenishment."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site, Supplier
+        self.t = Tenant.objects.create(name="Clarity Co")
+        self.sup = Supplier.objects.create(tenant=self.t, name="S")
+        self.p = Product.objects.create(tenant=self.t, sku="P1", name="Widget", average_cost=Decimal("1.00"))
+        # Site with exactly one stock location (inferable), and one with two (ambiguous).
+        self.s1 = Site.objects.create(tenant=self.t, name="Single")
+        self.l1 = Location.objects.create(tenant=self.t, name="S1-WH", site=self.s1)
+        self.s2 = Site.objects.create(tenant=self.t, name="Multi")
+        self.l2a = Location.objects.create(tenant=self.t, name="S2-A", site=self.s2)
+        self.l2b = Location.objects.create(tenant=self.t, name="S2-B", site=self.s2)
+        self.user = User.objects.create_user("clar", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+
+    def _po(self, site, recv_loc, num, qty="20"):
+        from core.models import PurchaseOrder, PurchaseOrderLine
+        po = PurchaseOrder.objects.create(tenant=self.t, po_number=num, supplier=self.sup,
+                                          site=site, receiving_location=recv_loc,
+                                          status=PurchaseOrder.Status.APPROVED, is_current=True)
+        PurchaseOrderLine.objects.create(po=po, product=self.p, ordered_qty=Decimal(qty), unit_cost=Decimal("1.00"))
+        return po
+
+    def test_po_with_location_contributes_inbound(self):
+        from core.services import replenishment as rsvc
+        self._po(self.s1, self.l1, "PO-LOC")
+        self.assertEqual(rsvc._open_po_map(self.t).get((self.p.id, self.l1.id)), Decimal("20"))
+        self.assertEqual(rsvc.excluded_inbound_po(self.t)["count"], 0)
+
+    def test_null_receiving_location_inferred_when_single(self):
+        from core.services import replenishment as rsvc
+        self._po(self.s1, None, "PO-INFER")              # site has exactly one stock loc -> safe
+        self.assertEqual(rsvc._open_po_map(self.t).get((self.p.id, self.l1.id)), Decimal("20"))
+        self.assertEqual(rsvc.excluded_inbound_po(self.t)["count"], 0)
+
+    def test_null_receiving_location_excluded_when_ambiguous(self):
+        from core.services import replenishment as rsvc
+        self._po(self.s2, None, "PO-AMBIG")              # site has two stock locs -> not inferable
+        # Not attributed to any location in the plan map...
+        self.assertNotIn((self.p.id, self.l2a.id), rsvc._open_po_map(self.t))
+        self.assertNotIn((self.p.id, self.l2b.id), rsvc._open_po_map(self.t))
+        # ...but surfaced, not silently dropped.
+        ex = rsvc.excluded_inbound_po(self.t)
+        self.assertEqual(ex["count"], 1)
+        self.assertEqual(ex["qty"], Decimal("20"))
+
+    def test_policy_form_labels_say_base_uom(self):
+        from core.forms import ReplenishmentPolicyForm
+        form = ReplenishmentPolicyForm()
+        self.assertIn("base UOM", form.fields["reorder_point"].label)
+        self.assertIn("base UOM", form.fields["moq"].label)
+        self.assertIn("base UOM", form.fields["pack_size"].label)
+
+    def test_policy_page_shows_base_unit(self):
+        from core.models import UnitOfMeasure
+        ea = UnitOfMeasure.objects.create(tenant=self.t, code="EA", name="Each")
+        self.p.base_uom = ea
+        self.p.save()
+        self.client.login(username="clar", password="pw")
+        resp = self.client.get(f"/inventory/replenishment/policy/{self.p.id}/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Base unit")
+        self.assertContains(resp, "EA")
+
+    def test_replenishment_page_warns_about_excluded_inbound(self):
+        self._po(self.s2, None, "PO-WARN")               # ambiguous -> excluded
+        self.client.login(username="clar", password="pw")
+        resp = self.client.get("/inventory/replenishment/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "excluded")
+        self.assertEqual(resp.context["excluded_inbound"]["count"], 1)
+
+    def test_tenant_isolation(self):
+        from core.services import replenishment as rsvc
+        self._po(self.s2, None, "PO-ISO")
+        other = Tenant.objects.create(name="Other Clarity Co")
+        self.assertEqual(rsvc.excluded_inbound_po(other)["count"], 0)
+
+
 class LandedCostAccrualTests(TestCase):
     """Landed-cost accrual (2150) is credited at receipt and cleared (DR 2150 /
     into AP) when the supplier invoice posts — idempotent and bounded."""

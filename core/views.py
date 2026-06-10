@@ -2515,11 +2515,13 @@ def replenishment_plan(request):
         r["has_open_req"] = r["product"].id in open_req
         r["token"] = f'{r["product"].id}:{r["location"].id}'
 
+    excluded_inbound = rsvc.excluded_inbound_po(tenant)   # inbound with no receiving location
+
     locations = Location.objects.filter(tenant=tenant)
     if allowed is not None:
         locations = locations.filter(id__in=allowed)
     return render(request, "inventory/replenishment.html", {
-        "tenant": tenant, "rows": rows,
+        "tenant": tenant, "rows": rows, "excluded_inbound": excluded_inbound,
         "locations": locations.order_by("name"),
         "suppliers": Supplier.objects.filter(tenant=tenant).order_by("name"),
         "categories": ProductCategory.objects.filter(tenant=tenant).order_by("name"),
