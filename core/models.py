@@ -1563,6 +1563,10 @@ class SupplierInvoice(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     approved_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="approved_invoices")
     approved_at = models.DateTimeField(null=True, blank=True)
+    # Landed-cost accrual (account 2150) reclassified into this invoice's payable
+    # when it was posted. Set by post_supplier_invoice; 0 until posted. Included
+    # in `total`/`outstanding` so the AP subledger matches the GL after clearing.
+    landed_cleared = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
     class Meta:
         unique_together = ("tenant", "supplier", "invoice_number")
@@ -1580,7 +1584,8 @@ class SupplierInvoice(models.Model):
 
     @property
     def total(self):
-        return self.subtotal + self.tax_total
+        # Goods + VAT + any landed-cost accrual settled on this invoice.
+        return self.subtotal + self.tax_total + (self.landed_cleared or Decimal("0.00"))
 
     @property
     def amount_paid(self):
