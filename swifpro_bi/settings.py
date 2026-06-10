@@ -68,13 +68,24 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "swifpro_bi.wsgi.application"
 
-# DB: default SQLite for dev. Switch to Postgres via DATABASE_URL if needed later.
+# DB: default SQLite for local dev. In deployment, set DATABASE_URL (e.g. the
+# Render Postgres connection string) and it is used instead. dj-database-url is
+# only imported when a URL is present, so local dev without the package still runs.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
     }
 }
+
+_database_url = os.environ.get("DATABASE_URL", "")
+if _database_url:
+    import dj_database_url
+    DATABASES["default"] = dj_database_url.parse(
+        _database_url,
+        conn_max_age=int(os.environ.get("DJANGO_DB_CONN_MAX_AGE", "600")),
+        ssl_require=os.environ.get("DJANGO_DB_SSL_REQUIRE", "0") == "1",
+    )
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

@@ -1,0 +1,39 @@
+# Render blueprint for the SwifPro BI demo deployment (free tier).
+# Demo / manual-QA only — not for real production ERP data.
+#
+# Usage: in the Render dashboard choose "New +" > "Blueprint", point it at this
+# repo/branch, and Render reads this file. Or configure a Web Service manually
+# using the build/start commands below (see docs/deployment/render_demo.md).
+services:
+  - type: web
+    name: swifpro-bi-demo
+    runtime: python
+    plan: free
+    branch: main
+    # collectstatic + migrate run at build so the app is ready on first boot.
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate"
+    startCommand: "gunicorn swifpro_bi.wsgi:application"
+    healthCheckPath: /health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      - key: DJANGO_DEBUG
+        value: "0"                       # production mode (DEBUG off)
+      - key: DJANGO_SECRET_KEY
+        generateValue: true              # Render generates a strong secret; never hardcoded
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com"           # leading-dot wildcard matches the assigned *.onrender.com host
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        value: "https://*.onrender.com"
+      - key: DJANGO_DB_SSL_REQUIRE
+        value: "0"                        # internal Render DB network; set 1 only for external connections
+      - key: DATABASE_URL
+        fromDatabase:
+          name: swifpro-bi-db
+          property: connectionString
+
+databases:
+  - name: swifpro-bi-db
+    plan: free
+    databaseName: swifpro_bi
+    user: swifpro_bi
