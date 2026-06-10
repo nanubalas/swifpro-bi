@@ -96,13 +96,63 @@ def abc_classes(tenant):
     return out
 
 
+def _site_single_location(tenant):
+    """site_id -> the id of its ONLY active stock-holding location (sites with
+    zero or several stock locations are omitted). Lets us safely infer the
+    receiving location of a PO that left it blank, without guessing."""
+    from collections import defaultdict
+    by_site = defaultdict(list)
+    for l in (Location.objects.filter(tenant=tenant, is_active=True, holds_stock=True)
+              .values("id", "site_id")):
+        if l["site_id"]:
+            by_site[l["site_id"]].append(l["id"])
+    return {sid: ids[0] for sid, ids in by_site.items() if len(ids) == 1}
+
+
 def _open_po_map(tenant):
+    """Open inbound PO qty keyed by (product, location). A PO with a blank
+    receiving location is attributed to its site's single stock location when one
+    can be inferred; otherwise it is left out of projected availability and
+    surfaced via excluded_inbound_po()."""
+    single = _site_single_location(tenant)
     rows = (PurchaseOrderLine.objects
-            .filter(po__tenant=tenant, po__is_current=True, po__status__in=OPEN_PO_STATUSES,
-                    po__receiving_location__isnull=False)
-            .values("product_id", "po__receiving_location_id")
+            .filter(po__tenant=tenant, po__is_current=True, po__status__in=OPEN_PO_STATUSES)
+            .values("product_id", "po__receiving_location_id", "po__site_id")
             .annotate(q=Sum(F("ordered_qty") - F("received_qty"))))
-    return {(r["product_id"], r["po__receiving_location_id"]): (r["q"] or ZERO) for r in rows}
+    m = {}
+    for r in rows:
+        q = r["q"] or ZERO
+        if q <= ZERO:
+            continue
+        loc_id = r["po__receiving_location_id"] or single.get(r["po__site_id"])
+        if loc_id is None:
+            continue  # unattributable -> reported by excluded_inbound_po()
+        key = (r["product_id"], loc_id)
+        m[key] = m.get(key, ZERO) + q
+    return m
+
+
+def excluded_inbound_po(tenant):
+    """Open PO inbound that cannot be placed on the plan because the receiving
+    location is missing and not safely inferable. Returns {count, qty, lines}
+    so the UI can warn instead of silently dropping the stock."""
+    single = _site_single_location(tenant)
+    lines = (PurchaseOrderLine.objects
+             .filter(po__tenant=tenant, po__is_current=True, po__status__in=OPEN_PO_STATUSES,
+                     po__receiving_location__isnull=True)
+             .select_related("po", "product"))
+    out, total = [], ZERO
+    for l in lines:
+        if single.get(l.po.site_id):
+            continue  # safely inferred -> already counted in the plan
+        open_qty = (l.ordered_qty or ZERO) - (l.received_qty or ZERO)
+        if open_qty <= ZERO:
+            continue
+        total += open_qty
+        if len(out) < 100:
+            out.append({"po_number": l.po.po_number, "sku": l.product.sku,
+                        "product": l.product.name, "open_qty": open_qty})
+    return {"count": len(out), "qty": total, "lines": out}
 
 
 def _in_transit_map(tenant):
