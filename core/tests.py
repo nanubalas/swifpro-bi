@@ -9134,3 +9134,138 @@ class FeatureVisibilityLabelTests(TestCase):
         resp = self.client.get(reverse("consolidated_reports"))
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Balance-sheet elimination for intra-group AR/AP/equity is not yet complete.")
+
+
+class BootstrapDemoAdminsTests(TestCase):
+    """Env-driven demo-admin bootstrap (for hosted demos with no shell)."""
+
+    OWNER_PW = "OwnerPw!23456"
+    DEMO_PW = "DemoPw!98765"
+    DEMO_TENANT = "SwifPro BI Demo Ltd"
+
+    def _run(self, env, remove=()):
+        import os
+        from io import StringIO
+        from unittest import mock
+        from django.core.management import call_command
+        out = StringIO()
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for k in ("DJANGO_SUPERUSER_PASSWORD", "DJANGO_SUPERUSER_USERNAME",
+                      "DJANGO_SUPERUSER_EMAIL", "DEMO_ADMINS_ENABLED",
+                      "DEMO_ADMIN_DEFAULT_PASSWORD", "DEMO_ADMIN_1_EMAIL",
+                      "DEMO_ADMIN_2_EMAIL", "DEMO_ADMIN_3_EMAIL", "DEMO_ADMIN_4_EMAIL"):
+                os.environ.pop(k, None)            # start from a clean slate
+            for k in remove:
+                os.environ.pop(k, None)
+            os.environ.update(env)
+            call_command("bootstrap_demo_admins", stdout=out)
+        return out.getvalue()
+
+    def _is_admin(self, username):
+        from core.models import OrgMembership, Tenant
+        u = User.objects.get(username=username)
+        t = Tenant.objects.get(name=self.DEMO_TENANT)
+        m = OrgMembership.objects.get(user=u, tenant=t)
+        return u, m
+
+    # ---- main owner ----
+    def test_owner_created_with_superuser_and_admin_role(self):
+        self._run({"DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW})
+        u, m = self._is_admin("santhosh")
+        self.assertTrue(u.is_superuser)
+        self.assertTrue(u.is_staff)
+        self.assertEqual(m.role, "ADMIN")
+        self.assertTrue(m.is_default)
+        self.assertTrue(u.check_password(self.OWNER_PW))
+
+    def test_clean_exit_when_owner_env_missing(self):
+        out = self._run({})   # no password
+        self.assertFalse(User.objects.filter(username="santhosh").exists())
+        self.assertIn("DJANGO_SUPERUSER_PASSWORD not set", out)
+
+    def test_idempotent_no_duplicates(self):
+        self._run({"DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW})
+        self._run({"DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW})
+        self.assertEqual(User.objects.filter(username="santhosh").count(), 1)
+        from core.models import Tenant
+        self.assertEqual(Tenant.objects.filter(name=self.DEMO_TENANT).count(), 1)
+
+    def test_passwords_never_printed(self):
+        out = self._run({
+            "DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW,
+            "DEMO_ADMINS_ENABLED": "1", "DEMO_ADMIN_DEFAULT_PASSWORD": self.DEMO_PW,
+            "DEMO_ADMIN_1_EMAIL": "admin1@swifpro.demo",
+        })
+        self.assertNotIn(self.OWNER_PW, out)
+        self.assertNotIn(self.DEMO_PW, out)
+
+    # ---- demo admins ----
+    def test_demo_admins_only_when_enabled(self):
+        # Disabled -> only owner.
+        self._run({"DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW})
+        self.assertFalse(User.objects.filter(username="admin1").exists())
+        # Enabled -> the four are created.
+        self._run({
+            "DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW,
+            "DEMO_ADMINS_ENABLED": "1", "DEMO_ADMIN_DEFAULT_PASSWORD": self.DEMO_PW,
+            "DEMO_ADMIN_1_EMAIL": "admin1@swifpro.demo", "DEMO_ADMIN_2_EMAIL": "admin2@swifpro.demo",
+            "DEMO_ADMIN_3_EMAIL": "admin3@swifpro.demo", "DEMO_ADMIN_4_EMAIL": "admin4@swifpro.demo",
+        })
+        for n in ("admin1", "admin2", "admin3", "admin4"):
+            self.assertTrue(User.objects.filter(username=n).exists(), n)
+
+    def test_enabled_but_no_password_skips_demo_admins(self):
+        out = self._run({"DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW, "DEMO_ADMINS_ENABLED": "1"})
+        self.assertFalse(User.objects.filter(username="admin1").exists())
+        self.assertIn("DEMO_ADMIN_DEFAULT_PASSWORD is not set", out)
+
+    def test_missing_demo_email_skipped(self):
+        self._run({
+            "DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW,
+            "DEMO_ADMINS_ENABLED": "1", "DEMO_ADMIN_DEFAULT_PASSWORD": self.DEMO_PW,
+            "DEMO_ADMIN_1_EMAIL": "admin1@swifpro.demo", "DEMO_ADMIN_3_EMAIL": "admin3@swifpro.demo",
+        })
+        self.assertTrue(User.objects.filter(username="admin1").exists())
+        self.assertTrue(User.objects.filter(username="admin3").exists())
+        self.assertFalse(User.objects.filter(username="admin2").exists())   # email missing
+        self.assertFalse(User.objects.filter(username="admin4").exists())
+
+    def test_demo_admins_are_not_superusers_but_are_admin_role(self):
+        self._run({
+            "DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW,
+            "DEMO_ADMINS_ENABLED": "1", "DEMO_ADMIN_DEFAULT_PASSWORD": self.DEMO_PW,
+            "DEMO_ADMIN_1_EMAIL": "admin1@swifpro.demo",
+        })
+        u, m = self._is_admin("admin1")
+        self.assertFalse(u.is_superuser)        # not a Django superuser
+        self.assertTrue(u.is_staff)
+        self.assertEqual(m.role, "ADMIN")       # full app admin
+
+    def test_existing_user_not_recreated_password_kept(self):
+        existing = User.objects.create_user("admin1", email="old@x.test", password="OriginalPw!1")
+        self._run({
+            "DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW,
+            "DEMO_ADMINS_ENABLED": "1", "DEMO_ADMIN_DEFAULT_PASSWORD": self.DEMO_PW,
+            "DEMO_ADMIN_1_EMAIL": "admin1@swifpro.demo",
+        })
+        self.assertEqual(User.objects.filter(username="admin1").count(), 1)
+        existing.refresh_from_db()
+        self.assertTrue(existing.check_password("OriginalPw!1"))   # password unchanged
+        self.assertFalse(existing.check_password(self.DEMO_PW))
+        _, m = self._is_admin("admin1")                            # membership still ensured
+        self.assertEqual(m.role, "ADMIN")
+
+    def test_does_not_touch_other_tenant(self):
+        from core.models import OrgMembership
+        other = Tenant.objects.create(name="Other Real Co")
+        ouser = User.objects.create_user("realuser", password="x")
+        OrgMembership.objects.create(user=ouser, tenant=other, role="SALES", is_default=True)
+        self._run({
+            "DJANGO_SUPERUSER_PASSWORD": self.OWNER_PW,
+            "DEMO_ADMINS_ENABLED": "1", "DEMO_ADMIN_DEFAULT_PASSWORD": self.DEMO_PW,
+            "DEMO_ADMIN_1_EMAIL": "admin1@swifpro.demo",
+        })
+        # The other tenant's membership is untouched.
+        self.assertEqual(OrgMembership.objects.filter(tenant=other).count(), 1)
+        m = OrgMembership.objects.get(user=ouser, tenant=other)
+        self.assertEqual(m.role, "SALES")
