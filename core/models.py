@@ -2181,6 +2181,23 @@ class JournalEntry(models.Model):
     posted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     posted_at = models.DateTimeField(blank=True, null=True)
 
+    class Meta:
+        constraints = [
+            # DB-level idempotency backstop: one journal per document reference.
+            # Enforced only when both ref_type and ref_id are present and non-empty,
+            # so manual journals (no ref) are unaffected. TRANSFER_RECEIPT is
+            # excluded because a transfer received in several partial shipments
+            # legitimately posts more than one receipt journal under the same
+            # transfer number (see _receive_transfer / post_transfer_receipt).
+            models.UniqueConstraint(
+                fields=["tenant", "ref_type", "ref_id"],
+                condition=(models.Q(ref_type__isnull=False) & ~models.Q(ref_type="")
+                           & models.Q(ref_id__isnull=False) & ~models.Q(ref_id="")
+                           & ~models.Q(ref_type="TRANSFER_RECEIPT")),
+                name="uniq_journal_entry_ref",
+            ),
+        ]
+
     def __str__(self):
         return f"JE {self.id}"
 

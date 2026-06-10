@@ -1,8 +1,41 @@
+import functools
 from decimal import Decimal
 from django.utils import timezone
 from django.db import transaction
+from django.core.exceptions import ValidationError
 
 from core.models import JournalEntry, JournalLine, GLAccount, CustomerInvoice, SupplierInvoice, Tenant
+
+
+def _assert_balanced(je: JournalEntry):
+    """A journal entry's debits must equal its credits. Raises ValidationError
+    (rolling back the caller's transaction) rather than leaving an unbalanced
+    entry in the GL."""
+    td = je.total_debit
+    tc = je.total_credit
+    if td != tc:
+        raise ValidationError(
+            f"Unbalanced journal entry (ref {je.ref_type}/{je.ref_id}): "
+            f"debits {td} != credits {tc}.")
+
+
+def _posting(fn):
+    """Decorator for GL posters: run the body atomically and, before the
+    transaction commits, verify that every journal entry the call created
+    balances. A future/edited poster that builds an unbalanced entry now fails
+    loudly instead of silently drifting the trial balance. This is a backstop;
+    the per-document idempotency guards inside each poster are unchanged.
+
+    Note: `transaction.atomic(inner)` is used (not the @ decorator form) so the
+    literal text `@transaction.atomic` no longer appears on these functions."""
+    @functools.wraps(fn)
+    def inner(*args, **kwargs):
+        last_id = JournalEntry.objects.order_by("-id").values_list("id", flat=True).first() or 0
+        result = fn(*args, **kwargs)
+        for je in JournalEntry.objects.filter(id__gt=last_id).prefetch_related("lines"):
+            _assert_balanced(je)
+        return result
+    return transaction.atomic(inner)
 
 DEFAULT_ACCOUNT_CODES = {
     "inventory": "1000",
@@ -24,7 +57,7 @@ def _acc(tenant: Tenant, key: str) -> GLAccount:
     code = DEFAULT_ACCOUNT_CODES[key]
     return GLAccount.objects.get(tenant=tenant, code=code)
 
-@transaction.atomic
+@_posting
 def post_customer_invoice(inv: CustomerInvoice, user=None) -> JournalEntry:
     if inv.status in ("ISSUED", "PAID"):
         # idempotent: if already issued assume JE exists (for MVP)
@@ -120,7 +153,7 @@ def _post_invoice_cogs(inv, user=None):
                   site_id=inv.site_id)
     return cogs_total
 
-@transaction.atomic
+@_posting
 def reverse_invoice_cogs(inv, user=None):
     """Restore stock and reverse the COGS journal for a cancelled AR invoice.
 
@@ -169,7 +202,7 @@ def reverse_invoice_cogs(inv, user=None):
             )
 
 
-@transaction.atomic
+@_posting
 def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
     if inv.status == "POSTED":
         je = JournalEntry.objects.filter(tenant=inv.tenant, ref_type="AP_INVOICE", ref_id=inv.invoice_number).order_by("-id").first()
@@ -265,7 +298,7 @@ def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
     return je
 
 
-@transaction.atomic
+@_posting
 def post_payment(payment, user=None) -> JournalEntry:
     """Post a payment to the GL and mark fully-settled invoices as paid.
 
@@ -326,7 +359,7 @@ def post_payment(payment, user=None) -> JournalEntry:
     return je
 
 
-@transaction.atomic
+@_posting
 def post_inventory_receipt(tenant, value, ref_id, user=None, entry_date=None,
                            landed_value=Decimal("0.00"), inventory_value=None, site_id=None):
     """Capitalize received stock.
@@ -365,7 +398,7 @@ def post_inventory_receipt(tenant, value, ref_id, user=None, entry_date=None,
     return je
 
 
-@transaction.atomic
+@_posting
 def post_expense(expense, user=None) -> JournalEntry:
     """Post a recorded expense to the GL.
 
@@ -403,7 +436,7 @@ def post_expense(expense, user=None) -> JournalEntry:
     return je
 
 
-@transaction.atomic
+@_posting
 def post_credit_note(cn, user=None) -> JournalEntry:
     """Post a credit note (the reverse of an invoice).
 
@@ -467,7 +500,7 @@ def post_credit_note(cn, user=None) -> JournalEntry:
     return je
 
 
-@transaction.atomic
+@_posting
 def post_stock_adjustment(adj, value, user=None, entry_date=None):
     """Book the GL impact of a stock adjustment (damage / write-off / found stock).
 
@@ -506,7 +539,7 @@ def post_stock_adjustment(adj, value, user=None, entry_date=None):
     return je
 
 
-@transaction.atomic
+@_posting
 def post_transfer_dispatch(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
     """Move value from Inventory into Inventory In Transit on dispatch:
     DR Inventory In Transit / CR Inventory. Keeps the GL control account in step
@@ -524,7 +557,7 @@ def post_transfer_dispatch(tenant, value, ref_id, user=None, entry_date=None, si
     return je
 
 
-@transaction.atomic
+@_posting
 def post_transfer_receipt(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
     """Move value from Inventory In Transit back into Inventory on receipt:
     DR Inventory / CR Inventory In Transit. Also used (with the source site) when
@@ -541,7 +574,7 @@ def post_transfer_receipt(tenant, value, ref_id, user=None, entry_date=None, sit
     return je
 
 
-@transaction.atomic
+@_posting
 def post_transfer_shortage(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
     """Write off in-transit stock lost in transit: DR Inventory Adjustments /
     CR Inventory In Transit (value is a positive loss amount)."""
@@ -557,7 +590,7 @@ def post_transfer_shortage(tenant, value, ref_id, user=None, entry_date=None, si
     return je
 
 
-@transaction.atomic
+@_posting
 def post_stock_adjustment_value(tenant, value, *, ref_type, ref_id, location=None, memo=None,
                                 user=None, entry_date=None):
     """Generic inventory value adjustment: DR/CR Inventory vs Inventory
@@ -588,7 +621,7 @@ def post_stock_adjustment_value(tenant, value, *, ref_type, ref_id, location=Non
     return je
 
 
-@transaction.atomic
+@_posting
 def post_return_inventory(tenant, value, *, ref_type, ref_id, location=None, memo=None,
                           user=None, entry_date=None):
     """Bring returned goods back onto the books when an RMA is received:
@@ -616,7 +649,7 @@ def post_return_inventory(tenant, value, *, ref_type, ref_id, location=None, mem
     return je
 
 
-@transaction.atomic
+@_posting
 def post_cycle_count_adjustment(tenant, cc, value, user=None, entry_date=None):
     """Book the GL impact of a cycle-count variance: DR/CR Inventory vs Inventory
     Adjustments, valued identically to the inventory movements the count posted
@@ -652,7 +685,7 @@ def post_cycle_count_adjustment(tenant, cc, value, user=None, entry_date=None):
     return je
 
 
-@transaction.atomic
+@_posting
 def post_stock_take_adjustment(tenant, session, value, *, user=None, entry_date=None):
     """Book the net GL impact of a stock-take's variances: DR/CR Inventory vs
     Inventory Adjustments, valued identically to the inventory movements the
@@ -687,7 +720,7 @@ def post_stock_take_adjustment(tenant, session, value, *, user=None, entry_date=
     return je
 
 
-@transaction.atomic
+@_posting
 def reverse_payment(payment, user=None):
     """Post a reversing journal entry for a payment (used when a payment is
     deleted). Mirrors the original PAYMENT entry with debit/credit swapped, so
@@ -709,7 +742,7 @@ def reverse_payment(payment, user=None):
     return je
 
 
-@transaction.atomic
+@_posting
 def post_cogs(tenant, value, ref_id, user=None, entry_date=None, site_id=None):
     """Expense cost of goods sold: DR COGS / CR Inventory.
 

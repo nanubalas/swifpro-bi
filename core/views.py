@@ -1089,7 +1089,11 @@ def _unique_username(base):
 def access_request_list(request):
     from core.models import Department
     tenant = _get_default_tenant(request)
-    requests = AccessRequest.objects.all()
+    # Scope to this tenant. Public sign-up requests carry no tenant (null) and are
+    # a shared onboarding pool visible to every tenant's admin; a request that IS
+    # assigned to a tenant is only visible to that tenant's admins (no cross-tenant
+    # leak of prospective-user PII).
+    requests = AccessRequest.objects.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
     departments = Department.objects.filter(tenant=tenant, is_active=True).order_by("name")
     return render(request, "access_requests.html", {
         "tenant": tenant, "requests": requests, "roles": roles_mod.ROLE_CHOICES,
@@ -1102,7 +1106,9 @@ def access_request_list(request):
 def access_request_action(request, req_id):
     from django.contrib.auth.models import User
     tenant = _get_default_tenant(request)
-    req = get_object_or_404(AccessRequest, id=req_id)
+    # Same scoping as the list: a tenant admin can only action their own tenant's
+    # requests (or unassigned public ones). Cross-tenant ids 404.
+    req = get_object_or_404(AccessRequest, Q(tenant=tenant) | Q(tenant__isnull=True), id=req_id)
     if request.method != "POST":
         return redirect("access_request_list")
 

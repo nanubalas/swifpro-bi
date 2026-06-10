@@ -1251,6 +1251,47 @@ class AccessRequestTests(TestCase):
         self.assertTrue(applicant_mails)
         self.assertIn("Temporary password", applicant_mails[-1].body)
 
+    # ---- tenant scoping (release must-fix #1) ----
+    def _other_tenant_admin(self):
+        from core.models import OrgMembership
+        other = Tenant.objects.create(name="Other Req Co")
+        oadmin = User.objects.create_user("oadminu", password="pw", email="oadmin@other.test")
+        OrgMembership.objects.create(user=oadmin, tenant=other, role="ADMIN", is_default=True)
+        return other, oadmin
+
+    def test_list_shows_own_tenant_and_unassigned_only(self):
+        from core.models import AccessRequest
+        other, _ = self._other_tenant_admin()
+        mine = AccessRequest.objects.create(name="Mine", email="mine@x.test", tenant=self.tenant)
+        public = AccessRequest.objects.create(name="Public", email="pub@x.test")  # null tenant
+        theirs = AccessRequest.objects.create(name="Theirs", email="theirs@x.test", tenant=other)
+        self.client.login(username="adminu", password="pw")
+        shown = set(self.client.get("/access-requests/").context["requests"].values_list("id", flat=True))
+        self.assertEqual(shown, {mine.id, public.id})       # not theirs
+
+    def test_cannot_view_or_action_other_tenant_request_by_url(self):
+        from core.models import AccessRequest
+        other, _ = self._other_tenant_admin()
+        theirs = AccessRequest.objects.create(name="Theirs", email="theirs2@x.test", tenant=other)
+        self.client.login(username="adminu", password="pw")
+        # Direct action URL on a cross-tenant request -> 404, and unchanged.
+        resp = self.client.post(f"/access-requests/{theirs.id}/action/", {"action": "approve", "role": "SALES"})
+        self.assertEqual(resp.status_code, 404)
+        theirs.refresh_from_db()
+        self.assertEqual(theirs.status, "PENDING")
+        self.assertIsNone(theirs.created_user)
+
+    def test_admin_can_action_unassigned_public_request(self):
+        from core.models import AccessRequest, OrgMembership
+        public = AccessRequest.objects.create(name="Pub", email="pub2@x.test")  # null tenant
+        self.client.login(username="adminu", password="pw")
+        resp = self.client.post(f"/access-requests/{public.id}/action/", {"action": "approve", "role": "SALES"})
+        self.assertEqual(resp.status_code, 302)
+        public.refresh_from_db()
+        self.assertEqual(public.status, "APPROVED")
+        # Approval binds the new user into the acting admin's tenant.
+        self.assertTrue(OrgMembership.objects.filter(user=public.created_user, tenant=self.tenant).exists())
+
 
 class NotificationTests(TestCase):
     def setUp(self):
@@ -2105,8 +2146,11 @@ class InventoryGlReconciliationTests(TestCase):
     def _gl(self, debit="0", credit="0", entry_date=None):
         from core.models import JournalEntry, JournalLine
         from django.utils import timezone
+        # Manual-style entry (no ref) so the duplicate-posting reconciliation test
+        # can create two — the uniq_journal_entry_ref constraint only binds
+        # ref'd document postings, not ref-less manual journals.
         je = JournalEntry.objects.create(tenant=self.t, entry_date=entry_date or timezone.localdate(),
-                                         ref_type="T", ref_id="x", memo="t")
+                                         memo="t")
         JournalLine.objects.create(entry=je, account=self.inv_acc,
                                    debit=Decimal(debit), credit=Decimal(credit))
         return je
@@ -8820,3 +8864,92 @@ class InventoryWorklistTests(TestCase):
         other = Tenant.objects.create(name="Other Worklist Co")
         self.assertEqual(stale_transfers(other, now=self.now), [])
         self.assertEqual(unresolved_holds(other, now=self.now), [])
+
+
+class JournalIntegrityTests(TestCase):
+    """DB-level journal idempotency constraint + balanced-journal guard
+    (release must-fix #2)."""
+
+    def setUp(self):
+        from core.models import GLAccount, JournalEntry
+        self.t = Tenant.objects.create(name="JE Co")           # post_save seeds the chart
+        self.inv = GLAccount.objects.get(tenant=self.t, code="1000")
+        self.JE = JournalEntry
+
+    def _entry(self, **kw):
+        return self.JE.objects.create(tenant=self.t, memo="x", **kw)
+
+    # ---- unique constraint ----
+    def test_duplicate_ref_blocked(self):
+        from django.db import IntegrityError, transaction
+        self._entry(ref_type="AR_INVOICE", ref_id="INV-1")
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self._entry(ref_type="AR_INVOICE", ref_id="INV-1")
+
+    def test_same_ref_different_tenant_allowed(self):
+        from core.models import JournalEntry
+        self._entry(ref_type="AR_INVOICE", ref_id="INV-1")
+        other = Tenant.objects.create(name="JE Other")
+        JournalEntry.objects.create(tenant=other, ref_type="AR_INVOICE", ref_id="INV-1", memo="x")
+        self.assertEqual(JournalEntry.objects.filter(ref_type="AR_INVOICE", ref_id="INV-1").count(), 2)
+
+    def test_manual_journals_without_ref_allowed(self):
+        self._entry()
+        self._entry()   # second ref-less manual journal must not be blocked
+        self.assertEqual(self.JE.objects.filter(tenant=self.t, ref_type__isnull=True).count(), 2)
+
+    def test_transfer_receipt_partial_duplicates_allowed(self):
+        # Partial transfer receipts legitimately post >1 entry per transfer number.
+        self._entry(ref_type="TRANSFER_RECEIPT", ref_id="TR-9")
+        self._entry(ref_type="TRANSFER_RECEIPT", ref_id="TR-9")
+        self.assertEqual(self.JE.objects.filter(ref_type="TRANSFER_RECEIPT", ref_id="TR-9").count(), 2)
+
+    # ---- balanced guard ----
+    def test_unbalanced_posting_rejected(self):
+        from core.services import gl
+        from core.models import JournalLine
+        from django.core.exceptions import ValidationError
+
+        @gl._posting
+        def bad(tenant, acc):
+            je = self.JE.objects.create(tenant=tenant, ref_type="TEST_BAD", ref_id="1", memo="x")
+            JournalLine.objects.create(entry=je, account=acc, debit=Decimal("5.00"), credit=Decimal("0.00"))
+            return je
+
+        with self.assertRaises(ValidationError):
+            bad(self.t, self.inv)
+        # Rolled back: nothing persisted.
+        self.assertFalse(self.JE.objects.filter(ref_type="TEST_BAD").exists())
+
+    def test_balanced_posting_succeeds(self):
+        from core.services import gl
+        from core.models import JournalLine
+
+        @gl._posting
+        def good(tenant, acc):
+            je = self.JE.objects.create(tenant=tenant, ref_type="TEST_OK", ref_id="1", memo="x")
+            JournalLine.objects.create(entry=je, account=acc, debit=Decimal("5.00"), credit=Decimal("0.00"))
+            JournalLine.objects.create(entry=je, account=acc, debit=Decimal("0.00"), credit=Decimal("5.00"))
+            return je
+
+        good(self.t, self.inv)
+        self.assertTrue(self.JE.objects.filter(ref_type="TEST_OK").exists())
+
+    def test_real_poster_balanced_and_idempotent(self):
+        from core.services.gl import post_cogs
+        je1 = post_cogs(self.t, Decimal("10.00"), "SALE-1")
+        self.assertEqual(je1.total_debit, je1.total_credit)
+        je2 = post_cogs(self.t, Decimal("10.00"), "SALE-1")   # idempotent: returns existing
+        self.assertEqual(je1.id, je2.id)
+        self.assertEqual(self.JE.objects.filter(tenant=self.t, ref_type="COGS", ref_id="SALE-1").count(), 1)
+
+    def test_double_create_simulation_blocked_by_db(self):
+        # Simulate a concurrent double-post that slips past the app-level guard:
+        # the DB constraint still allows only one entry.
+        from django.db import IntegrityError, transaction
+        self._entry(ref_type="AP_INVOICE", ref_id="BILL-1")
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self._entry(ref_type="AP_INVOICE", ref_id="BILL-1")
+        self.assertEqual(self.JE.objects.filter(ref_type="AP_INVOICE", ref_id="BILL-1").count(), 1)
