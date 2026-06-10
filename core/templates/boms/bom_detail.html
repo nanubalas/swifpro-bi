@@ -44,20 +44,24 @@
           </div>
 
           {{ formset.management_form }}
+          <p class="text-muted small mb-2">Use line numbers such as 10, 20, 30 so new components can be inserted later without renumbering the whole BOM.</p>
 
           <div class="table-responsive">
             <table class="table table-bordered align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:55%">Component SKU</th>
-                  <th class="text-end" style="width:15%">Qty</th>
+                  <th style="width:10%">Line</th>
+                  <th style="width:45%">Component</th>
+                  <th class="text-end" style="width:15%">Quantity</th>
                   <th style="width:20%">UOM</th>
-                  <th class="text-center" style="width:10%">Remove</th>
+                  <th class="text-center" style="width:10%">Actions</th>
                 </tr>
               </thead>
               <tbody id="lines-body">
                 {% for f in formset %}
                 <tr class="line-row">
+                  {% for hidden in f.hidden_fields %}{{ hidden }}{% endfor %}
+                  <td>{{ f.line_no }}</td>
                   <td>{{ f.component }}</td>
                   <td class="text-end">{{ f.qty }}</td>
                   <td>{{ f.uom }}</td>
@@ -70,6 +74,7 @@
 
           <template id="empty-form-template">
             <tr class="line-row">
+              <td>{{ formset.empty_form.line_no }}</td>
               <td>{{ formset.empty_form.component }}</td>
               <td class="text-end">{{ formset.empty_form.qty }}</td>
               <td>{{ formset.empty_form.uom }}</td>
@@ -98,6 +103,16 @@
 
   function updateAttributes(html, index) { return html.replaceAll("__prefix__", index); }
 
+  function nextLineNo() {
+    // Next number in steps of 10 (max existing + 10, else 10).
+    let max = 0;
+    tbody.querySelectorAll('input[name$="-line_no"]').forEach(el => {
+      const v = parseInt(el.value, 10);
+      if (!isNaN(v) && v > max) max = v;
+    });
+    return max + 10;
+  }
+
   addBtn.addEventListener("click", () => {
     const totalFormsInput = document.querySelector('input[name="{{ formset.prefix }}-TOTAL_FORMS"]');
     const index = parseInt(totalFormsInput.value, 10);
@@ -105,6 +120,8 @@
     const wrapper = document.createElement("tbody");
     wrapper.innerHTML = tempHtml.trim();
     const newRow = wrapper.querySelector("tr");
+    const lineInput = newRow.querySelector('input[name$="-line_no"]');
+    if (lineInput) lineInput.value = nextLineNo();
     tbody.appendChild(newRow);
     totalFormsInput.value = index + 1;
 

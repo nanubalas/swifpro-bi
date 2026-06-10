@@ -13,6 +13,8 @@ def explode_product(product: Product, qty: Decimal):
     if not bom:
         return [(product, qty)]
     out = []
-    for line in BillOfMaterialsLine.objects.select_related("component").filter(bom=bom):
+    # Order by the stable BOM line number (then id) for deterministic display;
+    # ordering does not affect the component quantities returned.
+    for line in BillOfMaterialsLine.objects.select_related("component").filter(bom=bom).order_by("line_no", "id"):
         out.append((line.component, qty * Decimal(line.qty)))
     return out
