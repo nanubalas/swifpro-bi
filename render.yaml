@@ -10,8 +10,9 @@ services:
     runtime: python
     plan: free
     branch: main
-    # collectstatic + migrate run at build so the app is ready on first boot.
-    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate"
+    # collectstatic + migrate + admin bootstrap run at build so the app is ready
+    # on first boot. bootstrap_demo_admins is a no-op unless its env vars are set.
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py bootstrap_demo_admins"
     startCommand: "gunicorn swifpro_bi.wsgi:application"
     healthCheckPath: /health/
     envVars:
@@ -31,6 +32,26 @@ services:
         fromDatabase:
           name: swifpro-bi-db
           property: connectionString
+      # --- Demo admin bootstrap (see docs/deployment/render_demo.md) ---
+      # Passwords are NOT committed: set them in the Render dashboard.
+      - key: DJANGO_SUPERUSER_USERNAME
+        value: "santhosh"
+      - key: DJANGO_SUPERUSER_EMAIL
+        value: "santhoshkumarnanubala@gmail.com"
+      - key: DJANGO_SUPERUSER_PASSWORD
+        sync: false                       # set a strong value in the Render dashboard
+      - key: DEMO_ADMINS_ENABLED
+        value: "1"                        # set to 0 to create only the owner
+      - key: DEMO_ADMIN_DEFAULT_PASSWORD
+        sync: false                       # set in the dashboard to enable the 4 demo admins
+      - key: DEMO_ADMIN_1_EMAIL
+        value: "admin1@swifpro.demo"
+      - key: DEMO_ADMIN_2_EMAIL
+        value: "admin2@swifpro.demo"
+      - key: DEMO_ADMIN_3_EMAIL
+        value: "admin3@swifpro.demo"
+      - key: DEMO_ADMIN_4_EMAIL
+        value: "admin4@swifpro.demo"
 
 databases:
   - name: swifpro-bi-db

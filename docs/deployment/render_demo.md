@@ -110,19 +110,64 @@ Generate a strong secret locally if setting it by hand:
 
 ---
 
-## Create the first admin user
+## Create admin users (no Shell needed)
 
-Open the Render **Shell** for the web service and run:
+The Render **free tier has no Shell**, so `createsuperuser` can't be run
+interactively. Instead, admin accounts are bootstrapped from environment
+variables by a management command that runs automatically at the end of every
+build:
 
 ```bash
-python manage.py createsuperuser
+python manage.py bootstrap_demo_admins
 ```
 
-Use a **strong** password (this is a public demo). The Django admin is at
-`/admin/`. The app's own login is at `/login/`.
+It is **idempotent**, **never prints passwords**, **never resets an existing
+user's password**, exits cleanly when its env vars are absent, and touches no
+other tenant. It creates:
 
-> Security: there are no hardcoded passwords or secrets in the repo. Set a strong
-> admin password, and don't reuse production credentials.
+- **1 owner** — Django superuser + staff + app **ADMIN** role.
+- **Up to 4 demo admins** — staff + app **ADMIN** role, **not** Django
+  superusers (full app access without superuser).
+
+All accounts join a single demo tenant **"SwifPro BI Demo Ltd"** with an ADMIN
+membership, which grants full, unrestricted app access. App login is at
+`/login/`; the Django admin (owner only) is at `/admin/`.
+
+### Required env vars — main owner
+| Variable | Notes |
+|---|---|
+| `DJANGO_SUPERUSER_PASSWORD` | **Required** to create the owner; owner is skipped if unset. **Set this in the Render dashboard** (never committed). |
+| `DJANGO_SUPERUSER_USERNAME` | Default `santhosh` |
+| `DJANGO_SUPERUSER_EMAIL` | Default `santhoshkumarnanubala@gmail.com` |
+
+### Optional env vars — four demo admins
+| Variable | Notes |
+|---|---|
+| `DEMO_ADMINS_ENABLED` | `1` to create the four demo admins; anything else = owner only |
+| `DEMO_ADMIN_DEFAULT_PASSWORD` | Shared password for the four; if unset, the four are skipped with a warning. **Set in the dashboard.** |
+| `DEMO_ADMIN_1_EMAIL` … `DEMO_ADMIN_4_EMAIL` | A missing email skips just that one user (usernames are `admin1`…`admin4`) |
+
+### Enable / disable the demo admins
+- **Enable:** set `DEMO_ADMINS_ENABLED=1` **and** `DEMO_ADMIN_DEFAULT_PASSWORD`, then redeploy.
+- **Disable creation:** set `DEMO_ADMINS_ENABLED=0` (or remove the password). Existing demo users are **not** auto-deleted — remove them manually (below).
+
+### Rotate passwords
+The command never resets an existing user's password. To rotate:
+1. Update `DJANGO_SUPERUSER_PASSWORD` / `DEMO_ADMIN_DEFAULT_PASSWORD` in the dashboard.
+2. Delete the affected user(s) in the Django admin (`/admin/auth/user/`).
+3. Redeploy — the command recreates them with the new password.
+
+### Delete / disable the demo admins later (do this before real production use)
+In the Django admin (`/admin/`, owner login), open **Users** and either:
+- untick **Active** to disable login, or
+- delete the `admin1`…`admin4` users (and the **"SwifPro BI Demo Ltd"** tenant if
+  it's no longer needed).
+Then set `DEMO_ADMINS_ENABLED=0` so they aren't re-created on the next deploy.
+
+> Security: these are **demo/admin** accounts. There are no hardcoded passwords
+> or secrets in the repo — passwords come only from env vars. **Disable or delete
+> them before using this deployment for anything real**, and never reuse
+> production credentials.
 
 ---
 
