@@ -4,10 +4,15 @@
 {% block body %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
-    <h2 class="fw-bold mb-1">Bins</h2>
+    <h2 class="fw-bold mb-1">Bins <span class="badge text-bg-warning align-middle">Advisory</span></h2>
     <div class="text-muted">Physical sub-locations (aisle/shelf) inside a warehouse.</div>
   </div>
   <a class="btn btn-primary" href="{% url 'bin_create' %}"><i class="bi bi-plus-lg me-1"></i> Create Bin</a>
+</div>
+
+<div class="alert alert-warning d-flex align-items-center" role="alert">
+  <i class="bi bi-exclamation-triangle me-2"></i>
+  <div>Bin balances are advisory unless all movements are bin-tagged. Full bin-aware receiving, picking, transfer, and ATP are not yet implemented.</div>
 </div>
 
 <div class="card"><div class="card-body p-0">

@@ -12,6 +12,11 @@
 <div class="alert alert-info">This company isn't part of a group yet. <a href="{% url 'settings_group' %}">Set up a company group</a> to consolidate across companies. Showing this company only.</div>
 {% endif %}
 
+<div class="alert alert-secondary d-flex align-items-center" role="alert">
+  <i class="bi bi-info-circle me-2"></i>
+  <div>P&amp;L elimination is supported. Balance-sheet elimination for intra-group AR/AP/equity is not yet complete.</div>
+</div>
+
 <div class="card mb-4"><div class="card-body">
   <h5 class="fw-bold mb-3">Profit &amp; Loss</h5>
   <div class="table-responsive">
