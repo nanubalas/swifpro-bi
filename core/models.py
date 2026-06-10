@@ -1629,6 +1629,12 @@ class ReturnLine(models.Model):
                                      related_name="inspected_return_lines")
     inspected_at = models.DateTimeField(null=True, blank=True)
     notes = models.CharField(max_length=255, blank=True, null=True)
+    # Outcome of the post-receipt inspection for a held line: RESTOCK (released
+    # to sellable) or SCRAP (written off). Null while the line is still on hold.
+    final_disposition = models.CharField(max_length=20, choices=Disposition.choices, blank=True, null=True)
+    resolved_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="resolved_return_lines")
+    resolved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ("rma", "product", "lot_code", "serial_number", "expiry_date")
@@ -1644,6 +1650,16 @@ class ReturnLine(models.Model):
     @property
     def is_scrap(self):
         return self.disposition == self.Disposition.SCRAP
+
+    @property
+    def hold_resolved(self):
+        return self.final_disposition is not None
+
+    @property
+    def awaiting_inspection(self):
+        """A held line that has been received but not yet released or scrapped."""
+        return (self.is_hold and self.final_disposition is None
+                and self.rma.status == ReturnAuthorization.Status.RECEIVED)
 
 
 # ============================

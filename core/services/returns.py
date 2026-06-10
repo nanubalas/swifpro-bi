@@ -19,10 +19,12 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
+from django.core.exceptions import ValidationError
+
 from core.models import Location, ReturnAuthorization, ReturnLine, InventoryMovement
 from core.services.inventory import apply_movement
 from core.services.bom import explode_product
-from core.services.gl import post_stock_adjustment_value
+from core.services.gl import post_stock_adjustment_value, post_return_inventory
 
 
 def hold_location(tenant, *, near=None):
@@ -51,22 +53,23 @@ def receive_return(rma, *, user=None):
         return
     tenant = rma.tenant
     ref_id = f"{rma.channel}:{rma.rma_number}"
+    return_value = Decimal("0.00")   # total value brought back onto the books
 
     for line in rma.lines.select_related("product").all():
         qty = Decimal(line.qty)
         if qty <= 0:
             continue
-        disp = line.disposition or ReturnLine.Disposition.QUARANTINE
         dest = hold_location(tenant, near=rma.receive_location) if line.is_hold else rma.receive_location
 
         # Returned kits restock as components (mirrors the sales deduction policy).
         for comp, comp_qty in explode_product(line.product, qty):
-            apply_movement(
+            rcv = apply_movement(
                 tenant=tenant, product=comp, location=dest,
                 movement_type=InventoryMovement.MovementType.RETURN,
                 qty_delta=comp_qty, ref_type="RMA", ref_id=ref_id,
                 notes=f"Return received - {line.get_disposition_display()}", user=user,
                 lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date)
+            return_value += rcv.value or Decimal("0.00")
 
             if line.is_scrap:
                 # Relieve the just-received unit and book the loss (DR Inventory
@@ -88,5 +91,70 @@ def receive_return(rma, *, user=None):
             line.inspected_at = timezone.now()
             line.save(update_fields=["inspected_by", "inspected_at"])
 
+    # Bring the returned value onto the GL (DR Inventory / CR COGS) so the
+    # inventory subledger and control account stay aligned. One idempotent entry
+    # per RMA covers restock + held + scrap inbound; scrap lines then carry their
+    # own write-off (CR Inventory) so a scrapped line nets to zero on the GL.
+    post_return_inventory(tenant, return_value, ref_type="RMA_RETURN", ref_id=ref_id,
+                          location=rma.receive_location, memo=f"Return to inventory {rma.rma_number}",
+                          user=user)
+
     rma.status = ReturnAuthorization.Status.RECEIVED
     rma.save(update_fields=["status"])
+
+
+@transaction.atomic
+def resolve_hold(line, action, *, user=None, notes=None):
+    """Process a held return line after inspection. `action` is RESTOCK (release
+    to sellable) or SCRAP (write off). Idempotent / guarded: only an unresolved
+    held line on a RECEIVED RMA can be resolved, and only once."""
+    Disp = ReturnLine.Disposition
+    if action not in (Disp.RESTOCK, Disp.SCRAP):
+        raise ValidationError("Choose Release to sellable or Scrap.")
+    rma = line.rma
+    if rma.status != ReturnAuthorization.Status.RECEIVED:
+        raise ValidationError("The return must be received before its held stock can be processed.")
+    if not line.is_hold:
+        raise ValidationError("Only quarantine / repair / return-to-supplier lines need a final disposition.")
+    if line.final_disposition is not None:
+        raise ValidationError(f"This line is already resolved ({line.get_final_disposition_display()}).")
+
+    tenant = rma.tenant
+    hold = hold_location(tenant, near=rma.receive_location)
+    sellable = rma.receive_location
+
+    for comp, comp_qty in explode_product(line.product, Decimal(line.qty)):
+        if comp_qty <= 0:
+            continue
+        if action == Disp.RESTOCK:
+            # Value-neutral move from the hold location to sellable stock (carry
+            # the relieved cost onto the IN leg so total inventory value is
+            # unchanged); serial/lot/expiry preserved.
+            out = apply_movement(
+                tenant=tenant, product=comp, location=hold, movement_type="TRANSFER_OUT",
+                qty_delta=(comp_qty * Decimal("-1")), ref_type="RMA_RELEASE", ref_id=str(line.id),
+                notes=f"Released to sellable from hold (RMA {rma.rma_number})", user=user,
+                lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date)
+            apply_movement(
+                tenant=tenant, product=comp, location=sellable, movement_type="TRANSFER_IN",
+                qty_delta=comp_qty, ref_type="RMA_RELEASE", ref_id=str(line.id),
+                notes=f"Released to sellable from hold (RMA {rma.rma_number})", user=user,
+                unit_cost=out.unit_cost,
+                lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date)
+        else:  # SCRAP held stock: write off from the hold location + book the loss.
+            wo = apply_movement(
+                tenant=tenant, product=comp, location=hold, movement_type="WRITE_OFF",
+                qty_delta=(comp_qty * Decimal("-1")), ref_type="RMA_HOLD_SCRAP", ref_id=str(line.id),
+                notes=f"Scrapped from hold (RMA {rma.rma_number})", user=user,
+                lot_code=line.lot_code, serial_number=line.serial_number, expiry_date=line.expiry_date)
+            post_stock_adjustment_value(
+                tenant, wo.value or Decimal("0.00"), ref_type="RMA_HOLD_SCRAP", ref_id=str(line.id),
+                location=hold, memo=f"Scrap from hold {rma.rma_number}", user=user)
+
+    line.final_disposition = action
+    line.resolved_by = user
+    line.resolved_at = timezone.now()
+    if notes:
+        line.notes = notes
+    line.save(update_fields=["final_disposition", "resolved_by", "resolved_at", "notes"])
+    return line

@@ -564,6 +564,34 @@ def post_stock_adjustment_value(tenant, value, *, ref_type, ref_id, location=Non
 
 
 @transaction.atomic
+def post_return_inventory(tenant, value, *, ref_type, ref_id, location=None, memo=None,
+                          user=None, entry_date=None):
+    """Bring returned goods back onto the books when an RMA is received:
+    DR Inventory / CR COGS, reversing the cost the original sale expensed (the
+    same COGS-reversal pattern as an invoice cancellation). `value` is the
+    positive inventory value restored. Without this, a return adds stock to the
+    inventory subledger with no matching GL debit and drifts the control account.
+    Idempotent on (tenant, ref_type, ref_id)."""
+    value = Decimal(value)
+    if value <= Decimal("0.00"):
+        return None
+    existing = JournalEntry.objects.filter(tenant=tenant, ref_type=ref_type, ref_id=str(ref_id)).order_by("-id").first()
+    if existing:
+        return existing
+    je = JournalEntry.objects.create(
+        tenant=tenant, site_id=getattr(location, "site_id", None),
+        entry_date=entry_date or timezone.now().date(),
+        ref_type=ref_type, ref_id=str(ref_id), memo=memo or f"Return to inventory {ref_id}",
+        posted_by=user, posted_at=timezone.now(),
+    )
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "inventory"), description="Inventory",
+                               debit=value, credit=Decimal("0.00"))
+    JournalLine.objects.create(entry=je, account=_acc(tenant, "cogs"), description="COGS reversal (return)",
+                               debit=Decimal("0.00"), credit=value)
+    return je
+
+
+@transaction.atomic
 def post_cycle_count_adjustment(tenant, cc, value, user=None, entry_date=None):
     """Book the GL impact of a cycle-count variance: DR/CR Inventory vs Inventory
     Adjustments, valued identically to the inventory movements the count posted

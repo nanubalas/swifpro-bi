@@ -276,6 +276,7 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("returns/new/", views.return_create, name="return_create"),
     path("returns/<int:rma_id>/", views.return_detail, name="return_detail"),
     path("returns/<int:rma_id>/process/", views.return_process, name="return_process"),
+    path("returns/<int:rma_id>/lines/<int:line_id>/resolve/", views.return_line_resolve, name="return_line_resolve"),
 
     # Payments + bank reconciliation
     path("payments/", views.payment_list, name="payment_list"),

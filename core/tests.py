@@ -7953,3 +7953,121 @@ class RmaDispositionTests(TestCase):
         other = Tenant.objects.create(name="Other RMA Co")
         self.assertEqual(available_serials(other), [])
         self.assertIn("SN8", self._avail())
+
+
+class RmaAccountingAndHoldTests(TestCase):
+    """RMA return GL accounting (inventory <-> GL stays reconciled) and the
+    post-receipt hold resolution workflow (release to sellable / scrap)."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="RMA Acct Co")          # signal seeds GL
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.sp = Product.objects.create(tenant=self.t, sku="SN-A", name="Serial Widget",
+                                         cost_method=Product.CostMethod.FIFO, track_serial=True,
+                                         average_cost=Decimal("5.0000"))
+        self.user = User.objects.create_user("rmaacct", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+
+    def _rma_receive(self, disposition, serial):
+        from core.models import ReturnAuthorization, ReturnLine
+        from core.services.returns import receive_return
+        rma = ReturnAuthorization.objects.create(
+            tenant=self.t, channel="SHOPIFY", rma_number=f"RMA-{disposition}-{serial}",
+            receive_location=self.loc)
+        line = ReturnLine.objects.create(rma=rma, product=self.sp, qty=Decimal("1"),
+                                         serial_number=serial, disposition=disposition)
+        receive_return(rma, user=self.user)
+        return rma, ReturnLine.objects.get(pk=line.pk)
+
+    def _variance(self):
+        from core.services.reports import inventory_gl_reconciliation
+        return inventory_gl_reconciliation(self.t)["variance"]
+
+    def _avail(self):
+        from core.services.inventory import available_serials
+        return [r["serial_number"] for r in available_serials(self.t)]
+
+    # ---- accounting ----
+    def test_restock_posts_inventory_debit_cogs_credit_and_reconciles(self):
+        self._rma_receive("RESTOCK", "SN1")
+        self.assertEqual(_account_balance(self.t, "1000"), Decimal("5.00"))   # DR Inventory
+        self.assertEqual(_account_balance(self.t, "5000"), Decimal("-5.00"))  # CR COGS (reversal)
+        self.assertEqual(self._variance(), Decimal("0.00"))                   # no drift
+
+    def test_quarantine_reconciles_without_making_available(self):
+        self._rma_receive("QUARANTINE", "SN2")
+        self.assertEqual(_account_balance(self.t, "1000"), Decimal("5.00"))   # owned inventory
+        self.assertNotIn("SN2", self._avail())                               # but not sellable
+        self.assertEqual(self._variance(), Decimal("0.00"))
+
+    def test_scrap_nets_correctly_and_reconciles(self):
+        self._rma_receive("SCRAP", "SN3")
+        self.assertEqual(_account_balance(self.t, "1000"), Decimal("0.00"))   # in then out -> 0
+        self.assertEqual(_account_balance(self.t, "5200"), Decimal("5.00"))   # write-off loss
+        self.assertEqual(_account_balance(self.t, "5000"), Decimal("-5.00"))  # COGS reversed
+        self.assertEqual(self._variance(), Decimal("0.00"))
+
+    # ---- hold resolution ----
+    def test_quarantine_release_to_sellable(self):
+        from core.services.returns import resolve_hold
+        from core.models import ReturnLine
+        rma, line = self._rma_receive("QUARANTINE", "SN4")
+        self.assertNotIn("SN4", self._avail())
+        resolve_hold(line, ReturnLine.Disposition.RESTOCK, user=self.user)
+        line.refresh_from_db()
+        self.assertEqual(line.final_disposition, ReturnLine.Disposition.RESTOCK)
+        self.assertIn("SN4", self._avail())                  # now sellable
+        self.assertEqual(self._variance(), Decimal("0.00"))  # value-neutral move
+
+    def test_quarantine_scrap_from_hold(self):
+        from core.services.returns import resolve_hold
+        from core.models import ReturnLine, InventoryMovement
+        rma, line = self._rma_receive("QUARANTINE", "SN5")
+        resolve_hold(line, ReturnLine.Disposition.SCRAP, user=self.user)
+        line.refresh_from_db()
+        self.assertEqual(line.final_disposition, ReturnLine.Disposition.SCRAP)
+        self.assertNotIn("SN5", self._avail())
+        self.assertTrue(InventoryMovement.objects.filter(tenant=self.t, ref_type="RMA_HOLD_SCRAP",
+                                                         serial_number="SN5").exists())
+        self.assertEqual(_account_balance(self.t, "5200"), Decimal("5.00"))   # loss booked
+        self.assertEqual(self._variance(), Decimal("0.00"))
+
+    def test_serial_preserved_through_release(self):
+        from core.services.returns import resolve_hold
+        from core.models import ReturnLine, InventoryMovement
+        rma, line = self._rma_receive("REPAIR", "SN6")
+        resolve_hold(line, ReturnLine.Disposition.RESTOCK, user=self.user)
+        mv = InventoryMovement.objects.filter(tenant=self.t, ref_type="RMA_RELEASE",
+                                              movement_type="TRANSFER_IN").first()
+        self.assertEqual(mv.serial_number, "SN6")
+        self.assertEqual(mv.location_id, self.loc.id)        # back at sellable location
+
+    def test_invalid_duplicate_transition_blocked(self):
+        from django.core.exceptions import ValidationError
+        from core.services.returns import resolve_hold
+        from core.models import ReturnLine, InventoryMovement
+        rma, line = self._rma_receive("QUARANTINE", "SN7")
+        resolve_hold(line, ReturnLine.Disposition.RESTOCK, user=self.user)
+        line.refresh_from_db()
+        with self.assertRaises(ValidationError):             # already resolved
+            resolve_hold(line, ReturnLine.Disposition.SCRAP, user=self.user)
+        # No extra movements from the blocked second transition.
+        self.assertFalse(InventoryMovement.objects.filter(tenant=self.t, ref_type="RMA_HOLD_SCRAP",
+                                                          serial_number="SN7").exists())
+
+    def test_cannot_resolve_non_hold_or_unreceived(self):
+        from django.core.exceptions import ValidationError
+        from core.services.returns import resolve_hold
+        from core.models import ReturnAuthorization, ReturnLine
+        # A RESTOCK line is not a hold -> cannot be "resolved".
+        rma, line = self._rma_receive("RESTOCK", "SN8")
+        with self.assertRaises(ValidationError):
+            resolve_hold(line, ReturnLine.Disposition.SCRAP, user=self.user)
+
+    def test_tenant_isolation(self):
+        from core.services.inventory import available_serials
+        self._rma_receive("RESTOCK", "SN9")
+        other = Tenant.objects.create(name="Other Acct Co")
+        self.assertEqual(available_serials(other), [])
+        self.assertEqual(self._variance(), Decimal("0.00"))
