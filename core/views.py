@@ -668,6 +668,26 @@ def _render_dashboard(request, role_code):
     # Cards come straight from the role's accessible navigation (single source
     # of truth for per-role access); skip the self-referential Dashboard entry.
     sections = [(t, items) for (t, items) in roles_mod.sidebar_for_role(role_code) if t != "Dashboard"]
+    # Group cards by module for the dashboard, showing a short preview per group
+    # with the rest revealed on demand. Same registry + section metadata the
+    # hamburger menu uses, so there is no second navigation list to maintain.
+    preview_count = 4
+    dashboard_groups = []
+    for title, items in sections:
+        meta = roles_mod.section_meta(title)
+        cards = []
+        for label, url, icon in items:
+            base_label, badge = roles_mod.label_badge(label)
+            cards.append({"label": base_label, "full_label": label, "url": url,
+                          "icon": icon, "badge": badge})
+        dashboard_groups.append({
+            "title": title,
+            "desc": meta.get("desc", ""),
+            "icon": meta.get("icon", "grid-3x3-gap"),
+            "preview": cards[:preview_count],
+            "more": cards[preview_count:],
+            "count": len(cards),
+        })
     site = get_active_site(request)
     now = timezone.localtime()
     hour = now.hour
@@ -683,6 +703,8 @@ def _render_dashboard(request, role_code):
         "role_label": roles_mod.ROLE_LABELS.get(role_code, role_code),
         "title": roles_mod.DASHBOARD_TITLE.get(role_code, "Dashboard"),
         "sections": sections,
+        "dashboard_groups": dashboard_groups,
+        "dashboard_preview_count": preview_count,
         "kpis": _dashboard_kpis(tenant, role_code, site_id=getattr(site, "id", None),
                                 location_ids=active_location_ids(request)),
         "active_site": site,

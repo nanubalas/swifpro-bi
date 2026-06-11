@@ -178,6 +178,47 @@ NAV = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Per-section metadata: a short description + a section icon. Keyed by the same
+# section titles used in NAV, so the dashboard and the menu can show a consistent
+# heading/blurb per module without a second hardcoded list. Sections not listed
+# here fall back to a neutral default.
+# ---------------------------------------------------------------------------
+NAV_SECTION_META = {
+    "Dashboard":      {"desc": "Your overview and headline figures.", "icon": "grid-1x2"},
+    "Sales":          {"desc": "Quotes, orders, customers, invoicing and returns.", "icon": "cart-check"},
+    "Procurement":    {"desc": "Requisitions, purchase orders, suppliers and receiving.", "icon": "bag"},
+    "Inventory":      {"desc": "Stock, products, transfers, counts and replenishment.", "icon": "boxes"},
+    "Finance":        {"desc": "Payments, banking, VAT and the general ledger.", "icon": "cash-stack"},
+    "Reports":        {"desc": "Financial and operational reporting.", "icon": "bar-chart-line"},
+    "Administration": {"desc": "Company setup, users, roles and audit.", "icon": "gear"},
+}
+
+# Trailing parenthetical tags we render as a small badge on cards/menu while
+# keeping the canonical label intact in the registry (so search/labels are
+# unchanged). Order doesn't matter; only one trailing tag is expected.
+_LABEL_BADGES = ("Experimental", "Advisory")
+
+
+def section_meta(title):
+    """Description + icon for a NAV section title (neutral default if unknown)."""
+    return NAV_SECTION_META.get(title, {"desc": "", "icon": "grid-3x3-gap"})
+
+
+def label_badge(label):
+    """Split a trailing "(Experimental)"/"(Advisory)" tag off a nav label.
+
+    Returns (base_label, badge) where badge is "" when there is no tag. The
+    canonical label in NAV is preserved; this only helps the UI show the tag as
+    a distinct badge, e.g. "Channel Orders (Experimental)" -> ("Channel Orders",
+    "Experimental")."""
+    for tag in _LABEL_BADGES:
+        suffix = f" ({tag})"
+        if label.endswith(suffix):
+            return label[: -len(suffix)], tag
+    return label, ""
+
+
 def sidebar_for_role(role):
     """Return [(section_title, [(label, url, icon), ...])] visible to `role`."""
     out = []
