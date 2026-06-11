@@ -205,6 +205,25 @@ def section_meta(title):
     return NAV_SECTION_META.get(title, {"desc": "", "icon": "grid-3x3-gap"})
 
 
+def section_slug(title):
+    """URL slug for a NAV section title, e.g. "Administration" -> "administration"."""
+    return title.lower().replace("&", "and").replace("/", "-").replace(" ", "-").strip("-")
+
+
+def nav_section_by_slug(role, slug):
+    """Return (section_title, [(label, url, icon), ...]) for the section whose
+    slug matches `slug` and is visible to `role`, or None. Permission-aware and
+    derived from `sidebar_for_role`, so module pages never expose a section the
+    role can't see. The self-referential Dashboard section is excluded."""
+    want = (slug or "").lower()
+    for title, items in sidebar_for_role(role):
+        if title == "Dashboard":
+            continue
+        if section_slug(title) == want:
+            return title, items
+    return None
+
+
 def label_badge(label):
     """Split a trailing "(Experimental)"/"(Advisory)" tag off a nav label.
 

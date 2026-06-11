@@ -2,55 +2,25 @@
 {% block title %}{{ title }} - SwifPro BI{% endblock %}
 
 {% block body %}
+{% include "dashboards/_launcher_styles.html" %}
 <style>
-  .launch-card {
-    display: flex; flex-direction: column; gap: .25rem;
-    border-radius: var(--skn-radius); border: 1px solid var(--skn-border);
-    background: var(--skn-surface); padding: 1.1rem; height: 100%;
-    text-decoration: none; color: var(--skn-text);
-    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
-  }
-  .launch-card:hover {
-    transform: translateY(-3px); box-shadow: var(--skn-shadow-lg);
-    border-color: color-mix(in srgb, var(--skn-brand) 35%, var(--skn-border));
-    color: var(--skn-text);
-  }
-  .launch-icon {
-    width: 46px; height: 46px; border-radius: 13px; margin-bottom: .35rem;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 1.35rem; background: var(--skn-brand-soft); color: var(--skn-brand);
-  }
-  .launch-card:hover .launch-icon { background: var(--skn-brand); color: #fff; }
-  /* Gold accent reserved for Finance & Reports/BI cards */
-  .launch-icon.gold { background: var(--skn-gold-soft); color: var(--skn-gold); }
-  .launch-card:hover .launch-icon.gold { background: var(--skn-gold); color: #fff; }
-  .launch-section-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 700; color: var(--skn-muted); }
-
-  /* ---- Module group header + expand control ---- */
+  /* ---- Module group header + "View all" link ---- */
   .dash-mod-hdr { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: .65rem; }
   .dash-mod-hdr .dash-mod-ico { color: var(--skn-brand); margin-right: .4rem; }
   .dash-mod-desc { font-size: .82rem; color: var(--skn-muted); margin-top: .1rem; }
-  .dash-more-btn {
+  .dash-viewall {
     flex: none; display: inline-flex; align-items: center; gap: .4rem;
     border: 1px solid var(--skn-border); background: var(--skn-surface);
-    color: var(--skn-text); border-radius: 999px; padding: .32rem .8rem;
-    font-size: .82rem; font-weight: 600; cursor: pointer; transition: all .15s ease;
+    color: var(--skn-text); border-radius: 999px; padding: .32rem .85rem;
+    font-size: .82rem; font-weight: 600; text-decoration: none; transition: all .15s ease; white-space: nowrap;
   }
-  .dash-more-btn:hover { background: var(--skn-brand-soft); color: var(--skn-brand); border-color: transparent; }
-  .dash-more-btn .bi { font-size: .8rem; transition: transform .18s ease; }
-  .dash-more-btn[aria-expanded="true"] .bi { transform: rotate(180deg); }
-  .dash-more-btn .dmb-count {
+  .dash-viewall:hover { background: var(--skn-brand-soft); color: var(--skn-brand); border-color: transparent; }
+  .dash-viewall:hover .bi { transform: translateX(2px); }
+  .dash-viewall .bi { font-size: .8rem; transition: transform .18s ease; }
+  .dash-viewall .dva-count {
     font-size: .72rem; font-weight: 700; line-height: 1; padding: .12rem .42rem;
     border-radius: 999px; background: var(--skn-brand-soft); color: var(--skn-brand);
   }
-  /* Experimental / Advisory (and similar) badge on a launcher card */
-  .launch-badge {
-    align-self: flex-start; margin-top: .15rem; font-size: .64rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .04em; padding: .12rem .45rem;
-    border-radius: 999px; background: var(--skn-surface-2); color: var(--skn-muted);
-    border: 1px solid var(--skn-border);
-  }
-  .launch-card-cell.is-more[hidden] { display: none !important; }
 
   /* ---- Welcome hero ---- */
   /* Light mode: luminous teal gradient with clearly visible diagonal stripes. */
@@ -178,37 +148,20 @@
       <div class="launch-section-title"><i class="bi bi-{{ g.icon }} dash-mod-ico"></i>{{ g.title }}</div>
       {% if g.desc %}<div class="dash-mod-desc">{{ g.desc }}</div>{% endif %}
     </div>
-    {% if g.more %}
-    <button type="button" class="dash-more-btn js-dash-more" aria-expanded="false"
-            aria-controls="dashmore-{{ forloop.counter }}"
-            aria-label="Show all {{ g.count }} {{ g.title }} items">
-      <span class="dmb-label">More</span>
-      <span class="dmb-count">+{{ g.more|length }}</span>
-      <i class="bi bi-chevron-down"></i>
-    </button>
+    {% if g.extra %}
+    {# A real link to the dedicated module page - no inline expansion. #}
+    <a href="{{ g.view_all_url }}" class="dash-viewall"
+       aria-label="View all {{ g.count }} {{ g.title }} items">
+      <span>View all {{ g.title }}</span>
+      <span class="dva-count">+{{ g.extra }}</span>
+      <i class="bi bi-arrow-right"></i>
+    </a>
     {% endif %}
   </div>
-  <div class="row g-3" id="dashmore-{{ forloop.counter }}">
+  <div class="row g-3">
     {% for c in g.preview %}
     <div class="col-6 col-md-4 col-xl-3">
-      <a href="{{ c.url }}" class="launch-card">
-        <span class="launch-icon{% if g.title == 'Finance' or g.title == 'Reports' %} gold{% endif %}"><i class="bi bi-{{ c.icon }}"></i></span>
-        <div class="d-flex align-items-start justify-content-between gap-1">
-          <span class="fw-semibold">{{ c.label }}</span>
-          {% if c.badge %}<span class="launch-badge">{{ c.badge }}</span>{% endif %}
-        </div>
-      </a>
-    </div>
-    {% endfor %}
-    {% for c in g.more %}
-    <div class="col-6 col-md-4 col-xl-3 launch-card-cell is-more" hidden>
-      <a href="{{ c.url }}" class="launch-card">
-        <span class="launch-icon{% if g.title == 'Finance' or g.title == 'Reports' %} gold{% endif %}"><i class="bi bi-{{ c.icon }}"></i></span>
-        <div class="d-flex align-items-start justify-content-between gap-1">
-          <span class="fw-semibold">{{ c.label }}</span>
-          {% if c.badge %}<span class="launch-badge">{{ c.badge }}</span>{% endif %}
-        </div>
-      </a>
+      {% include "dashboards/_launcher_card.html" with c=c gold=g.is_gold %}
     </div>
     {% endfor %}
   </div>
@@ -216,30 +169,6 @@
 {% empty %}
 <div class="text-muted">No modules are available for your role yet. Contact your administrator.</div>
 {% endfor %}
-
-<script>
-  // ---- Dashboard module "More / Show less" (progressive disclosure) ----
-  (function () {
-    const sections = document.querySelectorAll(".dash-mod");
-    sections.forEach(function (sec) {
-      const btn = sec.querySelector(".js-dash-more");
-      if (!btn) return;
-      const extras = sec.querySelectorAll(".is-more");
-      const label = btn.querySelector(".dmb-label");
-      const count = btn.querySelector(".dmb-count");
-      btn.addEventListener("click", function () {
-        const expanded = btn.getAttribute("aria-expanded") === "true";
-        const next = !expanded;
-        // Toggling [hidden] also removes the cards (and their links) from the
-        // tab order when collapsed, so keyboard users don't reach hidden links.
-        extras.forEach(function (el) { el.hidden = expanded; });
-        btn.setAttribute("aria-expanded", String(next));
-        if (label) label.textContent = next ? "Show less" : "More";
-        if (count) count.hidden = next;
-      });
-    });
-  })();
-</script>
 {% endblock %}
 
 {# Workspace switcher: pick a company (left), then a site within it (right), then Switch. Dashboard-only. #}

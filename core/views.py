@@ -6,6 +6,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.http import Http404, HttpResponse
+from django.urls import reverse
 from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
 
@@ -659,6 +660,18 @@ def _dashboard_kpis(tenant, role_code, site_id=None, location_ids=None):
     return cards
 
 
+def _module_cards(items):
+    """Turn NAV items [(label, url, icon), ...] into card dicts, splitting any
+    trailing "(Experimental)"/"(Advisory)" tag into a badge (canonical label in
+    the registry is unchanged)."""
+    cards = []
+    for label, url, icon in items:
+        base_label, badge = roles_mod.label_badge(label)
+        cards.append({"label": base_label, "full_label": label, "url": url,
+                      "icon": icon, "badge": badge})
+    return cards
+
+
 def _render_dashboard(request, role_code):
     """Role-based home: headline KPIs for the role plus a navigation launcher of
     the modules/reports the role can access."""
@@ -668,25 +681,26 @@ def _render_dashboard(request, role_code):
     # Cards come straight from the role's accessible navigation (single source
     # of truth for per-role access); skip the self-referential Dashboard entry.
     sections = [(t, items) for (t, items) in roles_mod.sidebar_for_role(role_code) if t != "Dashboard"]
-    # Group cards by module for the dashboard, showing a short preview per group
-    # with the rest revealed on demand. Same registry + section metadata the
-    # hamburger menu uses, so there is no second navigation list to maintain.
+    # The dashboard is a short launcher: each module shows only a few preview
+    # cards, and "View all <module>" links to the dedicated module page (which
+    # lists the rest). Same registry + section metadata the hamburger menu uses,
+    # so there is no second navigation list to maintain.
     preview_count = 4
     dashboard_groups = []
     for title, items in sections:
         meta = roles_mod.section_meta(title)
-        cards = []
-        for label, url, icon in items:
-            base_label, badge = roles_mod.label_badge(label)
-            cards.append({"label": base_label, "full_label": label, "url": url,
-                          "icon": icon, "badge": badge})
+        cards = _module_cards(items)
+        slug = roles_mod.section_slug(title)
         dashboard_groups.append({
             "title": title,
             "desc": meta.get("desc", ""),
             "icon": meta.get("icon", "grid-3x3-gap"),
             "preview": cards[:preview_count],
-            "more": cards[preview_count:],
             "count": len(cards),
+            "extra": max(0, len(cards) - preview_count),
+            "slug": slug,
+            "view_all_url": reverse("dashboard_module", args=[slug]),
+            "is_gold": title in ("Finance", "Reports"),
         })
     site = get_active_site(request)
     now = timezone.localtime()
@@ -723,6 +737,32 @@ def _make_dashboard(role_code):
             raise PermissionDenied("This dashboard is not available for your role.")
         return _render_dashboard(request, role_code)
     return _view
+
+
+@login_required
+def dashboard_module(request, slug):
+    """Dedicated module page: every card in one module section the active role
+    can access. Reached from the dashboard's "View all <module>" links. Uses the
+    same NAV registry as the dashboard and hamburger menu, so access is filtered
+    identically; an unknown or not-permitted section returns 404."""
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "landing.html", {"tenant": None, "needs_setup": True})
+    role_code = get_active_role(request)
+    match = roles_mod.nav_section_by_slug(role_code, slug)
+    if not match:
+        raise Http404("Unknown module")
+    title, items = match
+    meta = roles_mod.section_meta(title)
+    return render(request, "dashboards/module.html", {
+        "tenant": tenant,
+        "role_code": role_code,
+        "module_title": title,
+        "module_desc": meta.get("desc", ""),
+        "module_icon": meta.get("icon", "grid-3x3-gap"),
+        "cards": _module_cards(items),
+        "is_gold": title in ("Finance", "Reports"),
+    })
 
 
 dashboard_admin = _make_dashboard(roles_mod.ADMIN)

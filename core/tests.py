@@ -7051,9 +7051,10 @@ class UkRetailDemoScenarioTests(TestCase):
 
 
 class DashboardGroupingTests(TestCase):
-    """Module-grouped dashboard with a per-section preview and a More / Show less
-    control. Grouping + permissions come from the same NAV registry as the menu,
-    so there is no second navigation list to keep in sync. UI/navigation only."""
+    """Module-grouped dashboard is a short launcher: each section shows a few
+    preview cards plus a "View all <module>" link to a dedicated module page.
+    Grouping + permissions come from the same NAV registry as the menu, so there
+    is no second navigation list to keep in sync. UI/navigation only."""
 
     def setUp(self):
         from core.models import OrgMembership
@@ -7068,7 +7069,7 @@ class DashboardGroupingTests(TestCase):
 
     # ---- registry-level helpers (single source of truth) ----
     def test_section_meta_and_badge_helpers(self):
-        from core.roles import section_meta, label_badge
+        from core.roles import section_meta, label_badge, section_slug
         self.assertTrue(section_meta("Inventory")["desc"])
         self.assertEqual(section_meta("Inventory")["icon"], "boxes")
         # Unknown section -> neutral default, never an error.
@@ -7076,6 +7077,19 @@ class DashboardGroupingTests(TestCase):
         self.assertEqual(label_badge("Channel Orders (Experimental)"), ("Channel Orders", "Experimental"))
         self.assertEqual(label_badge("Bins (Advisory)"), ("Bins", "Advisory"))
         self.assertEqual(label_badge("Suppliers"), ("Suppliers", ""))
+        self.assertEqual(section_slug("Administration"), "administration")
+        self.assertEqual(section_slug("Inventory"), "inventory")
+
+    def test_nav_section_by_slug_is_permission_aware(self):
+        from core.roles import nav_section_by_slug, ADMIN, SALES
+        title, items = nav_section_by_slug(ADMIN, "inventory")
+        self.assertEqual(title, "Inventory")
+        self.assertTrue(items)
+        # Sales cannot reach the Administration module -> None (becomes a 404).
+        self.assertIsNone(nav_section_by_slug(SALES, "administration"))
+        # Unknown slug and the self-referential Dashboard section -> None.
+        self.assertIsNone(nav_section_by_slug(ADMIN, "nonsense"))
+        self.assertIsNone(nav_section_by_slug(ADMIN, "dashboard"))
 
     # ---- grouped rendering ----
     def test_dashboard_renders_grouped_modules(self):
@@ -7088,40 +7102,95 @@ class DashboardGroupingTests(TestCase):
         # A section description from the centralised metadata is shown.
         self.assertContains(resp, "transfers, counts and replenishment")
 
-    def test_preview_limited_with_more_control(self):
+    def test_dashboard_shows_preview_only_with_view_all_link(self):
         self.client.login(username="dash_admin", password="pw")
         resp = self.client.get("/dashboard/admin")
         self.assertEqual(resp.context["dashboard_preview_count"], 4)
-        groups = resp.context["dashboard_groups"]
-        inv = self._group(groups, "Inventory")
+        inv = self._group(resp.context["dashboard_groups"], "Inventory")
         self.assertIsNotNone(inv)
-        # Only the first 4 cards are previewed; the long tail is deferred.
+        # Only the first 4 cards are previewed; the rest live on the module page.
         self.assertEqual(len(inv["preview"]), 4)
-        self.assertGreater(len(inv["more"]), 0)
-        self.assertEqual(len(inv["preview"]) + len(inv["more"]), inv["count"])
-        # The expand control is accessible: a real button, collapsed by default.
-        self.assertContains(resp, "js-dash-more")
-        self.assertContains(resp, 'aria-expanded="false"')
+        self.assertGreater(inv["extra"], 0)
+        self.assertEqual(inv["extra"], inv["count"] - 4)
+        self.assertEqual(inv["view_all_url"], "/dashboard/modules/inventory/")
+        # A real link (not an inline expander) with the module-named copy + count.
+        self.assertContains(resp, 'href="/dashboard/modules/inventory/"')
+        self.assertContains(resp, "View all Inventory")
+        self.assertContains(resp, "+%d" % inv["extra"])
 
-    def test_hidden_cards_present_for_progressive_reveal(self):
-        # Cards beyond the preview are rendered (so they're reachable once
-        # expanded) but marked is-more + hidden so they're collapsed initially.
+    def test_dashboard_no_inline_expansion_of_hidden_cards(self):
+        # The old inline progressive-disclosure markup/JS is gone: no hidden tail
+        # cards and no expander button live on the dashboard launcher anymore.
+        # (The hamburger menu still lists every page, so we assert against the
+        # dashboard preview data, not the whole page which includes the menu.)
         self.client.login(username="dash_admin", password="pw")
         resp = self.client.get("/dashboard/admin")
-        self.assertContains(resp, "is-more")
-        # Bins is deep in the Inventory list -> deferred, yet present in the HTML.
+        self.assertNotContains(resp, "is-more")
+        self.assertNotContains(resp, "js-dash-more")
+        self.assertNotContains(resp, 'class="dash-more-btn"')
+        # Bins is deep in Inventory -> not in any preview; it lives on the module page.
+        preview_urls = [c["url"] for g in resp.context["dashboard_groups"] for c in g["preview"]]
+        self.assertNotIn("/bins/", preview_urls)
+
+    def test_small_group_has_no_view_all_link(self):
+        # A group with <= preview_count cards shows no "View all" link. The Sales
+        # role has at least one short module (e.g. Finance = Expenses only).
+        self.client.login(username="dash_sales", password="pw")
+        resp = self.client.get("/dashboard/sales")
+        small = [g for g in resp.context["dashboard_groups"]
+                 if g["count"] <= resp.context["dashboard_preview_count"]]
+        self.assertTrue(small, "expected at least one small group to exercise this")
+        for g in small:
+            self.assertEqual(g["extra"], 0)
+            self.assertNotContains(resp, 'aria-label="View all %d %s items"' % (g["count"], g["title"]))
+
+    # ---- dedicated module pages ----
+    def test_module_page_renders_all_cards(self):
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/modules/inventory/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["module_title"], "Inventory")
+        # Every Inventory card the role can see appears here (incl. the deep ones).
+        urls = [c["url"] for c in resp.context["cards"]]
+        self.assertIn("/inventory/", urls)
+        self.assertIn("/bins/", urls)
+        self.assertIn("/transfers/", urls)
         self.assertContains(resp, "/bins/")
+        # Clear heading + a back link to the dashboard.
+        self.assertContains(resp, "<h1>Inventory</h1>", html=False)
+        self.assertContains(resp, "Back to dashboard")
+        self.assertContains(resp, 'href="/dashboard/"')
 
-    def test_small_group_has_no_more_button(self):
-        # A group with <= preview_count cards shows no expand control.
+    def test_module_page_count_matches_dashboard_group(self):
         self.client.login(username="dash_admin", password="pw")
-        resp = self.client.get("/dashboard/admin")
-        groups = resp.context["dashboard_groups"]
-        for g in groups:
-            if g["count"] <= resp.context["dashboard_preview_count"]:
-                self.assertEqual(g["more"], [])
+        dash = self.client.get("/dashboard/admin")
+        inv = self._group(dash.context["dashboard_groups"], "Inventory")
+        page = self.client.get("/dashboard/modules/inventory/")
+        self.assertEqual(len(page.context["cards"]), inv["count"])
 
-    # ---- permissions still filter cards ----
+    def test_module_page_invalid_section_404(self):
+        self.client.login(username="dash_admin", password="pw")
+        self.assertEqual(self.client.get("/dashboard/modules/nonsense/").status_code, 404)
+        # "Dashboard" is not a real module section either.
+        self.assertEqual(self.client.get("/dashboard/modules/dashboard/").status_code, 404)
+
+    def test_module_page_permission_filtered(self):
+        # Sales may open its own modules but not Administration (404, not leaked).
+        self.client.login(username="dash_sales", password="pw")
+        self.assertEqual(self.client.get("/dashboard/modules/sales/").status_code, 200)
+        self.assertEqual(self.client.get("/dashboard/modules/administration/").status_code, 404)
+        # Sales' Sales module never exposes admin-only or GL pages.
+        resp = self.client.get("/dashboard/modules/sales/")
+        urls = [c["url"] for c in resp.context["cards"]]
+        self.assertNotIn("/users/", urls)
+        self.assertIn("/customers/", urls)
+
+    def test_module_page_requires_login(self):
+        resp = self.client.get("/dashboard/modules/inventory/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp.url)
+
+    # ---- permissions still filter cards on the dashboard ----
     def test_permission_filtering_preserved(self):
         self.client.login(username="dash_sales", password="pw")
         resp = self.client.get("/dashboard/sales")
@@ -7130,29 +7199,38 @@ class DashboardGroupingTests(TestCase):
         self.assertIn("Sales", titles)
         # Sales role cannot administer users / see the GL journal launcher.
         self.assertNotIn("Administration", titles)
-        urls = [c["url"] for g in resp.context["dashboard_groups"] for c in g["preview"] + g["more"]]
+        urls = [c["url"] for g in resp.context["dashboard_groups"] for c in g["preview"]]
         self.assertNotIn("/users/", urls)
         self.assertNotIn("/gl/journal/", urls)
-        self.assertIn("/customers/", urls)
 
     # ---- experimental / advisory badges preserved ----
-    def test_channel_orders_experimental_badge(self):
+    def test_channel_orders_experimental_badge_on_module_page(self):
+        # Channel Orders sits past the Sales preview, so the badge must show on
+        # the module page (the dashboard preview may not include it).
         self.client.login(username="dash_sales", password="pw")
-        resp = self.client.get("/dashboard/sales")
+        resp = self.client.get("/dashboard/modules/sales/")
         self.assertContains(resp, "Channel Orders")
         self.assertContains(resp, "Experimental")
         self.assertContains(resp, "launch-badge")
-        # The split keeps the base label clean and shows the tag as a badge.
-        sales = self._group(resp.context["dashboard_groups"], "Sales")
-        chan = next(c for g in [sales] for c in g["preview"] + g["more"] if c["url"] == "/sales-orders/")
+        chan = next(c for c in resp.context["cards"] if c["url"] == "/sales-orders/")
         self.assertEqual(chan["label"], "Channel Orders")
         self.assertEqual(chan["badge"], "Experimental")
 
-    def test_bins_advisory_badge(self):
+    def test_bins_advisory_badge_on_module_page(self):
         self.client.login(username="dash_admin", password="pw")
-        resp = self.client.get("/dashboard/admin")
+        resp = self.client.get("/dashboard/modules/inventory/")
         self.assertContains(resp, "Bins")
         self.assertContains(resp, "Advisory")
+        bins = next(c for c in resp.context["cards"] if c["url"] == "/bins/")
+        self.assertEqual(bins["badge"], "Advisory")
+
+    # ---- hamburger menu still grouped/collapsible (unchanged) ----
+    def test_hamburger_grouping_intact(self):
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/", follow=True)
+        self.assertContains(resp, "skn-navgroup")
+        self.assertContains(resp, 'id="menuFilter"')
+        self.assertContains(resp, "Inventory")
 
     # ---- no migrations / no model changes ----
     def test_no_migrations_created(self):
