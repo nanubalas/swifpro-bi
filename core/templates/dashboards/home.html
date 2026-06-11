@@ -7,6 +7,7 @@
   /* ---- Module group header + "View all" link ---- */
   .dash-mod-hdr { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: .65rem; }
   .dash-mod-hdr .dash-mod-ico { color: var(--skn-brand); margin-right: .4rem; }
+  .dash-mod-hdr .dash-mod-ico.gold { color: var(--skn-gold); }
   .dash-viewall {
     flex: none; display: inline-flex; align-items: center; gap: .4rem;
     border: 1px solid var(--skn-border); background: var(--skn-surface);
@@ -140,7 +141,7 @@
 <section class="mb-4 dash-mod" data-group="{{ g.title }}">
   <div class="dash-mod-hdr">
     <div>
-      <div class="launch-section-title"><i class="bi bi-{{ g.icon }} dash-mod-ico"></i>{{ g.title }}</div>
+      <div class="launch-section-title"><i class="bi bi-{{ g.icon }} dash-mod-ico{% if g.is_gold %} gold{% endif %}"></i>{{ g.title }}</div>
     </div>
     {% if g.extra %}
     {# Real link to the module page. Visible text is just "View all"; the aria-label keeps the module name so screen-reader users can tell the links apart. #}

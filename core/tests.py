@@ -7175,6 +7175,16 @@ class DashboardGroupingTests(TestCase):
         self.assertContains(resp, "page-head-icon gold")
         self.assertNotContains(resp, "mod-hero-ico")
 
+    def test_dashboard_finance_reports_header_icon_gold(self):
+        # Finance/Reports section headers on the dashboard carry the gold accent
+        # too (consistent with their gold cards and module-page heading).
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/admin")
+        for g in resp.context["dashboard_groups"]:
+            self.assertEqual(g["is_gold"], g["title"] in ("Finance", "Reports"))
+        # Two gold section-header icons (Finance + Reports), rendered as a class.
+        self.assertContains(resp, "dash-mod-ico gold", count=2)
+
     def test_module_page_count_matches_dashboard_group(self):
         self.client.login(username="dash_admin", password="pw")
         dash = self.client.get("/dashboard/admin")
