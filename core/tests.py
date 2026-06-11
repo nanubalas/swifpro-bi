@@ -7159,10 +7159,21 @@ class DashboardGroupingTests(TestCase):
         self.assertIn("/bins/", urls)
         self.assertIn("/transfers/", urls)
         self.assertContains(resp, "/bins/")
-        # Clear heading + a back link to the dashboard.
-        self.assertContains(resp, "<h1>Inventory</h1>", html=False)
+        # Clear heading with an inline plain icon (same look as interior pages,
+        # not the card-style soft box), and a back link to the dashboard.
+        self.assertContains(resp, "Inventory")
+        self.assertContains(resp, "page-head-icon")
+        self.assertContains(resp, "bi-boxes")          # the Inventory module icon
+        self.assertNotContains(resp, "mod-hero-ico")   # no card-style boxed icon
         self.assertContains(resp, "Back to dashboard")
         self.assertContains(resp, 'href="/dashboard/"')
+
+    def test_module_page_heading_icon_style(self):
+        # Finance/Reports keep the gold accent, still as a plain inline icon.
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/modules/reports/")
+        self.assertContains(resp, "page-head-icon gold")
+        self.assertNotContains(resp, "mod-hero-ico")
 
     def test_module_page_count_matches_dashboard_group(self):
         self.client.login(username="dash_admin", password="pw")

@@ -8,14 +8,11 @@
 {% block body %}
 {% include "dashboards/_launcher_styles.html" %}
 <style>
-  .mod-hero { display: flex; align-items: flex-start; gap: .9rem; margin-bottom: 1.4rem; }
-  .mod-hero-ico {
-    width: 52px; height: 52px; border-radius: 14px; flex: none;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 1.5rem; background: var(--skn-brand-soft); color: var(--skn-brand);
-  }
-  .mod-hero-ico.gold { background: var(--skn-gold-soft); color: var(--skn-gold); }
-  .mod-hero h1 { font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; margin: 0; }
+  /* Same plain heading-icon look as interior pages: a coloured icon inline with
+     the title (no card-style soft box / shadow), vertically centred. */
+  .mod-hero { margin-bottom: 1.4rem; }
+  .mod-hero h1 { display: flex; align-items: center; font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; margin: 0; }
+  .mod-hero h1 .page-head-icon.gold { color: var(--skn-gold); }
 </style>
 
 <nav aria-label="breadcrumb" class="mb-2">
@@ -25,10 +22,7 @@
 </nav>
 
 <div class="mod-hero">
-  <span class="mod-hero-ico{% if is_gold %} gold{% endif %}"><i class="bi bi-{{ module_icon }}"></i></span>
-  <div>
-    <h1>{{ module_title }}</h1>
-  </div>
+  <h1><i class="bi bi-{{ module_icon }} page-head-icon{% if is_gold %} gold{% endif %}" aria-hidden="true"></i>{{ module_title }}</h1>
 </div>
 
 <div class="row g-3">
