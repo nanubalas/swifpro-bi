@@ -7050,6 +7050,118 @@ class UkRetailDemoScenarioTests(TestCase):
             self.assertEqual(bal.location.site_id, self.manchester.id)
 
 
+class DashboardGroupingTests(TestCase):
+    """Module-grouped dashboard with a per-section preview and a More / Show less
+    control. Grouping + permissions come from the same NAV registry as the menu,
+    so there is no second navigation list to keep in sync. UI/navigation only."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="Dash Co")
+        self.admin = User.objects.create_user("dash_admin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.t, role="ADMIN", is_default=True)
+        self.sales = User.objects.create_user("dash_sales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.t, role="SALES", is_default=True)
+
+    def _group(self, groups, title):
+        return next((g for g in groups if g["title"] == title), None)
+
+    # ---- registry-level helpers (single source of truth) ----
+    def test_section_meta_and_badge_helpers(self):
+        from core.roles import section_meta, label_badge
+        self.assertTrue(section_meta("Inventory")["desc"])
+        self.assertEqual(section_meta("Inventory")["icon"], "boxes")
+        # Unknown section -> neutral default, never an error.
+        self.assertEqual(section_meta("Nope"), {"desc": "", "icon": "grid-3x3-gap"})
+        self.assertEqual(label_badge("Channel Orders (Experimental)"), ("Channel Orders", "Experimental"))
+        self.assertEqual(label_badge("Bins (Advisory)"), ("Bins", "Advisory"))
+        self.assertEqual(label_badge("Suppliers"), ("Suppliers", ""))
+
+    # ---- grouped rendering ----
+    def test_dashboard_renders_grouped_modules(self):
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/admin")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "dash-mod")
+        for title in ["Sales", "Procurement", "Inventory", "Finance", "Reports", "Administration"]:
+            self.assertContains(resp, title)
+        # A section description from the centralised metadata is shown.
+        self.assertContains(resp, "transfers, counts and replenishment")
+
+    def test_preview_limited_with_more_control(self):
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/admin")
+        self.assertEqual(resp.context["dashboard_preview_count"], 4)
+        groups = resp.context["dashboard_groups"]
+        inv = self._group(groups, "Inventory")
+        self.assertIsNotNone(inv)
+        # Only the first 4 cards are previewed; the long tail is deferred.
+        self.assertEqual(len(inv["preview"]), 4)
+        self.assertGreater(len(inv["more"]), 0)
+        self.assertEqual(len(inv["preview"]) + len(inv["more"]), inv["count"])
+        # The expand control is accessible: a real button, collapsed by default.
+        self.assertContains(resp, "js-dash-more")
+        self.assertContains(resp, 'aria-expanded="false"')
+
+    def test_hidden_cards_present_for_progressive_reveal(self):
+        # Cards beyond the preview are rendered (so they're reachable once
+        # expanded) but marked is-more + hidden so they're collapsed initially.
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/admin")
+        self.assertContains(resp, "is-more")
+        # Bins is deep in the Inventory list -> deferred, yet present in the HTML.
+        self.assertContains(resp, "/bins/")
+
+    def test_small_group_has_no_more_button(self):
+        # A group with <= preview_count cards shows no expand control.
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/admin")
+        groups = resp.context["dashboard_groups"]
+        for g in groups:
+            if g["count"] <= resp.context["dashboard_preview_count"]:
+                self.assertEqual(g["more"], [])
+
+    # ---- permissions still filter cards ----
+    def test_permission_filtering_preserved(self):
+        self.client.login(username="dash_sales", password="pw")
+        resp = self.client.get("/dashboard/sales")
+        self.assertEqual(resp.status_code, 200)
+        titles = [g["title"] for g in resp.context["dashboard_groups"]]
+        self.assertIn("Sales", titles)
+        # Sales role cannot administer users / see the GL journal launcher.
+        self.assertNotIn("Administration", titles)
+        urls = [c["url"] for g in resp.context["dashboard_groups"] for c in g["preview"] + g["more"]]
+        self.assertNotIn("/users/", urls)
+        self.assertNotIn("/gl/journal/", urls)
+        self.assertIn("/customers/", urls)
+
+    # ---- experimental / advisory badges preserved ----
+    def test_channel_orders_experimental_badge(self):
+        self.client.login(username="dash_sales", password="pw")
+        resp = self.client.get("/dashboard/sales")
+        self.assertContains(resp, "Channel Orders")
+        self.assertContains(resp, "Experimental")
+        self.assertContains(resp, "launch-badge")
+        # The split keeps the base label clean and shows the tag as a badge.
+        sales = self._group(resp.context["dashboard_groups"], "Sales")
+        chan = next(c for g in [sales] for c in g["preview"] + g["more"] if c["url"] == "/sales-orders/")
+        self.assertEqual(chan["label"], "Channel Orders")
+        self.assertEqual(chan["badge"], "Experimental")
+
+    def test_bins_advisory_badge(self):
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/admin")
+        self.assertContains(resp, "Bins")
+        self.assertContains(resp, "Advisory")
+
+    # ---- no migrations / no model changes ----
+    def test_no_migrations_created(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command("makemigrations", "--check", "--dry-run", stdout=out, stderr=out)
+
+
 class GlobalSearchAndNavTests(TestCase):
     """Permission-aware global search + grouped/collapsible hamburger menu, all
     driven from the navigation registry in core.roles."""
