@@ -31,9 +31,9 @@
           {% for r in reqs %}
           <tr>
             <td><a href="{% url 'requisition_detail' r.id %}">{{ r.req_number }}</a></td>
-            <td>{{ r.department|default:"—" }}</td>
-            <td>{% if r.preferred_supplier %}{{ r.preferred_supplier.name }}{% else %}—{% endif %}</td>
-            <td>{{ r.needed_by|date:"d M Y"|default:"—" }}</td>
+            <td>{{ r.department|default:"-" }}</td>
+            <td>{% if r.preferred_supplier %}{{ r.preferred_supplier.name }}{% else %}-{% endif %}</td>
+            <td>{{ r.needed_by|date:"d M Y"|default:"-" }}</td>
             <td class="text-end">{{ r.estimated_total|money:tenant.currency_code }}</td>
             <td>
               {% if r.status == "APPROVED" %}<span class="badge text-bg-success">{{ r.get_status_display }}</span>
@@ -43,7 +43,7 @@
               {% elif r.status == "CANCELLED" %}<span class="badge text-bg-secondary">{{ r.get_status_display }}</span>
               {% else %}<span class="badge text-bg-light text-dark">{{ r.get_status_display }}</span>{% endif %}
             </td>
-            <td>{% if r.converted_po %}<a href="{% url 'po_detail' r.converted_po.id %}">{{ r.converted_po.po_number }}</a>{% else %}—{% endif %}</td>
+            <td>{% if r.converted_po %}<a href="{% url 'po_detail' r.converted_po.id %}">{{ r.converted_po.po_number }}</a>{% else %}-{% endif %}</td>
           </tr>
           {% empty %}
           <tr><td colspan="7" class="text-center text-muted py-4">No requisitions yet.</td></tr>

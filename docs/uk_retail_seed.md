@@ -1,4 +1,4 @@
-# UK Retail Group — seed/test metadata (Company → Site → Inventory Location)
+# UK Retail Group - seed/test metadata (Company → Site → Inventory Location)
 
 Realistic UK-based seed data proving the ERP keeps three tiers strictly separate:
 
@@ -12,14 +12,14 @@ Inventory Location         Main Warehouse · Shop Floor · physical stock storag
                            Back Room · Returns Area
 ```
 
-**Run it:** `python manage.py seed_uk_retail_demo` (idempotent — safe to re-run).
+**Run it:** `python manage.py seed_uk_retail_demo` (idempotent - safe to re-run).
 Source: [core/management/commands/seed_uk_retail_demo.py](../core/management/commands/seed_uk_retail_demo.py).
 Tests: `UkRetailDemoScenarioTests` in [core/tests.py](../core/tests.py) (13 tests, all passing).
 
 > Field-name note: the spec's `site_code`/`address`/`city`/`postcode`/`barcode`/`READ_ONLY`
 > map to the real models as `Site.code`, a single `Site.address` text field, the
 > separate `ProductBarcode` model, and role code `READONLY`. Stock is keyed by
-> `(tenant, product, location)` with `site` auto-synced from the location — it is
+> `(tenant, product, location)` with `site` auto-synced from the location - it is
 > **not** stored on the product. These are reflected below.
 
 ---
@@ -35,20 +35,20 @@ Tests: `UkRetailDemoScenarioTests` in [core/tests.py](../core/tests.py) (13 test
 | currency_code | GBP |
 | vat_registered | true (`vat_number` GB123456789) |
 
-### Sites (4 — `London` is `is_default`)
+### Sites (4 - `London` is `is_default`)
 | code | name | site_type | region | address | is_default | is_active |
 |---|---|---|---|---|---|---|
 | LON | London | city_branch | Greater London | 1 Oxford Street, London, W1D 1AN | ✅ | ✅ |
-| LEI | Leicester | city_branch | East Midlands | 14 Gallowtree Gate, Leicester, LE1 5AD | — | ✅ |
-| MAN | Manchester | city_branch | North West | 20 Market Street, Manchester, M1 1WR | — | ✅ |
-| BIR | Birmingham | city_branch | West Midlands | 50 New Street, Birmingham, B2 4DU | — | ✅ |
+| LEI | Leicester | city_branch | East Midlands | 14 Gallowtree Gate, Leicester, LE1 5AD | - | ✅ |
+| MAN | Manchester | city_branch | North West | 20 Market Street, Manchester, M1 1WR | - | ✅ |
+| BIR | Birmingham | city_branch | West Midlands | 50 New Street, Birmingham, B2 4DU | - | ✅ |
 
 ### Inventory Locations (4 per site = 16)
 For **each** site: `<Site> Main Warehouse` (WAREHOUSE), `<Site> Shop Floor` (SHOP_FLOOR),
 `<Site> Back Room` (BACK_ROOM), `<Site> Returns Area` (RETURNS).
-Inventory locations are **never** treated as sites — they each carry a `site_id` FK.
+Inventory locations are **never** treated as sites - they each carry a `site_id` FK.
 
-### Users & roles (8 — explicit per-site access, **no "all sites"**)
+### Users & roles (8 - explicit per-site access, **no "all sites"**)
 | username | role | site access (`UserSiteAccess`) |
 |---|---|---|
 | admin@ukretail.demo | Owner/Admin | London, Leicester, Manchester, Birmingham |
@@ -63,7 +63,7 @@ Inventory locations are **never** treated as sites — they each carry a `site_i
 Password for all demo users: `Demo!2026`. Admin/Accountant/Finance get rows for every
 site **individually** (the system never offers an "All Sites" toggle).
 
-### Products (company level — no site)
+### Products (company level - no site)
 | sku | name | category | brand | sales_price | standard_cost | tax | barcode |
 |---|---|---|---|---|---|---|---|
 | UKR-001 | LED Desk Lamp | Lighting | Lumos | 24.99 | 9.50 | STD 20% | 5012345000018 |
@@ -86,7 +86,7 @@ London invoice (−5 of UKR-001) and a manual −2 adjustment:
 | Customer invoice (posted) | INV-0001 | London | London Main Warehouse |
 | Purchase order | PO-0001 | London | London Main Warehouse (receiving) |
 | Goods receipt | GRN-0001 | London | London Main Warehouse (`received_to`) |
-| Expense | EXP-0001 | London (default) | — (expenses have no location) |
+| Expense | EXP-0001 | London (default) | - (expenses have no location) |
 | Stock movement | SEED-ADJ | London | London Main Warehouse |
 
 ---
@@ -108,13 +108,13 @@ The executable seed is the management command; this JSON shows the same shape.
         { "name": "London Back Room",      "type": "BACK_ROOM" },
         { "name": "London Returns Area",   "type": "RETURNS" }
       ] }
-    /* … Leicester (LEI), Manchester (MAN), Birmingham (BIR) — same 4 locations … */
+    /* … Leicester (LEI), Manchester (MAN), Birmingham (BIR) - same 4 locations … */
   ],
   "users": [
     { "username": "sales@ukretail.demo", "role": "SALES", "sites": ["London"] },
     { "username": "warehouse@ukretail.demo", "role": "WAREHOUSE", "sites": ["Manchester"],
       "locations": ["Manchester Main Warehouse"] }
-    /* … 6 more, each with explicit "sites": [...]  — never "all" … */
+    /* … 6 more, each with explicit "sites": [...]  - never "all" … */
   ],
   "products": [
     { "sku": "UKR-001", "name": "LED Desk Lamp", "sales_price": "24.99",
@@ -163,8 +163,8 @@ Tenant (UK Retail Group Ltd)
 
 | # | Test | Proves |
 |---|---|---|
-| — | `test_company_sites_and_locations_structure` | 1 company, 4 sites (London default), 4 typed locations each, no re-homing |
-| — | `test_eight_role_users_with_explicit_site_access` | 8 users, explicit site grants (SALES=London, WAREHOUSE=Manchester, …) |
+| - | `test_company_sites_and_locations_structure` | 1 company, 4 sites (London default), 4 typed locations each, no re-homing |
+| - | `test_eight_role_users_with_explicit_site_access` | 8 users, explicit site grants (SALES=London, WAREHOUSE=Manchester, …) |
 | 1 | `test_scenario_01_login_selects_company_and_site` | login resolves to one Company + one Site |
 | 2 | `test_scenario_02_switch_leicester_to_london` | switching site via `/switch-workspace/` |
 | 3 | `test_scenario_03_products_are_company_level` | products have no site dimension |
@@ -189,7 +189,7 @@ Run: `python manage.py test core.tests.UkRetailDemoScenarioTests`
 - [x] Four inventory locations per site (16), each pinned to its own site.
 - [x] Inventory locations are not sites (distinct model, each with `site_id`).
 - [x] Eight role users, each linked to the company and to one or more sites.
-- [x] Every user has explicit `UserSiteAccess` — **no "All Sites"** option exists.
+- [x] Every user has explicit `UserSiteAccess` - **no "All Sites"** option exists.
 - [x] Products are company-level (no per-site product rows / no site FK).
 - [x] Stock keyed by company + location (+ synced site), never only on the product.
 - [x] Each transaction carries company + site; inventory ones carry an inventory location.

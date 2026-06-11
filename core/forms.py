@@ -170,9 +170,9 @@ class StockAdjustmentForm(TenantModelForm):
                   "reason", "supplier", "qty_delta", "notes"]
         help_texts = {
             "qty_delta": "Negative to remove stock (damage / loss / return to supplier); positive to add found stock.",
-            "supplier": "For 'Return to supplier' only — raises a purchase credit note that reduces Accounts Payable.",
+            "supplier": "For 'Return to supplier' only - raises a purchase credit note that reduces Accounts Payable.",
             "bin": "Optional bin (must belong to the chosen location).",
-            "serial_number": "Required for serial-tracked products — the specific unit being adjusted.",
+            "serial_number": "Required for serial-tracked products - the specific unit being adjusted.",
         }
 
     def __init__(self, *args, **kwargs):
@@ -207,7 +207,7 @@ class StockAdjustmentForm(TenantModelForm):
         product = cleaned.get("product")
         if product is not None and getattr(product, "track_serial", False) \
                 and qty is not None and qty != 0 and not (cleaned.get("serial_number") or "").strip():
-            self.add_error("serial_number", f"{product.sku} is serial-tracked — enter the serial number being adjusted.")
+            self.add_error("serial_number", f"{product.sku} is serial-tracked - enter the serial number being adjusted.")
         return cleaned
 
 
@@ -216,7 +216,7 @@ class ReplenishmentPolicyForm(TenantModelForm):
         model = ReplenishmentPolicy
         fields = ["min_stock", "max_stock", "safety_stock", "reorder_point", "reorder_quantity",
                   "eoq", "lead_time_days", "preferred_supplier", "moq", "pack_size", "is_active"]
-        # All quantity fields are in the product's BASE unit of measure — the
+        # All quantity fields are in the product's BASE unit of measure - the
         # replenishment calculation works entirely in base units. Labels say so
         # to stop buyers entering purchase-UOM (e.g. case) values.
         labels = {
@@ -233,8 +233,8 @@ class ReplenishmentPolicyForm(TenantModelForm):
             "max_stock": "Suggested orders refill projected available up to this level (base UOM).",
             "safety_stock": "Buffer kept on hand (base UOM).",
             "reorder_quantity": "Fixed order size used when no max is set (base UOM).",
-            "moq": "Supplier minimum order quantity — orders are raised to this (base UOM).",
-            "pack_size": "Order multiple — suggested quantity rounds up to this (base UOM; 0 = none).",
+            "moq": "Supplier minimum order quantity - orders are raised to this (base UOM).",
+            "pack_size": "Order multiple - suggested quantity rounds up to this (base UOM; 0 = none).",
             "eoq": "Economic order quantity (informational; not auto-calculated; base UOM).",
         }
 

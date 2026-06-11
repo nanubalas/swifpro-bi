@@ -14,8 +14,8 @@ sales, and finance in one system of record. Server-rendered with Bootstrap 5
 Notes for testers:
 - **Passwords are shared separately** (not stored in the repo or docs).
 - The Render **free instance may sleep** and take **30–60 seconds** to wake on
-  the first request — this is normal.
-- This is a **controlled demo / release candidate, not production ERP** — don't
+  the first request - this is normal.
+- This is a **controlled demo / release candidate, not production ERP** - don't
   enter real data.
 
 ## Features

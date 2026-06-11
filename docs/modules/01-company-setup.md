@@ -4,7 +4,7 @@
 Establishes the legal, financial and locale identity of each company (Tenant) on the SwifPro BI platform, and optionally groups several companies under a parent CompanyGroup for consolidated reporting. Creating a Tenant auto-seeds a UK chart of accounts and standard VAT codes, and a guided onboarding checklist walks a new Admin through completing setup. Tenant-level settings (approval thresholds, payment terms, financial year, dunning) drive behaviour across every other module.
 
 ### Roles involved
-- **Admin (Owner/Admin)** — the only role with access. All Company Setup pages and onboarding actions are gated by `@role_required([ROLE_ADMIN], [ROLE_ADMIN])`. Any logged-in user may create a brand-new organisation (`new_organisation`), becoming its Admin.
+- **Admin (Owner/Admin)** - the only role with access. All Company Setup pages and onboarding actions are gated by `@role_required([ROLE_ADMIN], [ROLE_ADMIN])`. Any logged-in user may create a brand-new organisation (`new_organisation`), becoming its Admin.
 
 ### Workflow
 1. A logged-in user creates a new organisation via `/onboarding/new-organisation/` (`NewOrganisationForm`: name, business type, currency, country).
@@ -12,7 +12,7 @@ Establishes the legal, financial and locale identity of each company (Tenant) on
 3. The `post_save` signal `bootstrap_tenant_defaults` seeds 5 default `TaxCode` rows and 26 default `GLAccount` rows for the tenant.
 4. The Admin lands on `/onboarding/` showing a 7-step guided checklist with completion status and a percent-complete bar.
 5. The Admin opens `/settings/tenant/` and completes the company profile (identity, registration & tax, addresses, contact, branding, locale, defaults, credit control) via `TenantSettingsForm`.
-6. The Admin optionally configures VAT codes (`/tax-codes/`), first location, team, products, customers and suppliers — each a checklist step.
+6. The Admin optionally configures VAT codes (`/tax-codes/`), first location, team, products, customers and suppliers - each a checklist step.
 7. The Admin optionally creates/joins a `CompanyGroup` at `/settings/group/` for multi-company consolidation.
 8. When ready, the Admin posts `/onboarding/finish/`, which sets `onboarding_complete = True`.
 
@@ -38,13 +38,13 @@ Establishes the legal, financial and locale identity of each company (Tenant) on
 - No GL postings are produced by this module itself (it only seeds the account structure).
 
 ### Related modules
-- **Finance / VAT** — seeds tax codes and the chart of accounts; default_tax_code and vat_registered feed invoicing and VAT returns.
-- **Procurement** — po_approval_threshold gates PO approval.
-- **Expenses** — expense_approval_threshold gates expense posting.
-- **Inventory** — stock_adjustment_approval_threshold gates stock-adjustment posting (field exists on Tenant but is NOT exposed on TenantSettingsForm; set elsewhere/admin only).
-- **Sales / AR** — default_payment_terms_days, invoice_footer, logo, dunning settings drive invoices and reminders.
-- **Reports** — CompanyGroup enables Consolidated and Inter-company reporting.
-- **Users & Roles** — onboarding's "Invite your team" step links to membership management.
+- **Finance / VAT** - seeds tax codes and the chart of accounts; default_tax_code and vat_registered feed invoicing and VAT returns.
+- **Procurement** - po_approval_threshold gates PO approval.
+- **Expenses** - expense_approval_threshold gates expense posting.
+- **Inventory** - stock_adjustment_approval_threshold gates stock-adjustment posting (field exists on Tenant but is NOT exposed on TenantSettingsForm; set elsewhere/admin only).
+- **Sales / AR** - default_payment_terms_days, invoice_footer, logo, dunning settings drive invoices and reminders.
+- **Reports** - CompanyGroup enables Consolidated and Inter-company reporting.
+- **Users & Roles** - onboarding's "Invite your team" step links to membership management.
 
 ### Validations & rules
 - Admin-only access on every page (`role_required([ROLE_ADMIN], [ROLE_ADMIN])`).

@@ -53,20 +53,20 @@ Note: a person's effective access is always evaluated against the **active organ
 - **Override resolution**: effective = role baseline + GRANTs − REVOKEs, intersected with the known catalog (`effective_permissions`).
 - **Role-change policy**: overrides reset to role default unless `keep_permissions_on_role_change` is on, in which case now-redundant overrides are pruned.
 - **Location default-open**: a user with zero `UserLocationAccess` rows (or an Admin) is unrestricted; adding rows narrows access.
-- **Audit immutability**: `AuditLog.save()` raises if an existing record is updated — append-only.
+- **Audit immutability**: `AuditLog.save()` raises if an existing record is updated - append-only.
 - **Access-request idempotency**: only `PENDING` requests can be approved/rejected.
 - **Superuser bypass**: Django superusers pass all `role_required`/`permission_required` checks and get all permissions.
 - Role values validated against `ROLE_CHOICES` on invite, approval, and role change.
 
 ### Database entities
-- `OrgMembership` — role per user per tenant (`is_default` for preferred org).
-- `UserPermissionOverride` — per-user GRANT/REVOKE delta, scoped to a tenant.
-- `UserLocationAccess` — per-user allowed locations.
-- `AccessRequest` — self-service access requests with review fields.
-- `AuditLog` — append-only security/audit trail.
-- `UserProfile` — fallback primary tenant for a user.
-- `Tenant` — holds the `keep_permissions_on_role_change` policy and `role_landing`.
-- Django `auth.User` / `auth.Group` — the underlying account and RBAC groups synced from roles.
+- `OrgMembership` - role per user per tenant (`is_default` for preferred org).
+- `UserPermissionOverride` - per-user GRANT/REVOKE delta, scoped to a tenant.
+- `UserLocationAccess` - per-user allowed locations.
+- `AccessRequest` - self-service access requests with review fields.
+- `AuditLog` - append-only security/audit trail.
+- `UserProfile` - fallback primary tenant for a user.
+- `Tenant` - holds the `keep_permissions_on_role_change` policy and `role_landing`.
+- Django `auth.User` / `auth.Group` - the underlying account and RBAC groups synced from roles.
 - Supporting code (not models): `core/roles.py`, `core/permissions.py`, `core/auth.py`, `core/access.py`, `core/signals.py`.
 
 ### API / page requirements
@@ -83,7 +83,7 @@ Note: a person's effective access is always evaluated against the **active organ
 - `GET|POST /locations/access/` → `location_access`.
 - `GET /audit/` → `audit_log_list`; `GET /audit/export.csv` → `audit_log_export`.
 
-Note: there is **no separate persisted `Invite`/token model** — invites create the account immediately and email a temporary password; there is no email-link acceptance flow.
+Note: there is **no separate persisted `Invite`/token model** - invites create the account immediately and email a temporary password; there is no email-link acceptance flow.
 
 ### Flow diagram
 ```mermaid

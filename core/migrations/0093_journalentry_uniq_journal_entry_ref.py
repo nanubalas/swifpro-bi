@@ -8,7 +8,7 @@ from django.db.models import Count, Q
 def check_no_duplicate_refs(apps, schema_editor):
     """Fail clearly (without touching data) if duplicate journal references
     already exist in the scope the new constraint covers. Journals are
-    accounting history — they are never auto-deleted. If this raises, run the
+    accounting history - they are never auto-deleted. If this raises, run the
     pre-migration audit query in the PR/release notes and resolve the duplicates
     manually before re-running migrate.
     """

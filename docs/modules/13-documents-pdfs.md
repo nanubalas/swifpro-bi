@@ -26,12 +26,12 @@ Document PDFs inherit the access rules of the calling view, so roles vary per do
 - Computed money values (subtotal, VAT, total) where the source view calculates them.
 
 ### Output generated
-- Customer Invoice PDF — `invoice-<invoice_number>.pdf` (template `documents/invoice_pdf.html`).
-- Quote PDF — `quote-<quote_number>.pdf` (`documents/quote_pdf.html`).
-- Sales Order PDF — `sales-order-<order_number>.pdf` (`documents/order_pdf.html`).
-- Purchase Order PDF — `purchase-order-<po_number>.pdf` (`documents/po_pdf.html`).
-- Credit Note PDF — `credit-note-<credit_note_number>.pdf` (`documents/credit_note_pdf.html`).
-- Customer Statement PDF — `statement-<customer.name>.pdf` (`documents/statement_pdf.html`).
+- Customer Invoice PDF - `invoice-<invoice_number>.pdf` (template `documents/invoice_pdf.html`).
+- Quote PDF - `quote-<quote_number>.pdf` (`documents/quote_pdf.html`).
+- Sales Order PDF - `sales-order-<order_number>.pdf` (`documents/order_pdf.html`).
+- Purchase Order PDF - `purchase-order-<po_number>.pdf` (`documents/po_pdf.html`).
+- Credit Note PDF - `credit-note-<credit_note_number>.pdf` (`documents/credit_note_pdf.html`).
+- Customer Statement PDF - `statement-<customer.name>.pdf` (`documents/statement_pdf.html`).
 - Email attachments (same bytes) for invoice send, PO send, quote send, and statement email.
 - No GL postings or status changes are produced by the PDF layer itself; status side-effects (e.g. invoice → SENT) belong to the calling send views.
 
@@ -49,7 +49,7 @@ Document PDFs inherit the access rules of the calling view, so roles vary per do
 - Templates are standalone and must use only xhtml2pdf's limited CSS subset; they do NOT extend `base.html` (`_pdf_base.html` is the shared base with inline `@page` A4 styling).
 - VAT line on the PDF only renders when `tenant.vat_registered` and `tenant.vat_number` are set.
 - Email-send guards live in the caller, not the PDF layer (e.g. `po_send` blocks cancelled/closed POs and requires a supplier email; `ar_invoice_send` enforces credit status and issues a draft before sending).
-- No persistent storage of generated PDFs — they are rendered on demand each request (not cached or filed against the record).
+- No persistent storage of generated PDFs - they are rendered on demand each request (not cached or filed against the record).
 
 ### Database entities
 The PDF service itself defines no models; it reads existing entities:

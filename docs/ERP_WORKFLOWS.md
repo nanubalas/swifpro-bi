@@ -1,4 +1,4 @@
-# SwifPro BI ERP — Module Workflow & Architecture Specification
+# SwifPro BI ERP - Module Workflow & Architecture Specification
 
 > Developer-facing specification for the SwifPro BI multi-tenant ERP (Django 5, server-rendered, Bootstrap 5).
 > Every module below is grounded in the actual codebase (`core/` app): real model names, URL paths and service
@@ -38,7 +38,7 @@
 Establishes the legal, financial and locale identity of each company (Tenant) on the SwifPro BI platform, and optionally groups several companies under a parent CompanyGroup for consolidated reporting. Creating a Tenant auto-seeds a UK chart of accounts and standard VAT codes, and a guided onboarding checklist walks a new Admin through completing setup. Tenant-level settings (approval thresholds, payment terms, financial year, dunning) drive behaviour across every other module.
 
 ### Roles involved
-- **Admin (Owner/Admin)** — the only role with access. All Company Setup pages and onboarding actions are gated by `@role_required([ROLE_ADMIN], [ROLE_ADMIN])`. Any logged-in user may create a brand-new organisation (`new_organisation`), becoming its Admin.
+- **Admin (Owner/Admin)** - the only role with access. All Company Setup pages and onboarding actions are gated by `@role_required([ROLE_ADMIN], [ROLE_ADMIN])`. Any logged-in user may create a brand-new organisation (`new_organisation`), becoming its Admin.
 
 ### Workflow
 1. A logged-in user creates a new organisation via `/onboarding/new-organisation/` (`NewOrganisationForm`: name, business type, currency, country).
@@ -46,7 +46,7 @@ Establishes the legal, financial and locale identity of each company (Tenant) on
 3. The `post_save` signal `bootstrap_tenant_defaults` seeds 5 default `TaxCode` rows and 26 default `GLAccount` rows for the tenant.
 4. The Admin lands on `/onboarding/` showing a 7-step guided checklist with completion status and a percent-complete bar.
 5. The Admin opens `/settings/tenant/` and completes the company profile (identity, registration & tax, addresses, contact, branding, locale, defaults, credit control) via `TenantSettingsForm`.
-6. The Admin optionally configures VAT codes (`/tax-codes/`), first location, team, products, customers and suppliers — each a checklist step.
+6. The Admin optionally configures VAT codes (`/tax-codes/`), first location, team, products, customers and suppliers - each a checklist step.
 7. The Admin optionally creates/joins a `CompanyGroup` at `/settings/group/` for multi-company consolidation.
 8. When ready, the Admin posts `/onboarding/finish/`, which sets `onboarding_complete = True`.
 
@@ -72,13 +72,13 @@ Establishes the legal, financial and locale identity of each company (Tenant) on
 - No GL postings are produced by this module itself (it only seeds the account structure).
 
 ### Related modules
-- **Finance / VAT** — seeds tax codes and the chart of accounts; default_tax_code and vat_registered feed invoicing and VAT returns.
-- **Procurement** — po_approval_threshold gates PO approval.
-- **Expenses** — expense_approval_threshold gates expense posting.
-- **Inventory** — stock_adjustment_approval_threshold gates stock-adjustment posting (field exists on Tenant but is NOT exposed on TenantSettingsForm; set elsewhere/admin only).
-- **Sales / AR** — default_payment_terms_days, invoice_footer, logo, dunning settings drive invoices and reminders.
-- **Reports** — CompanyGroup enables Consolidated and Inter-company reporting.
-- **Users & Roles** — onboarding's "Invite your team" step links to membership management.
+- **Finance / VAT** - seeds tax codes and the chart of accounts; default_tax_code and vat_registered feed invoicing and VAT returns.
+- **Procurement** - po_approval_threshold gates PO approval.
+- **Expenses** - expense_approval_threshold gates expense posting.
+- **Inventory** - stock_adjustment_approval_threshold gates stock-adjustment posting (field exists on Tenant but is NOT exposed on TenantSettingsForm; set elsewhere/admin only).
+- **Sales / AR** - default_payment_terms_days, invoice_footer, logo, dunning settings drive invoices and reminders.
+- **Reports** - CompanyGroup enables Consolidated and Inter-company reporting.
+- **Users & Roles** - onboarding's "Invite your team" step links to membership management.
 
 ### Validations & rules
 - Admin-only access on every page (`role_required([ROLE_ADMIN], [ROLE_ADMIN])`).
@@ -189,20 +189,20 @@ Note: a person's effective access is always evaluated against the **active organ
 - **Override resolution**: effective = role baseline + GRANTs − REVOKEs, intersected with the known catalog (`effective_permissions`).
 - **Role-change policy**: overrides reset to role default unless `keep_permissions_on_role_change` is on, in which case now-redundant overrides are pruned.
 - **Location default-open**: a user with zero `UserLocationAccess` rows (or an Admin) is unrestricted; adding rows narrows access.
-- **Audit immutability**: `AuditLog.save()` raises if an existing record is updated — append-only.
+- **Audit immutability**: `AuditLog.save()` raises if an existing record is updated - append-only.
 - **Access-request idempotency**: only `PENDING` requests can be approved/rejected.
 - **Superuser bypass**: Django superusers pass all `role_required`/`permission_required` checks and get all permissions.
 - Role values validated against `ROLE_CHOICES` on invite, approval, and role change.
 
 ### Database entities
-- `OrgMembership` — role per user per tenant (`is_default` for preferred org).
-- `UserPermissionOverride` — per-user GRANT/REVOKE delta, scoped to a tenant.
-- `UserLocationAccess` — per-user allowed locations.
-- `AccessRequest` — self-service access requests with review fields.
-- `AuditLog` — append-only security/audit trail.
-- `UserProfile` — fallback primary tenant for a user.
-- `Tenant` — holds the `keep_permissions_on_role_change` policy and `role_landing`.
-- Django `auth.User` / `auth.Group` — the underlying account and RBAC groups synced from roles.
+- `OrgMembership` - role per user per tenant (`is_default` for preferred org).
+- `UserPermissionOverride` - per-user GRANT/REVOKE delta, scoped to a tenant.
+- `UserLocationAccess` - per-user allowed locations.
+- `AccessRequest` - self-service access requests with review fields.
+- `AuditLog` - append-only security/audit trail.
+- `UserProfile` - fallback primary tenant for a user.
+- `Tenant` - holds the `keep_permissions_on_role_change` policy and `role_landing`.
+- Django `auth.User` / `auth.Group` - the underlying account and RBAC groups synced from roles.
 - Supporting code (not models): `core/roles.py`, `core/permissions.py`, `core/auth.py`, `core/access.py`, `core/signals.py`.
 
 ### API / page requirements
@@ -219,7 +219,7 @@ Note: a person's effective access is always evaluated against the **active organ
 - `GET|POST /locations/access/` → `location_access`.
 - `GET /audit/` → `audit_log_list`; `GET /audit/export.csv` → `audit_log_export`.
 
-Note: there is **no separate persisted `Invite`/token model** — invites create the account immediately and email a temporary password; there is no email-link acceptance flow.
+Note: there is **no separate persisted `Invite`/token model** - invites create the account immediately and email a temporary password; there is no email-link acceptance flow.
 
 ### Flow diagram
 ```mermaid
@@ -255,10 +255,10 @@ flowchart TD
 Maintains the master record of every customer (sold-to party) for a tenant, including contact details, tax/company identifiers, billing and shipping addresses, payment terms, credit limit and account status. It is the central reference for all sales documents (quotes, orders, invoices, credit notes, receipts) and drives credit control and customer statements.
 
 ### Roles involved
-- **Admin** — full read/write.
-- **Sales** — full read/write (create, edit, statements).
-- **Finance** — full read/write (used here as the mapped group for the Accountant membership role; ACCOUNTANT/FINANCE membership roles both resolve to the Finance group).
-- **Read-only** — may view the customer list, customer profile, and statements (read), but cannot create or edit.
+- **Admin** - full read/write.
+- **Sales** - full read/write (create, edit, statements).
+- **Finance** - full read/write (used here as the mapped group for the Accountant membership role; ACCOUNTANT/FINANCE membership roles both resolve to the Finance group).
+- **Read-only** - may view the customer list, customer profile, and statements (read), but cannot create or edit.
 
 (All customer views use `@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ...], write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])`; Read-only is granted view access only on `customer_list`, `customer_detail`, `customer_statement`, and `customer_statement_pdf`.)
 
@@ -267,7 +267,7 @@ Maintains the master record of every customer (sold-to party) for a tenant, incl
 2. User clicks "New" → `/customers/new/` (`customer_create`) and fills the `CustomerForm`.
 3. On save, `_find_customer_duplicates` checks for existing records matching email, phone, VAT number, company number, or name; if matches are found, the form re-renders with a duplicate warning and requires `confirm_duplicate=1` to proceed.
 4. Record is saved against the current tenant; a DB `IntegrityError` on the `(tenant, name)` unique constraint surfaces as a "customer with this name already exists" error.
-5. User is redirected to `/customers/<id>/` (`customer_detail`) — the profile showing details, outstanding balance, available credit, and a merged activity timeline (quotes, sales orders, invoices, payments, credit notes).
+5. User is redirected to `/customers/<id>/` (`customer_detail`) - the profile showing details, outstanding balance, available credit, and a merged activity timeline (quotes, sales orders, invoices, payments, credit notes).
 6. Edits go through `/customers/<id>/edit/` (`customer_edit`), which re-runs duplicate detection (excluding the current record).
 7. Credit control is enforced downstream: when issuing AR invoices or confirming customer orders, `customer.credit_status(amount)` is called to block sales for ON_HOLD customers or those over their credit limit.
 8. Statements: user opens `/customers/<id>/statement/` (`customer_statement`), defaults to the last 12 months (`statements.default_period`), and can download a PDF or email it to the customer.
@@ -279,7 +279,7 @@ Maintains the master record of every customer (sold-to party) for a tenant, incl
 - Contact person, email, phone.
 - VAT number, company number.
 - Billing address, shipping address.
-- Payment terms (days) — blank falls back to the company default.
+- Payment terms (days) - blank falls back to the company default.
 - Credit limit (0 = no limit).
 - Tags (comma-separated, e.g. "VIP, Reseller").
 - Notes.
@@ -287,46 +287,46 @@ Maintains the master record of every customer (sold-to party) for a tenant, incl
 ### Output generated
 - Persisted `Customer` record (scoped to tenant).
 - Customer profile page with derived figures: `outstanding_balance`, `available_credit`, `is_over_limit`.
-- Customer statement (HTML, PDF via `documents/statement_pdf.html`, or emailed PDF) — a dated ledger of invoices, receipts, refunds and credit notes with opening/closing running balance.
+- Customer statement (HTML, PDF via `documents/statement_pdf.html`, or emailed PDF) - a dated ledger of invoices, receipts, refunds and credit notes with opening/closing running balance.
 - Audit event `STATEMENT_SENT` when a statement is emailed.
 - Credit-control verdicts `(ok, reason)` consumed by AR invoice and customer-order flows.
 - No GL postings are produced directly by this module (postings arise from the invoices/payments it references).
 
 ### Related modules
-- **Sales — Quotes, Customer (Sales) Orders, AR Invoices, Recurring Invoices** — all reference `Customer`; credit checks gate invoice issue and order confirmation.
-- **Payments / Receipts & Refunds** — `Payment` records feed `outstanding_balance` and statements.
-- **Credit Notes** — sales-kind credit notes reduce balance and appear on statements.
-- **Reports — Aged Debtors (Receivables)** at `/reports/aged-receivables/` (`reports_service.aged_receivables`) ages each customer's open invoices.
-- **CSV Import** — `/customers/import/` (`import_customers`) for bulk loading.
+- **Sales - Quotes, Customer (Sales) Orders, AR Invoices, Recurring Invoices** - all reference `Customer`; credit checks gate invoice issue and order confirmation.
+- **Payments / Receipts & Refunds** - `Payment` records feed `outstanding_balance` and statements.
+- **Credit Notes** - sales-kind credit notes reduce balance and appear on statements.
+- **Reports - Aged Debtors (Receivables)** at `/reports/aged-receivables/` (`reports_service.aged_receivables`) ages each customer's open invoices.
+- **CSV Import** - `/customers/import/` (`import_customers`) for bulk loading.
 
 ### Validations & rules
-- **Tenant scoping** — every query filters by `tenant`; all detail/edit views use `get_object_or_404(Customer, id=..., tenant=tenant)`.
-- **Unique name per tenant** — enforced by `unique_together = ("tenant", "name")`.
-- **Duplicate detection** — soft warning on matching email/phone/VAT/company number/name; overridable with `confirm_duplicate=1` (advisory, not a hard block except the unique-name constraint).
-- **Credit limit** — `credit_limit = 0` means no limit; `available_credit = credit_limit - outstanding_balance` (None when no limit). `credit_status(additional)` blocks a sale when projected outstanding would exceed the limit.
-- **On-hold block** — status `ON_HOLD` causes `credit_status` to return `False` regardless of credit limit, blocking new sales until released.
-- **Payment terms fallback** — null `payment_terms_days` defers to the company/tenant default.
-- **Outstanding balance** — computed only over `CustomerInvoice.ISSUED_STATES` invoices with positive outstanding amount.
-- **Soft-delete** — not implemented for customers; there is no customer delete URL/view. Customers are retired by setting status to Inactive.
+- **Tenant scoping** - every query filters by `tenant`; all detail/edit views use `get_object_or_404(Customer, id=..., tenant=tenant)`.
+- **Unique name per tenant** - enforced by `unique_together = ("tenant", "name")`.
+- **Duplicate detection** - soft warning on matching email/phone/VAT/company number/name; overridable with `confirm_duplicate=1` (advisory, not a hard block except the unique-name constraint).
+- **Credit limit** - `credit_limit = 0` means no limit; `available_credit = credit_limit - outstanding_balance` (None when no limit). `credit_status(additional)` blocks a sale when projected outstanding would exceed the limit.
+- **On-hold block** - status `ON_HOLD` causes `credit_status` to return `False` regardless of credit limit, blocking new sales until released.
+- **Payment terms fallback** - null `payment_terms_days` defers to the company/tenant default.
+- **Outstanding balance** - computed only over `CustomerInvoice.ISSUED_STATES` invoices with positive outstanding amount.
+- **Soft-delete** - not implemented for customers; there is no customer delete URL/view. Customers are retired by setting status to Inactive.
 
 ### Database entities
 - `Customer` (with `Type`, `Status` text choices; properties `tag_list`, `outstanding_balance`, `available_credit`, `is_over_limit`; method `credit_status`).
 - `CustomerInvoice` / `CustomerInvoiceLine` (drive balance and statement debits).
-- `Payment` (RECEIPT and REFUND directions — statement credits/debits).
-- `CreditNote` / `CreditNoteLine` (kind SALES — statement credits).
+- `Payment` (RECEIPT and REFUND directions - statement credits/debits).
+- `CreditNote` / `CreditNoteLine` (kind SALES - statement credits).
 - `CustomerOrder`, `SalesQuote` (timeline and related sales documents).
 - `Tenant` (scoping owner).
 
 ### API / page requirements
-- `GET /customers/` — `customer_list` (filters: `q`, `type`, `status`, `tag`).
-- `GET|POST /customers/new/` — `customer_create`.
-- `GET /customers/<id>/` — `customer_detail` (profile + timeline).
-- `GET|POST /customers/<id>/edit/` — `customer_edit`.
-- `GET /customers/<id>/statement/` — `customer_statement`.
-- `GET /customers/<id>/statement/pdf/` — `customer_statement_pdf`.
-- `POST /customers/<id>/statement/email/` — `customer_statement_email`.
-- `GET|POST /customers/import/` — `import_customers` (CSV).
-- `GET /reports/aged-receivables/` — `report_aged_receivables` (related reporting).
+- `GET /customers/` - `customer_list` (filters: `q`, `type`, `status`, `tag`).
+- `GET|POST /customers/new/` - `customer_create`.
+- `GET /customers/<id>/` - `customer_detail` (profile + timeline).
+- `GET|POST /customers/<id>/edit/` - `customer_edit`.
+- `GET /customers/<id>/statement/` - `customer_statement`.
+- `GET /customers/<id>/statement/pdf/` - `customer_statement_pdf`.
+- `POST /customers/<id>/statement/email/` - `customer_statement_email`.
+- `GET|POST /customers/import/` - `import_customers` (CSV).
+- `GET /reports/aged-receivables/` - `report_aged_receivables` (related reporting).
 
 ### Flow diagram
 ```mermaid
@@ -362,11 +362,11 @@ Key files: `d:\swifpro_bi\core\models.py` (Customer at line 1444), `d:\swifpro_b
 Maintains the tenant's supplier master data (contact, VAT/company numbers, currency, payment terms, bank details, status and categories) and presents a 360-degree supplier profile aggregating purchase orders, bills, payments, expenses and credit notes. It also captures supplier+product unit-cost history (used to prefill PO prices) and feeds a supplier performance scorecard covering spend, on-time delivery and price variance.
 
 ### Roles involved
-- **Admin** — full access (create/edit/delete, view, scorecard).
-- **Purchasing** (Procurement group) — create/edit/delete and view suppliers; the primary user.
-- **Manager** — list/scorecard access via nav (Operations role spans Procurement).
-- **Finance / Accountant** — read suppliers and view the scorecard (Finance group); needed for payables and payments.
-- **Read-only** — can view `supplier_detail` and the scorecard.
+- **Admin** - full access (create/edit/delete, view, scorecard).
+- **Purchasing** (Procurement group) - create/edit/delete and view suppliers; the primary user.
+- **Manager** - list/scorecard access via nav (Operations role spans Procurement).
+- **Finance / Accountant** - read suppliers and view the scorecard (Finance group); needed for payables and payments.
+- **Read-only** - can view `supplier_detail` and the scorecard.
 
 Note: `supplier_create`/`supplier_edit`/`supplier_delete` are restricted to Admin + Procurement only (`role_required([ROLE_ADMIN, ROLE_PROCUREMENT], ...)`).
 
@@ -391,29 +391,29 @@ Note: `supplier_create`/`supplier_edit`/`supplier_delete` are restricted to Admi
 
 ### Output generated
 - Supplier records (`Supplier`) with status ACTIVE / INACTIVE / ON_HOLD.
-- `SupplierPriceHistory` rows (source PO / BILL / MANUAL) — idempotent per (supplier, product, source, reference).
+- `SupplierPriceHistory` rows (source PO / BILL / MANUAL) - idempotent per (supplier, product, source, reference).
 - Supplier 360 profile page (POs, bills, payments, expenses, credit notes, timeline).
 - Computed `outstanding_payables` (sum of posted-bill outstanding) and `purchases_total` (posted bills).
 - Supplier scorecard data: spend, bill count, GRN/receipt count, on-time-delivery %, price variance.
 - Audit log entry on deletion (`RECORD_DELETED`).
-- No standalone PDF/statement is generated for suppliers — not implemented (statements exist for customers only).
+- No standalone PDF/statement is generated for suppliers - not implemented (statements exist for customers only).
 
 ### Related modules
-- **Purchase Orders** — POs reference the supplier; submission captures PO prices; price-prefill JSON.
-- **Purchase Requisitions / Backorders** — feed POs to suppliers.
-- **Supplier Invoices (AP bills)** — bills posted against suppliers; drive spend and price variance.
-- **Payments** — supplier payments shown on the profile and timeline.
-- **Expenses** — expenses linked to a supplier appear on the profile.
-- **Credit Notes** — purchase credit notes (`Kind.PURCHASE`); return-to-supplier credits via `create_return_credit_note`.
-- **Shipments / Goods Receipts** — GRNs drive the OTD metric in the scorecard.
-- **Inventory / Products** — products name a `preferred_supplier`; price history feeds standard cost context.
-- **General Ledger** — bill posting (`post_supplier_invoice`) triggers price capture.
+- **Purchase Orders** - POs reference the supplier; submission captures PO prices; price-prefill JSON.
+- **Purchase Requisitions / Backorders** - feed POs to suppliers.
+- **Supplier Invoices (AP bills)** - bills posted against suppliers; drive spend and price variance.
+- **Payments** - supplier payments shown on the profile and timeline.
+- **Expenses** - expenses linked to a supplier appear on the profile.
+- **Credit Notes** - purchase credit notes (`Kind.PURCHASE`); return-to-supplier credits via `create_return_credit_note`.
+- **Shipments / Goods Receipts** - GRNs drive the OTD metric in the scorecard.
+- **Inventory / Products** - products name a `preferred_supplier`; price history feeds standard cost context.
+- **General Ledger** - bill posting (`post_supplier_invoice`) triggers price capture.
 
 ### Validations & rules
-- **Tenant scoping** — every query filters by the current tenant (`_get_default_tenant`); `unique_together = (tenant, name)`.
-- **Duplicate detection** — soft warning on email/phone/VAT/company number/name; requires explicit confirmation, not a hard block.
-- **Name uniqueness** — DB `IntegrityError` surfaced as a form error.
-- **Price-history capture** — no-op when supplier/product/cost missing or unit_cost ≤ 0; idempotent via `update_or_create` on (tenant, supplier, product, source, reference).
+- **Tenant scoping** - every query filters by the current tenant (`_get_default_tenant`); `unique_together = (tenant, name)`.
+- **Duplicate detection** - soft warning on email/phone/VAT/company number/name; requires explicit confirmation, not a hard block.
+- **Name uniqueness** - DB `IntegrityError` surfaced as a form error.
+- **Price-history capture** - no-op when supplier/product/cost missing or unit_cost ≤ 0; idempotent via `update_or_create` on (tenant, supplier, product, source, reference).
 - **Deletion is a hard delete** (`obj.delete()`), not a soft-delete; only Admin/Procurement; audit-logged. No guard preventing deletion of suppliers with linked POs/bills (relies on FK cascade behaviour).
 - **Status** drives availability but is not enforced as a posting block in this module.
 - No approval thresholds or credit limits exist for suppliers (those apply to POs/customers, not suppliers).
@@ -424,14 +424,14 @@ Note: `supplier_create`/`supplier_edit`/`supplier_delete` are restricted to Admi
 - Referenced read-only on the profile/scorecard: `PurchaseOrder`, `PurchaseOrderLine`, `SupplierInvoice`, `SupplierInvoiceLine`, `GoodsReceipt`, `Payment`, `Expense`, `CreditNote`, `Product`.
 
 ### API / page requirements
-- `GET /suppliers/` — `supplier_list` (search + status/category filters).
-- `GET/POST /suppliers/new/` — `supplier_create`.
-- `GET /suppliers/<int:supplier_id>/` — `supplier_detail` (360 profile).
-- `GET/POST /suppliers/<int:supplier_id>/edit/` — `supplier_edit`.
-- `GET/POST /suppliers/<int:supplier_id>/delete/` — `supplier_delete`.
-- `GET /suppliers/import/` — `import_suppliers` (CSV); `GET /import/<kind>/template.csv` — `import_template`.
-- `GET /po/supplier/<int:supplier_id>/prices/` — `supplier_prices_json` (latest cost per product, JSON).
-- `GET /reports/supplier-scorecard/` — `report_supplier_scorecard`.
+- `GET /suppliers/` - `supplier_list` (search + status/category filters).
+- `GET/POST /suppliers/new/` - `supplier_create`.
+- `GET /suppliers/<int:supplier_id>/` - `supplier_detail` (360 profile).
+- `GET/POST /suppliers/<int:supplier_id>/edit/` - `supplier_edit`.
+- `GET/POST /suppliers/<int:supplier_id>/delete/` - `supplier_delete`.
+- `GET /suppliers/import/` - `import_suppliers` (CSV); `GET /import/<kind>/template.csv` - `import_template`.
+- `GET /po/supplier/<int:supplier_id>/prices/` - `supplier_prices_json` (latest cost per product, JSON).
+- `GET /reports/supplier-scorecard/` - `report_supplier_scorecard`.
 
 ### Flow diagram
 ```mermaid
@@ -465,25 +465,25 @@ flowchart TD
 Central master-data module for every sellable, purchasable and stockable item in the tenant. It defines SKUs with type, category, pricing, tax code, costing method and batch/serial-tracking flags, plus supporting masters: barcodes, units of measure with conversions, and bills of materials (kits). Every other operational module (inventory, purchasing, sales, GL valuation) references `Product` records created here.
 
 ### Roles involved
-- Admin — full create/edit/delete on products, categories, BOMs, UOMs, CSV import.
-- Manager — read access to products/categories/BOMs (via Procurement group mapping in `roles.py`).
-- Purchasing — create/edit products, categories, BOMs, UOMs; run product CSV import (the views use `ROLE_PROCUREMENT`, which Purchasing maps to).
-- Warehouse — read products, product categories, product detail.
-- Sales — read product list/detail and BOM list/detail (no create/edit).
-- Read-only — read product list, detail and categories only.
+- Admin - full create/edit/delete on products, categories, BOMs, UOMs, CSV import.
+- Manager - read access to products/categories/BOMs (via Procurement group mapping in `roles.py`).
+- Purchasing - create/edit products, categories, BOMs, UOMs; run product CSV import (the views use `ROLE_PROCUREMENT`, which Purchasing maps to).
+- Warehouse - read products, product categories, product detail.
+- Sales - read product list/detail and BOM list/detail (no create/edit).
+- Read-only - read product list, detail and categories only.
 
 Note: views use the underlying Django-group roles (`ROLE_ADMIN`, `ROLE_PROCUREMENT`, `ROLE_WAREHOUSE`, `ROLE_SALES`, `ROLE_FINANCE`, `ROLE_READONLY`). Membership roles Manager/Accountant inherit access through the `ROLE_TO_GROUPS` mapping.
 
 ### Workflow
 1. (Optional) Define supporting masters first: UOMs at `/uoms/`, conversions at `/uom-conversions/`, and product categories at `/product-categories/`.
-2. Create a product at `/products/new/` (`product_create`) — enter SKU, name, type, category, pricing, tax code, cost method, reorder level, preferred supplier and tracking flags via `ProductForm`.
+2. Create a product at `/products/new/` (`product_create`) - enter SKU, name, type, category, pricing, tax code, cost method, reorder level, preferred supplier and tracking flags via `ProductForm`.
 3. On save the form optionally captures one barcode (creates a `ProductBarcode`) and optional opening stock, which triggers a one-off `apply_movement` RECEIVE into the chosen location (seeding cost).
 4. View the product profile at `/products/<id>/` (`product_detail`): stock by location, recent movements, barcodes, sales history, purchase history, supplier price history and margin.
 5. Edit at `/products/<id>/edit/` (`product_edit`); a change to `standard_cost` writes a `PRODUCT_COST_CHANGED` audit entry.
 6. For kit/bundle SKUs, create a BOM at `/boms/new/`, then add component lines on the BOM detail page (`bom_detail` with `BOMLineFormSet`).
 7. When a kit is sold/picked, `explode_product()` resolves the first active BOM and deducts component stock instead of the kit itself.
 8. Bulk load via `/products/import/` (CSV upsert by SKU); a template is downloadable at `/import/products/template.csv`.
-9. Delete a product at `/products/<id>/delete/` (hard delete, audited) — or set `is_active=False` to retire it without removing history.
+9. Delete a product at `/products/<id>/delete/` (hard delete, audited) - or set `is_active=False` to retire it without removing history.
 
 ### Input data
 - SKU (unique per tenant, case-insensitive), name, product type, category, brand, description, image.
@@ -501,21 +501,21 @@ Note: views use the underlying Django-group roles (`ROLE_ADMIN`, `ROLE_PROCUREME
 - Opening-stock `InventoryMovement` (type RECEIVE, ref_type "OPENING") when opening stock is supplied.
 - `average_cost` maintained on inbound movements (moving average); derived `cost_price`, `margin`, `margin_pct`, `on_hand_total` properties.
 - Audit entries: `PRODUCT_COST_CHANGED` on standard-cost change; `RECORD_DELETED` on product/category/BOM delete.
-- No GL postings originate directly from this module — product master only feeds valuation/COGS in inventory and sales modules.
+- No GL postings originate directly from this module - product master only feeds valuation/COGS in inventory and sales modules.
 
 ### Related modules
-- Inventory — `InventoryBalance`/`InventoryMovement` keyed by product; opening stock, on-hand, reorder level, lot/serial tracking.
-- Purchasing — `preferred_supplier`, `SupplierPriceHistory`, PO lines reference products.
-- Sales — quotes/orders/invoices reference products; `explode_product` deducts kit components at fulfilment.
-- Finance / Tax — `tax_code` FK to `TaxCode` drives VAT; costing feeds stock valuation and COGS.
-- Reports — stock valuation, inventory analytics and profitability use product cost/price.
+- Inventory - `InventoryBalance`/`InventoryMovement` keyed by product; opening stock, on-hand, reorder level, lot/serial tracking.
+- Purchasing - `preferred_supplier`, `SupplierPriceHistory`, PO lines reference products.
+- Sales - quotes/orders/invoices reference products; `explode_product` deducts kit components at fulfilment.
+- Finance / Tax - `tax_code` FK to `TaxCode` drives VAT; costing feeds stock valuation and COGS.
+- Reports - stock valuation, inventory analytics and profitability use product cost/price.
 
 ### Validations & rules
 - SKU unique per tenant (DB `unique_together` + case-insensitive `clean_sku`).
 - Barcode unique per tenant (DB `unique_together` + `clean_barcode`).
 - All queries tenant-scoped via `_get_default_tenant`; every model carries a `tenant` FK.
 - Category: `unique_together (tenant, name, parent)`; supports one level of nesting (parent).
-- Category delete is safe — product `category` FK is `SET_NULL` and subcategory `parent` is `SET_NULL` (no cascade loss of products).
+- Category delete is safe - product `category` FK is `SET_NULL` and subcategory `parent` is `SET_NULL` (no cascade loss of products).
 - Product delete is a hard delete (audited); `parent` variant FK is `PROTECT` and BOM `component` FK is `PROTECT`, so referenced products cannot be deleted. Soft retire via `is_active=False` is the intended alternative.
 - BOM: `unique_together (tenant, product, name)`; line `unique_together (bom, component)`; `explode_product` uses the first active BOM by `created_at`.
 - Opening stock only accepted when both quantity (>0) and location are provided; created once.
@@ -532,17 +532,17 @@ Note: views use the underlying Django-group roles (`ROLE_ADMIN`, `ROLE_PROCUREME
 - (referenced) `TaxCode`, `Supplier`, `Location`, `InventoryMovement`, `InventoryBalance`, `SupplierPriceHistory`
 
 ### API / page requirements
-- `/products/` — `product_list` (search by sku/name/brand/barcode; filter type/category/status).
-- `/products/new/` — `product_create`.
-- `/products/<int:product_id>/` — `product_detail`.
-- `/products/<int:product_id>/edit/` — `product_edit`.
-- `/products/<int:product_id>/delete/` — `product_delete`.
-- `/products/import/` — `import_products`; `/import/products/template.csv` — `import_template`.
-- `/product-categories/` — `product_category_list` (list + inline create).
-- `/product-categories/<int:category_id>/delete/` — `product_category_delete`.
-- `/boms/` — `bom_list`; `/boms/new/` — `bom_create`; `/boms/<int:bom_id>/` — `bom_detail`; `/boms/<int:bom_id>/delete/` — `bom_delete`.
-- `/uoms/`, `/uoms/new/`, `/uoms/<id>/edit/`, `/uoms/<id>/delete/` — UOM master.
-- `/uom-conversions/` (+ new/edit/delete) — UOM conversion rules.
+- `/products/` - `product_list` (search by sku/name/brand/barcode; filter type/category/status).
+- `/products/new/` - `product_create`.
+- `/products/<int:product_id>/` - `product_detail`.
+- `/products/<int:product_id>/edit/` - `product_edit`.
+- `/products/<int:product_id>/delete/` - `product_delete`.
+- `/products/import/` - `import_products`; `/import/products/template.csv` - `import_template`.
+- `/product-categories/` - `product_category_list` (list + inline create).
+- `/product-categories/<int:category_id>/delete/` - `product_category_delete`.
+- `/boms/` - `bom_list`; `/boms/new/` - `bom_create`; `/boms/<int:bom_id>/` - `bom_detail`; `/boms/<int:bom_id>/delete/` - `bom_delete`.
+- `/uoms/`, `/uoms/new/`, `/uoms/<id>/edit/`, `/uoms/<id>/delete/` - UOM master.
+- `/uom-conversions/` (+ new/edit/delete) - UOM conversion rules.
 - All are server-rendered Django views (templates under `templates/products/`, `templates/boms/`, `templates/uoms/`); no JSON REST API for product master.
 
 ### Flow diagram
@@ -579,11 +579,11 @@ If something is not implemented: there is no variant-generator UI (variants are 
 Tracks on-hand and reserved stock per product and location across a Site → Location → Bin hierarchy, maintaining a full costed movement ledger and inventory valuation (moving average, FIFO, or standard cost). It supports manual adjustments with GL postings, location-to-location transfers, cycle counts, and low-stock reordering, keeping the stock ledger in step with the inventory control account.
 
 ### Roles involved
-- **Admin** — full access to all inventory pages, plus the only role that manages Location Access scoping (`/locations/access/`).
-- **Manager** — operational visibility across inventory, adjustments, transfers, cycle counts, sites/locations/bins.
-- **Warehouse** — day-to-day stock: adjustments, transfers, cycle counts, low-stock reorder.
-- **Purchasing** — views inventory, adjustments, movements, low stock; approves adjustments and raises reorders. (In code the group is `ROLE_PROCUREMENT`.)
-- **Read-only** — view-only access to inventory list, movements and low stock.
+- **Admin** - full access to all inventory pages, plus the only role that manages Location Access scoping (`/locations/access/`).
+- **Manager** - operational visibility across inventory, adjustments, transfers, cycle counts, sites/locations/bins.
+- **Warehouse** - day-to-day stock: adjustments, transfers, cycle counts, low-stock reorder.
+- **Purchasing** - views inventory, adjustments, movements, low stock; approves adjustments and raises reorders. (In code the group is `ROLE_PROCUREMENT`.)
+- **Read-only** - view-only access to inventory list, movements and low stock.
 
 Note: Accountant/Finance do not appear in the inventory views' `role_required` lists; they consume the resulting GL postings and the Stock Valuation report instead.
 
@@ -616,18 +616,18 @@ Note: Accountant/Finance do not appear in the inventory views' `role_required` l
 - Audit log entries (STOCK_ADJ_REQUESTED, STOCK_ADJUSTED, STOCK_ADJ_APPROVED/REJECTED, requisition_create).
 
 ### Related modules
-- **Procurement** — receipts (RECEIVE movements) raise stock; low-stock reorder creates Purchase Requisitions; return-to-supplier raises credit notes.
-- **Sales / Fulfilment** — sales fulfilment (SALE movements) and reservations (`reserve_stock` / `release_reservations`) draw on stock.
-- **General Ledger / Finance** — adjustments and receipts post journals via `services.gl`.
-- **Reports** — Stock Valuation and Inventory Analytics read movement value and balances.
-- **Products / BOMs** — cost method, reorder level, preferred supplier come from Product.
+- **Procurement** - receipts (RECEIVE movements) raise stock; low-stock reorder creates Purchase Requisitions; return-to-supplier raises credit notes.
+- **Sales / Fulfilment** - sales fulfilment (SALE movements) and reservations (`reserve_stock` / `release_reservations`) draw on stock.
+- **General Ledger / Finance** - adjustments and receipts post journals via `services.gl`.
+- **Reports** - Stock Valuation and Inventory Analytics read movement value and balances.
+- **Products / BOMs** - cost method, reorder level, preferred supplier come from Product.
 
 ### Validations & rules
 - **Approval threshold**: adjustments at/above `tenant.stock_adjustment_approval_threshold` go PENDING; below post immediately; zero/blank threshold means no approval gate.
 - **Tenant scoping**: every model/query is filtered by `tenant`.
 - **Location access scoping**: `accessible_location_ids` / `UserLocationAccess` narrows the inventory list and form location dropdowns; a user with no rows (or Admin) sees all locations.
 - **Valuation**: inbound with `unit_cost` updates moving average; FIFO also creates a cost layer; STANDARD always carries `standard_cost` (purchase variance handled in GL). Outbound is valued at average / consumed FIFO layers / standard.
-- **Negative stock**: allowed — FIFO shortfall is valued at fallback (current average) cost.
+- **Negative stock**: allowed - FIFO shortfall is valued at fallback (current average) cost.
 - **Idempotency**: `gl.post_stock_adjustment` returns the existing entry for the same `STOCK_ADJ` ref, preventing double-posting.
 - **GL gating**: zero-value adjustments post no journal.
 - **Status guards**: transfers skip if already POSTED; cycle counts only post when APPROVED; approve/reject only act on PENDING adjustments.
@@ -645,15 +645,15 @@ Note: Accountant/Finance do not appear in the inventory views' `role_required` l
 - Downstream: `JournalEntry` / `JournalLine`, `PurchaseRequisition` / `PurchaseRequisitionLine`, `CreditNote`
 
 ### API / page requirements
-- `/inventory/` — `inventory_list`
-- `/inventory/adjustments/` — `adjustment_list`; `/inventory/adjustments/new/` — `adjustment_create`
-- `/inventory/adjustments/<adj_id>/approve/` — `adjustment_approve`; `.../reject/` — `adjustment_reject`
-- `/inventory/movements/` — `stock_movements`
-- `/inventory/low-stock/` — `low_stock`; `/inventory/low-stock/reorder/` — `low_stock_reorder`
-- `/transfers/`, `/transfers/new/`, `/transfers/<id>/`, `/transfers/<id>/post/` — transfer views
+- `/inventory/` - `inventory_list`
+- `/inventory/adjustments/` - `adjustment_list`; `/inventory/adjustments/new/` - `adjustment_create`
+- `/inventory/adjustments/<adj_id>/approve/` - `adjustment_approve`; `.../reject/` - `adjustment_reject`
+- `/inventory/movements/` - `stock_movements`
+- `/inventory/low-stock/` - `low_stock`; `/inventory/low-stock/reorder/` - `low_stock_reorder`
+- `/transfers/`, `/transfers/new/`, `/transfers/<id>/`, `/transfers/<id>/post/` - transfer views
 - `/cycle-counts/`, `/cycle-counts/new/`, `/cycle-counts/<id>/`, `.../submit/`, `.../approve/`, `.../post/`
 - `/sites/` (+ new/edit/delete), `/locations/` (+ new/edit/delete), `/bins/` (+ new/edit/delete)
-- `/locations/access/` — `location_access` (Admin only)
+- `/locations/access/` - `location_access` (Admin only)
 
 These are server-rendered Django pages (template responses), not a JSON REST API.
 
@@ -687,23 +687,23 @@ flowchart TD
 Manages the full procure-to-pay cycle for a UK SME: internal Purchase Requisitions, Purchase Orders to suppliers, inbound Shipments, Goods Receipts (GRN) into inventory, and three-way-matched Supplier Invoices (bills) that post to the General Ledger. It captures supplier price history for cost intelligence, supports approval thresholds, PO amendments/versioning, backorder tracking, and PO PDF/email to suppliers.
 
 ### Roles involved
-- **Admin** — full access to all purchasing actions.
-- **Purchasing** (group `Procurement`) — create/submit/send/amend/cancel POs, create requisitions, convert approved requisitions, create shipments.
-- **Warehouse** — create requisitions, view POs/shipments, receive goods (GRN).
-- **Manager** — read access across requisitions, POs, backorders, shipments (via the `Procurement`/`Warehouse` group mapping).
-- **Accountant** / **Finance** — supplier invoices (bills) and posting (`/invoices/` is restricted to Admin/Accountant/Finance); Finance also approves/rejects requisitions.
-- **Read-only** — view-only on POs, requisitions, shipments.
+- **Admin** - full access to all purchasing actions.
+- **Purchasing** (group `Procurement`) - create/submit/send/amend/cancel POs, create requisitions, convert approved requisitions, create shipments.
+- **Warehouse** - create requisitions, view POs/shipments, receive goods (GRN).
+- **Manager** - read access across requisitions, POs, backorders, shipments (via the `Procurement`/`Warehouse` group mapping).
+- **Accountant** / **Finance** - supplier invoices (bills) and posting (`/invoices/` is restricted to Admin/Accountant/Finance); Finance also approves/rejects requisitions.
+- **Read-only** - view-only on POs, requisitions, shipments.
 
 Note: requisition **approve/reject** views are gated to `[ROLE_ADMIN, ROLE_FINANCE]`, not Procurement.
 
 ### Workflow
 1. A requester creates a **Purchase Requisition** (`requisition_create`) in Draft or directly Submitted (form `action`).
 2. Admin/Finance **approves** (`requisition_approve`) or rejects/cancels it.
-3. An approved requisition is **converted** (`requisition_convert`) into a Draft **PurchaseOrder** — supplier resolved from `preferred_supplier`, else a product's preferred supplier, else first supplier; lines copied with estimated/standard cost and STD tax code.
+3. An approved requisition is **converted** (`requisition_convert`) into a Draft **PurchaseOrder** - supplier resolved from `preferred_supplier`, else a product's preferred supplier, else first supplier; lines copied with estimated/standard cost and STD tax code.
 4. Purchasing **submits** the PO (`po_submit`): currency set from supplier/tenant, supplier prices recorded (`record_po_prices`), and a planned Shipment + ShipmentLines auto-created. If total > tenant `po_approval_threshold` the PO goes to **Approval Pending**, otherwise **Submitted**.
 5. If required, Admin/Procurement **approves** (`po_approve`) → **Approved** (also ensures a shipment exists).
 6. PO is **sent** to the supplier by email with PDF attached (`po_send`) → **Sent**.
-7. Goods arrive; warehouse posts a **Goods Receipt / GRN** (`receive_po`) against a shipment — qty validated against open qty, inventory movements applied, optional landed cost apportioned, GL receipt posted (`post_inventory_receipt`).
+7. Goods arrive; warehouse posts a **Goods Receipt / GRN** (`receive_po`) against a shipment - qty validated against open qty, inventory movements applied, optional landed cost apportioned, GL receipt posted (`post_inventory_receipt`).
 8. PO status becomes **Partially Received** or **Fully Received** based on remaining open qty; outstanding lines appear in **Backorders**.
 9. Finance/Accountant records and posts a **Supplier Invoice** (`invoice_post` → `post_supplier_invoice`): posts AP GL entry, marks the PO **Billed**, and captures actual billed prices (`record_bill_prices`).
 10. Payment of the supplier invoice is handled by the Finance/Payments module (`supplier_payment_create`).
@@ -717,15 +717,15 @@ Note: requisition **approve/reject** views are gated to `[ROLE_ADMIN, ROLE_FINAN
 
 ### Output generated
 - **Documents:** PO PDF (`po_pdf`, `documents/po_pdf.html`), PO email with PDF attachment (`po_email.html`).
-- **Statuses:** PO — Draft / Submitted / Approval Pending / Approved / Sent / In Transit / Partially Received / Fully Received / Billed / Closed / Cancelled. (In Transit and Closed exist as choices but are not set by the receive/submit flows reviewed.)
-- **GL postings:** GRN receipt — DR Inventory / CR GRNI / CR Accruals (landed) / ± Purchase Price Variance. Supplier invoice — DR GRNI + DR VAT Input / CR Accounts Payable.
+- **Statuses:** PO - Draft / Submitted / Approval Pending / Approved / Sent / In Transit / Partially Received / Fully Received / Billed / Closed / Cancelled. (In Transit and Closed exist as choices but are not set by the receive/submit flows reviewed.)
+- **GL postings:** GRN receipt - DR Inventory / CR GRNI / CR Accruals (landed) / ± Purchase Price Variance. Supplier invoice - DR GRNI + DR VAT Input / CR Accounts Payable.
 - **Records:** GoodsReceipt + GoodsReceiptLines, InventoryMovement (RECEIVE), SupplierPriceHistory (PO and BILL sources), PurchaseOrderAmendment (versioning).
 
 ### Related modules
-- **Inventory** — GRN applies costed stock movements and updates balances.
-- **Finance / GL** — receipt and AP-invoice journal entries (`post_inventory_receipt`, `post_supplier_invoice`).
-- **Payments** — supplier payments settle posted bills (DR AP / CR Bank).
-- **VAT / Tax** — `TaxCode` drives input VAT on PO/invoice lines.
+- **Inventory** - GRN applies costed stock movements and updates balances.
+- **Finance / GL** - receipt and AP-invoice journal entries (`post_inventory_receipt`, `post_supplier_invoice`).
+- **Payments** - supplier payments settle posted bills (DR AP / CR Bank).
+- **VAT / Tax** - `TaxCode` drives input VAT on PO/invoice lines.
 - **Suppliers & Products** master data; **Supplier Scorecard** report (`supplier_scorecard`) consumes bills + GRNs.
 
 ### Validations & rules
@@ -788,26 +788,26 @@ flowchart TD
 The Sales module manages the full order-to-cash lifecycle for selling goods and services to customers: quoting, order capture, invoicing, recurring billing, channel/e-commerce orders, credit notes, and returns. It drives stock reservations and deductions, posts revenue/VAT/COGS to the general ledger on invoice issue, and enforces customer credit limits and on-hold blocks. It connects sales activity directly to inventory and finance so a single tenant's AR ledger, VAT return, and stock valuation stay in sync.
 
 ### Roles involved
-- **Sales** — create/edit quotes, orders, invoices, recurring templates, channel orders, and returns (`SALES_DOC_ROLES = [Sales, Finance, Admin]`).
-- **Finance** / **Accountant** — issue, send, cancel, and refund customer invoices; manage credit notes.
-- **Admin** — full access to all sales documents and configuration.
-- **Manager** — navigation access (sidebar) to quotes, orders, invoices, returns, and channel orders.
-- **Warehouse** — returns (RMA) processing/receiving via nav; channel order posting deducts stock.
-- **Read-only** — list/detail views only (`SALES_DOC_READ` adds Read-only to read paths).
+- **Sales** - create/edit quotes, orders, invoices, recurring templates, channel orders, and returns (`SALES_DOC_ROLES = [Sales, Finance, Admin]`).
+- **Finance** / **Accountant** - issue, send, cancel, and refund customer invoices; manage credit notes.
+- **Admin** - full access to all sales documents and configuration.
+- **Manager** - navigation access (sidebar) to quotes, orders, invoices, returns, and channel orders.
+- **Warehouse** - returns (RMA) processing/receiving via nav; channel order posting deducts stock.
+- **Read-only** - list/detail views only (`SALES_DOC_READ` adds Read-only to read paths).
 
 ### Workflow
-1. **Quote** — Sales creates a `SalesQuote` (DRAFT) with line items; optionally emails it (`quote_send`), moving it to SENT.
-2. **Quote acceptance** — status moved via `quote_status` (ACCEPTED/DECLINED/EXPIRED/CANCELLED).
-3. **Convert quote** — `quote_to_order` creates a CONFIRMED `CustomerOrder` (copying lines, linked via `CustomerOrder.quote`); or `quote_to_invoice` creates a draft `CustomerInvoice` (linked via `source_quote`). The quote is set to CONVERTED.
-4. **Order confirm** — `corder_status` "confirm" runs `credit_status`, then reserves stock via `_reserve_customer_order` → `reserve_stock` (ref_type `CUSTOMER_ORDER`).
-5. **Convert order to invoice** — `corder_to_invoice` builds a draft `CustomerInvoice` (linked via `source_order`), sets the order to INVOICED, and releases reservations (`_release_customer_order`).
-6. **Issue invoice** — `ar_invoice_issue` checks `credit_status`, then `post_customer_invoice` posts the GL entry, sets status ISSUED, and runs `_post_invoice_cogs` to deduct stock and book COGS.
-7. **Send invoice** — `ar_invoice_send` issues (if draft) then emails the PDF and marks SENT.
-8. **Payment/credit** — payments allocate against the invoice; `outstanding` derives Partially paid / Paid / Overdue display states.
-9. **Cancel/refund** — `ar_invoice_cancel` reverses the GL entry (if posted and unpaid); `ar_invoice_refund` and `CreditNote` handle post-payment credits.
-10. **Recurring** — `RecurringInvoice` templates generate invoices on schedule via `generate_for_template` / `generate_due` (auto-issued if `auto_issue`).
-11. **Channel orders** — `SalesOrder` (Shopify/e-commerce) posts via `sales_order_post` → `_post_sales_order` (releases reservations, deducts stock, allows negative with shortage warnings).
-12. **Returns** — `ReturnAuthorization` (RMA) processed via `return_process` (approve → receive) restocks goods via `_receive_rma`.
+1. **Quote** - Sales creates a `SalesQuote` (DRAFT) with line items; optionally emails it (`quote_send`), moving it to SENT.
+2. **Quote acceptance** - status moved via `quote_status` (ACCEPTED/DECLINED/EXPIRED/CANCELLED).
+3. **Convert quote** - `quote_to_order` creates a CONFIRMED `CustomerOrder` (copying lines, linked via `CustomerOrder.quote`); or `quote_to_invoice` creates a draft `CustomerInvoice` (linked via `source_quote`). The quote is set to CONVERTED.
+4. **Order confirm** - `corder_status` "confirm" runs `credit_status`, then reserves stock via `_reserve_customer_order` → `reserve_stock` (ref_type `CUSTOMER_ORDER`).
+5. **Convert order to invoice** - `corder_to_invoice` builds a draft `CustomerInvoice` (linked via `source_order`), sets the order to INVOICED, and releases reservations (`_release_customer_order`).
+6. **Issue invoice** - `ar_invoice_issue` checks `credit_status`, then `post_customer_invoice` posts the GL entry, sets status ISSUED, and runs `_post_invoice_cogs` to deduct stock and book COGS.
+7. **Send invoice** - `ar_invoice_send` issues (if draft) then emails the PDF and marks SENT.
+8. **Payment/credit** - payments allocate against the invoice; `outstanding` derives Partially paid / Paid / Overdue display states.
+9. **Cancel/refund** - `ar_invoice_cancel` reverses the GL entry (if posted and unpaid); `ar_invoice_refund` and `CreditNote` handle post-payment credits.
+10. **Recurring** - `RecurringInvoice` templates generate invoices on schedule via `generate_for_template` / `generate_due` (auto-issued if `auto_issue`).
+11. **Channel orders** - `SalesOrder` (Shopify/e-commerce) posts via `sales_order_post` → `_post_sales_order` (releases reservations, deducts stock, allows negative with shortage warnings).
+12. **Returns** - `ReturnAuthorization` (RMA) processed via `return_process` (approve → receive) restocks goods via `_receive_rma`.
 
 ### Input data
 - Customer, currency, quote/order/invoice dates, valid-until / due-date.
@@ -825,12 +825,12 @@ The Sales module manages the full order-to-cash lifecycle for selling goods and 
 - Customer outstanding balance / aged-debtor data; VAT-return inputs (output VAT).
 
 ### Related modules
-- **Inventory** — reservations (`reserve_stock`/`release_reservations`), SALE/RETURN movements (`apply_movement`), kit explosion (`explode_product`).
-- **Finance / GL** — journal entries, COGS, VAT Output, AR control account; credit notes; payments/receipts allocation.
-- **Customers** — credit limit and on-hold status (`credit_status`), statements.
-- **VAT (MTD)** — issued invoices feed output-VAT boxes via tax codes.
-- **Reports** — sales reports (history, by product/customer/channel), profitability, aged receivables.
-- **Channels** — `SalesOrder` from Shopify/e-commerce connectors.
+- **Inventory** - reservations (`reserve_stock`/`release_reservations`), SALE/RETURN movements (`apply_movement`), kit explosion (`explode_product`).
+- **Finance / GL** - journal entries, COGS, VAT Output, AR control account; credit notes; payments/receipts allocation.
+- **Customers** - credit limit and on-hold status (`credit_status`), statements.
+- **VAT (MTD)** - issued invoices feed output-VAT boxes via tax codes.
+- **Reports** - sales reports (history, by product/customer/channel), profitability, aged receivables.
+- **Channels** - `SalesOrder` from Shopify/e-commerce connectors.
 
 ### Validations & rules
 - **Credit control**: `credit_status(total)` blocks issuing an invoice when over limit or customer ON_HOLD. On order confirm, ON_HOLD is a hard block but over-limit only warns (no receivable until invoiced).
@@ -892,9 +892,9 @@ flowchart TD
 A double-entry general ledger that turns operational events (invoices, payments, expenses, credit notes, goods receipts, stock changes) into balanced journal entries automatically. It also handles cash recording (customer receipts, supplier payments, customer refunds) with FIFO allocation against open invoices, plus bank-statement reconciliation. Designed for a UK SME: VAT input/output accounts feed the MTD VAT return, and sensitive cash records are soft-deleted (never hard-deleted) for audit.
 
 ### Roles involved
-- **Finance** (Django group `Finance`, membership roles ACCOUNTANT and FINANCE) — primary writer for payments, GL accounts, credit notes, expenses, reconciliation.
-- **Admin** — full access; sees everything.
-- **Read-only** — can view the Journal (`journal_detail` allows ROLE_READONLY) and financial reports; no write access.
+- **Finance** (Django group `Finance`, membership roles ACCOUNTANT and FINANCE) - primary writer for payments, GL accounts, credit notes, expenses, reconciliation.
+- **Admin** - full access; sees everything.
+- **Read-only** - can view the Journal (`journal_detail` allows ROLE_READONLY) and financial reports; no write access.
 - Other roles (Manager, Sales, Warehouse, Purchasing) can only *record* expenses (the `/expenses/` page is open to them), but posting expenses to the GL is Finance/Admin.
 
 ### Workflow
@@ -905,7 +905,7 @@ A double-entry general ledger that turns operational events (invoices, payments,
 5. **Record a customer refund** at `/payments/refunds/new/`: DR AR / CR Bank (no allocation).
 6. **Credit notes** (`/credit-notes/new/`) are drafted then posted (`post_credit_note`); a sales credit reverses Sales/VAT Output against AR, a purchase credit reverses against AP.
 7. **Expenses** are recorded, optionally submitted/approved, then posted (`post_expense`) to the chosen expense account.
-8. **Import the bank statement** (`/bank/transactions/import/`, CSV: date, description, amount), then **reconcile** at `/bank/reconcile/` — auto-match or manually match each line to a Payment or paid Expense and mark reconciled.
+8. **Import the bank statement** (`/bank/transactions/import/`, CSV: date, description, amount), then **reconcile** at `/bank/reconcile/` - auto-match or manually match each line to a Payment or paid Expense and mark reconciled.
 9. **Reverse / delete:** soft-deleting a payment (`/payments/<id>/delete/`) calls `reverse_payment` to post a mirror entry, frees the settled invoices, and flags the row deleted (kept for audit).
 10. Resulting balances flow into the financial reports (trial balance, P&L, balance sheet) and the VAT return.
 
@@ -927,7 +927,7 @@ A double-entry general ledger that turns operational events (invoices, payments,
 - **Sales / AR** (CustomerInvoice → receipts, sales credit notes).
 - **Procurement / AP** (SupplierInvoice → supplier payments, GRNI, purchase credit notes).
 - **Inventory** (COGS, inventory receipt, stock-adjustment postings).
-- **VAT (MTD)** — VAT input/output accounts feed the 9-box `VatReturn`.
+- **VAT (MTD)** - VAT input/output accounts feed the 9-box `VatReturn`.
 - **Reports** (trial balance, P&L, balance sheet, aged debtors/creditors, cash flow) read the GL.
 
 ### Validations & rules
@@ -938,8 +938,8 @@ A double-entry general ledger that turns operational events (invoices, payments,
 - **Soft-delete (sensitive):** `Payment` uses `SoftDeleteManager` (`is_deleted`, `deleted_by`, `deleted_at`); the default manager hides deleted rows, `all_objects` retains them. Deletion posts a reversing entry rather than removing ledger history.
 - **No GL hard-edit:** journal entries are not editable through the UI; corrections go via reversals/new postings.
 - **GLAccount uniqueness:** `(tenant, code)` unique; accounts are PROTECTed from deletion by journal lines and expenses.
-- **Bank reconciliation posts nothing** to the ledger — it is matching/preparation only.
-- **Supplier invoices have no PAID state** — once settled they remain POSTED.
+- **Bank reconciliation posts nothing** to the ledger - it is matching/preparation only.
+- **Supplier invoices have no PAID state** - once settled they remain POSTED.
 - Approval thresholds: not implemented for payments/credit notes (expenses have a DRAFT→SUBMITTED→approve flow; payments and credit notes post directly with Finance/Admin rights).
 
 ### Database entities
@@ -992,12 +992,12 @@ flowchart TD
 Computes Making Tax Digital (MTD) 9-box VAT returns for a UK tenant by aggregating VAT at transaction-line level across every VAT-bearing document in a chosen period. It also manages the tenant's library of VAT tax codes (rate + treatment) that drive how each line is taxed and reported. Returns are saved as DRAFT and can be marked SUBMITTED; live HMRC filing is intentionally a clearly-labelled local stub.
 
 ### Roles involved
-- **Finance** (`ROLE_FINANCE` — covers both the Finance and Accountant membership roles, which both map to the Django `Finance` group): full read/write on tax codes and VAT returns.
+- **Finance** (`ROLE_FINANCE` - covers both the Finance and Accountant membership roles, which both map to the Django `Finance` group): full read/write on tax codes and VAT returns.
 - **Admin** (`ROLE_ADMIN`): full read/write.
 - **Read-only** (`ROLE_READONLY`): read access to tax code list, VAT preview/returns and VAT records; cannot create/edit/save/submit.
 
 ### Workflow
-1. Finance/Admin maintains VAT tax codes at `/tax-codes/` — create/edit a `TaxCode` with a `code`, `name`, `rate` (decimal fraction, e.g. `0.2000`) and `kind` (standard/reduced/zero/exempt/outside-scope).
+1. Finance/Admin maintains VAT tax codes at `/tax-codes/` - create/edit a `TaxCode` with a `code`, `name`, `rate` (decimal fraction, e.g. `0.2000`) and `kind` (standard/reduced/zero/exempt/outside-scope).
 2. Tax codes are selected on individual document lines (sales invoices, supplier bills, expenses, credit notes), so each line carries its own VAT treatment.
 3. To prepare a return, the user opens `/vat/`, enters a period (`from`/`to`), and the page renders a live preview by calling `compute_vat_return`.
 4. `vat_transactions` walks every VAT-bearing line in the period; `vat_summary` aggregates output/input VAT and a per-rate breakdown; `compute_vat_return` maps the totals onto the nine boxes.
@@ -1014,18 +1014,18 @@ Computes Making Tax Digital (MTD) 9-box VAT returns for a UK tenant by aggregati
 ### Output generated
 - Live 9-box preview (boxes 1–9) plus plain-English summary and per-rate breakdown.
 - Persisted `VatReturn` records (DRAFT, then SUBMITTED).
-- `submitted_at` timestamp and `hmrc_reference` (`LOCAL-STUB-<id>` — not a real HMRC receipt).
+- `submitted_at` timestamp and `hmrc_reference` (`LOCAL-STUB-<id>` - not a real HMRC receipt).
 - Digital VAT records list (one row per VAT-bearing line; credit notes signed negative).
 - Audit log entries: `VAT_RATE_CHANGED`, `VAT_RETURN_SAVED`, `VAT_RETURN_SUBMITTED`, `RECORD_DELETED`.
 - No GL postings are generated by this module (VAT is reported, not posted, here).
 
 ### Related modules
-- **Sales / AR** — `CustomerInvoice` lines feed output VAT (boxes 1, 6).
-- **Procurement / AP** — `SupplierInvoice` lines feed input VAT (boxes 4, 7).
-- **Expenses** — POSTED `Expense` records feed input VAT.
-- **Credit Notes** — sales/purchase credit notes reduce output/input VAT respectively.
-- **Reports** — uses `reports_service.current_financial_year` to default the VAT records period.
-- **Audit Log** — every mutating action is logged.
+- **Sales / AR** - `CustomerInvoice` lines feed output VAT (boxes 1, 6).
+- **Procurement / AP** - `SupplierInvoice` lines feed input VAT (boxes 4, 7).
+- **Expenses** - POSTED `Expense` records feed input VAT.
+- **Credit Notes** - sales/purchase credit notes reduce output/input VAT respectively.
+- **Reports** - uses `reports_service.current_financial_year` to default the VAT records period.
+- **Audit Log** - every mutating action is logged.
 
 ### Validations & rules
 - **Tenant scoping**: all `TaxCode` and `VatReturn` queries filter by tenant; tax code `code` is unique per tenant.
@@ -1033,10 +1033,10 @@ Computes Making Tax Digital (MTD) 9-box VAT returns for a UK tenant by aggregati
 - **Period validity**: `vat_save` rejects missing dates or `date_to < date_from`.
 - **Treatment rules**: outside-scope (`OUTSIDE`) supplies are excluded from net boxes 6/7 (`in_vat_boxes` is False); zero-rated and exempt supplies are included at a zero rate. A line with no tax code is treated as "No VAT" but still included in net boxes.
 - **Document status gating**: only ISSUED/SENT/PAID sales invoices, POSTED supplier bills, POSTED expenses and POSTED credit notes are picked up.
-- **Box 2/8/9**: hard-coded to 0.00 (post-Brexit GB assumption — EU acquisitions/supplies not implemented).
-- **Submission immutability**: `submit_vat_return` is idempotent — a return already SUBMITTED is returned unchanged.
+- **Box 2/8/9**: hard-coded to 0.00 (post-Brexit GB assumption - EU acquisitions/supplies not implemented).
+- **Submission immutability**: `submit_vat_return` is idempotent - a return already SUBMITTED is returned unchanged.
 - **MTD stub**: actual HMRC submission is NOT implemented; the single replacement seam is `submit_vat_return`, and the user is warned the reference is a local stub.
-- **Soft-delete**: not implemented for tax codes — `taxcode_delete` performs a hard `obj.delete()`.
+- **Soft-delete**: not implemented for tax codes - `taxcode_delete` performs a hard `obj.delete()`.
 
 ### Database entities
 - `TaxCode` (with `Kind` choices STANDARD/REDUCED/ZERO/EXEMPT/OUTSIDE and `in_vat_boxes` property)
@@ -1054,7 +1054,7 @@ Computes Making Tax Digital (MTD) 9-box VAT returns for a UK tenant by aggregati
 - `POST /vat/<int:vr_id>/submit/` → `vat_submit` (local stub)
 - `GET /vat/records/?from=&to=` → `vat_records`
 - Service functions (`core/services/vat.py`): `vat_transactions`, `vat_summary`, `compute_vat_return`, `save_vat_return`, `submit_vat_return`.
-- No JSON/REST API — these are server-rendered Django views/templates.
+- No JSON/REST API - these are server-rendered Django views/templates.
 
 ### Flow diagram
 ```mermaid
@@ -1084,10 +1084,10 @@ flowchart TD
 Lets staff record everyday business costs (rent, fuel, software, professional fees, etc.) that arrive without a formal supplier bill, optionally attaching a receipt photo or PDF. Each expense carries a net amount plus a VAT tax code, runs through a Draft → Submitted → Posted approval workflow, and on posting generates the GL double-entry (DR expense account + DR VAT input, CR Bank or Accounts Payable).
 
 ### Roles involved
-- **Admin** — full access (submit, approve, post, reject).
-- **Finance** — approver: submit, approve, reject, post (`EXPENSE_APPROVERS = [ROLE_FINANCE, ROLE_ADMIN]`).
-- **Manager, Sales, Warehouse, Purchasing** — staff: create, save draft, submit for approval (`EXPENSE_STAFF = [ROLE_ADMIN, ROLE_FINANCE, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES]`; note Manager maps to the Procurement/Warehouse/Sales groups).
-- **Read-only** — may view the list and detail only (`expense_list` / `expense_detail` include `ROLE_READONLY`).
+- **Admin** - full access (submit, approve, post, reject).
+- **Finance** - approver: submit, approve, reject, post (`EXPENSE_APPROVERS = [ROLE_FINANCE, ROLE_ADMIN]`).
+- **Manager, Sales, Warehouse, Purchasing** - staff: create, save draft, submit for approval (`EXPENSE_STAFF = [ROLE_ADMIN, ROLE_FINANCE, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES]`; note Manager maps to the Procurement/Warehouse/Sales groups).
+- **Read-only** - may view the list and detail only (`expense_list` / `expense_detail` include `ROLE_READONLY`).
 - **Accountant** appears in the sidebar entry for `/expenses/` but is not in `EXPENSE_STAFF`/`EXPENSE_APPROVERS`, so its write access is via the Finance group mapping.
 
 ### Workflow
@@ -1105,11 +1105,11 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 
 ### Input data
 - Expense date, payee (merchant), optional supplier link.
-- Category — an active `GLAccount` of type EXPENSE (form restricts the queryset to `type=EXPENSE, is_active=True`).
+- Category - an active `GLAccount` of type EXPENSE (form restricts the queryset to `type=EXPENSE, is_active=True`).
 - Description, net amount (before VAT), tax code (optional; defaults to tenant `default_tax_code`).
 - Payment method (Bank transfer / Card / Cash / Other), reference.
 - Flags: `paid` (paid now vs owed), `reimbursable` (paid personally).
-- Receipt file upload — validated to `.pdf/.png/.jpg/.jpeg/.gif/.webp/.heic`, stored tenant-scoped under `expense_receipts/<tenant_id>/`.
+- Receipt file upload - validated to `.pdf/.png/.jpg/.jpeg/.gif/.webp/.heic`, stored tenant-scoped under `expense_receipts/<tenant_id>/`.
 
 ### Output generated
 - An `Expense` record with status Draft / Submitted / Rejected / Posted.
@@ -1118,13 +1118,13 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 - Posted expenses flow into VAT input reclaim and P&L expense reporting via the journal.
 
 ### Related modules
-- **General Ledger / Chart of Accounts** — categories are EXPENSE `GLAccount`s; posting writes `JournalEntry`/`JournalLine`.
-- **VAT / Tax Codes** — `tax_code` drives reclaimable VAT Input.
-- **Suppliers / Accounts Payable** — optional supplier link; unpaid expenses credit AP.
-- **Bank** — paid expenses credit the Bank account (feeds bank reconciliation).
-- **Reports** — Profit & Loss (expense accounts) and VAT return.
-- **Inter-company** — `is_intercompany` flag marks group purchases for consolidation elimination (set programmatically, not in the standard form).
-- **Tenant Settings** — `expense_approval_threshold` configured under Company Profile.
+- **General Ledger / Chart of Accounts** - categories are EXPENSE `GLAccount`s; posting writes `JournalEntry`/`JournalLine`.
+- **VAT / Tax Codes** - `tax_code` drives reclaimable VAT Input.
+- **Suppliers / Accounts Payable** - optional supplier link; unpaid expenses credit AP.
+- **Bank** - paid expenses credit the Bank account (feeds bank reconciliation).
+- **Reports** - Profit & Loss (expense accounts) and VAT return.
+- **Inter-company** - `is_intercompany` flag marks group purchases for consolidation elimination (set programmatically, not in the standard form).
+- **Tenant Settings** - `expense_approval_threshold` configured under Company Profile.
 
 ### Validations & rules
 - **Approval threshold**: if `tenant.expense_approval_threshold > 0` and `expense.total >= threshold`, the expense cannot be posted on creation and is forced to Submitted for approval.
@@ -1135,7 +1135,7 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 - **Receipt type validation**: PDF or image extensions only.
 - **Tenant scoping**: every query filters `tenant=_get_default_tenant(request)`; receipts stored per-tenant directory.
 - **Referential protection**: `category`, `supplier`, `tax_code` use `on_delete=PROTECT`.
-- **No soft-delete or immutability lock** on posted expenses is implemented — there is no edit/delete view or void path for a posted expense; not implemented.
+- **No soft-delete or immutability lock** on posted expenses is implemented - there is no edit/delete view or void path for a posted expense; not implemented.
 
 ### Database entities
 - `Expense` (statuses DRAFT/SUBMITTED/REJECTED/POSTED; methods BANK/CARD/CASH/OTHER; computed `tax_amount`, `total`).
@@ -1143,7 +1143,7 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 - `TaxCode`, `Supplier`, `Tenant` (holds `expense_approval_threshold`, `default_tax_code`, `currency_code`).
 - `JournalEntry` / `JournalLine` (the posted double-entry).
 - `auth.User` via `submitted_by`, `approved_by`, `posted_by`.
-- Note: `Expense` has no line-item child model — it is a single net amount plus one tax code.
+- Note: `Expense` has no line-item child model - it is a single net amount plus one tax code.
 
 ### API / page requirements
 - `GET /expenses/` → `expense_list` (list + total; read-only roles allowed).
@@ -1153,7 +1153,7 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 - `POST /expenses/<int:expense_id>/approve/` → `expense_approve`.
 - `POST /expenses/<int:expense_id>/reject/` → `expense_reject` (reads `reason`).
 - `POST /expenses/<int:expense_id>/post/` → `expense_post` (Finance/Admin).
-- No JSON/REST API — these are server-rendered Django views/templates under `core/templates/expenses/`.
+- No JSON/REST API - these are server-rendered Django views/templates under `core/templates/expenses/`.
 
 ### Flow diagram
 ```mermaid
@@ -1318,12 +1318,12 @@ Document PDFs inherit the access rules of the calling view, so roles vary per do
 - Computed money values (subtotal, VAT, total) where the source view calculates them.
 
 ### Output generated
-- Customer Invoice PDF — `invoice-<invoice_number>.pdf` (template `documents/invoice_pdf.html`).
-- Quote PDF — `quote-<quote_number>.pdf` (`documents/quote_pdf.html`).
-- Sales Order PDF — `sales-order-<order_number>.pdf` (`documents/order_pdf.html`).
-- Purchase Order PDF — `purchase-order-<po_number>.pdf` (`documents/po_pdf.html`).
-- Credit Note PDF — `credit-note-<credit_note_number>.pdf` (`documents/credit_note_pdf.html`).
-- Customer Statement PDF — `statement-<customer.name>.pdf` (`documents/statement_pdf.html`).
+- Customer Invoice PDF - `invoice-<invoice_number>.pdf` (template `documents/invoice_pdf.html`).
+- Quote PDF - `quote-<quote_number>.pdf` (`documents/quote_pdf.html`).
+- Sales Order PDF - `sales-order-<order_number>.pdf` (`documents/order_pdf.html`).
+- Purchase Order PDF - `purchase-order-<po_number>.pdf` (`documents/po_pdf.html`).
+- Credit Note PDF - `credit-note-<credit_note_number>.pdf` (`documents/credit_note_pdf.html`).
+- Customer Statement PDF - `statement-<customer.name>.pdf` (`documents/statement_pdf.html`).
 - Email attachments (same bytes) for invoice send, PO send, quote send, and statement email.
 - No GL postings or status changes are produced by the PDF layer itself; status side-effects (e.g. invoice → SENT) belong to the calling send views.
 
@@ -1341,7 +1341,7 @@ Document PDFs inherit the access rules of the calling view, so roles vary per do
 - Templates are standalone and must use only xhtml2pdf's limited CSS subset; they do NOT extend `base.html` (`_pdf_base.html` is the shared base with inline `@page` A4 styling).
 - VAT line on the PDF only renders when `tenant.vat_registered` and `tenant.vat_number` are set.
 - Email-send guards live in the caller, not the PDF layer (e.g. `po_send` blocks cancelled/closed POs and requires a supplier email; `ar_invoice_send` enforces credit status and issues a draft before sending).
-- No persistent storage of generated PDFs — they are rendered on demand each request (not cached or filed against the record).
+- No persistent storage of generated PDFs - they are rendered on demand each request (not cached or filed against the record).
 
 ### Database entities
 The PDF service itself defines no models; it reads existing entities:
@@ -1395,11 +1395,11 @@ flowchart TD
 SwifPro BI has no dedicated notification model or inbox; instead it combines best-effort transactional emails (invoices, quotes, dunning reminders, access-request and credential emails), an in-app low-stock alerts page, and Django's `messages` framework for toast feedback. All email sends are fire-and-forget (`fail_silently=True`) so a mail-server problem never breaks the underlying business flow. Overdue-payment dunning and quote-expiry alerts run via a once-a-day housekeeping pass, either opportunistically on page load or from a scheduled management command.
 
 ### Roles involved
-- **Admin** — receives new access-request emails (`notify_admins_new_request`); configures dunning on the tenant; sees all alert pages.
-- **Sales / Manager** — email quotes (`notify_sales_document`) and customer invoices (`notify_invoice`); trigger recurring-invoice runs; view low-stock alerts.
-- **Accountant / Finance** — email/issue invoices, rely on automatic overdue dunning reminders.
-- **Warehouse / Purchasing** — consume the Low Stock alert page and reorder from it.
-- **Read-only** — sees in-app `messages` toasts only; no send actions.
+- **Admin** - receives new access-request emails (`notify_admins_new_request`); configures dunning on the tenant; sees all alert pages.
+- **Sales / Manager** - email quotes (`notify_sales_document`) and customer invoices (`notify_invoice`); trigger recurring-invoice runs; view low-stock alerts.
+- **Accountant / Finance** - email/issue invoices, rely on automatic overdue dunning reminders.
+- **Warehouse / Purchasing** - consume the Low Stock alert page and reorder from it.
+- **Read-only** - sees in-app `messages` toasts only; no send actions.
 - Applicants (non-role) receive approval/rejection/credential emails.
 
 ### Workflow
@@ -1426,16 +1426,16 @@ SwifPro BI has no dedicated notification model or inbox; instead it combines bes
 - **In-app toasts** via Django `messages` (success/info/error).
 - **Status side effects**: quotes flipped to `EXPIRED`; recurring invoices generated; invoice `last_reminder_at`/`reminder_count` bumped; `tenant.last_housekeeping_date` set.
 - **Low Stock alert list** (rendered `inventory/low_stock.html`) and resulting Purchase Requisitions from the reorder action.
-- Not implemented: there is no persisted notification log/inbox model, no read/unread tracking, and no SMS/push channel — alerts are email + transient `messages` + on-demand pages only.
+- Not implemented: there is no persisted notification log/inbox model, no read/unread tracking, and no SMS/push channel - alerts are email + transient `messages` + on-demand pages only.
 
 ### Related modules
-- **AR / Invoicing** — invoice emails and overdue dunning.
-- **Sales / Quotes** — quote emails and quote-expiry automation.
-- **Recurring Invoices** — generated as part of the same housekeeping pass.
-- **Inventory / Procurement** — Low Stock alerts feed Purchase Requisitions.
-- **User Access / Onboarding** — access-request and credential emails.
-- **Tenant settings** — dunning enable/interval configuration.
-- **Audit Log** — `RECURRING_GENERATED` and related actions are logged.
+- **AR / Invoicing** - invoice emails and overdue dunning.
+- **Sales / Quotes** - quote emails and quote-expiry automation.
+- **Recurring Invoices** - generated as part of the same housekeeping pass.
+- **Inventory / Procurement** - Low Stock alerts feed Purchase Requisitions.
+- **User Access / Onboarding** - access-request and credential emails.
+- **Tenant settings** - dunning enable/interval configuration.
+- **Audit Log** - `RECURRING_GENERATED` and related actions are logged.
 
 ### Validations & rules
 - All emails are best-effort: `fail_silently=True`; senders return `False` (no exception) when the recipient has no email.
@@ -1494,7 +1494,7 @@ flowchart TD
 Provides an append-only security and change-tracking trail that records who did what, when, and from where across the tenant. It captures logins, access-denied events, sensitive data changes, deletions, exports, and configuration changes so an admin can later prove and investigate activity. The trail is tamper-resistant: existing records cannot be modified, only created.
 
 ### Roles involved
-- **Admin** — the only role that can view, filter, and export the audit log (the viewer is gated by `@role_required([ROLE_ADMIN], [ROLE_ADMIN])`). Every other role can *generate* audit entries implicitly through their normal actions (e.g. Warehouse stock adjustments, Sales invoice deletions, Finance VAT changes), but cannot read the log.
+- **Admin** - the only role that can view, filter, and export the audit log (the viewer is gated by `@role_required([ROLE_ADMIN], [ROLE_ADMIN])`). Every other role can *generate* audit entries implicitly through their normal actions (e.g. Warehouse stock adjustments, Sales invoice deletions, Finance VAT changes), but cannot read the log.
 
 ### Workflow
 1. A user performs an action anywhere in the app (logs in, deletes a draft invoice, adjusts stock, changes VAT settings, exports data, etc.).
@@ -1502,7 +1502,7 @@ Provides an append-only security and change-tracking trail that records who did 
 3. `log_audit` resolves the authenticated user, captures the request `path`, client IP (honouring `X-Forwarded-For`), and truncated user-agent, then creates an `AuditLog` row scoped to the active `tenant`. It is best-effort and never raises into the request path.
 4. Login, logout, and failed-login events are captured automatically via `user_logged_in` / `user_logged_out` / `user_login_failed` signal receivers in `core/signals.py`.
 5. An Admin opens `/audit/`, optionally filtering by action, free-text (`q`), and date range (`from`/`to`); the latest 500 matching rows render.
-6. The Admin can download the trail (up to 5000 rows) via `/audit/export.csv` (CSV, or `?format=xlsx` for Excel) — this export is itself logged as `DATA_EXPORTED`.
+6. The Admin can download the trail (up to 5000 rows) via `/audit/export.csv` (CSV, or `?format=xlsx` for Excel) - this export is itself logged as `DATA_EXPORTED`.
 
 ### Input data
 - Action code (e.g. `LOGIN`, `STOCK_ADJUSTED`, `INVOICE_DELETED`).
@@ -1519,28 +1519,28 @@ Provides an append-only security and change-tracking trail that records who did 
 - No GL postings are produced by this module.
 
 ### Related modules
-- **Authentication / Users & Roles** — `LOGIN`, `LOGIN_FAILED`, `LOGOUT`, `PASSWORD_CHANGED`, `ROLE_CHANGED`, `PERMISSION_CHANGED`, `USER_INVITED`, `USER_REMOVED`, `ACCESS_REQUEST*`, `LOCATION_ACCESS_CHANGED`.
-- **Inventory** — `STOCK_ADJ_REQUESTED`, `STOCK_ADJUSTED`, `STOCK_ADJ_APPROVED/REJECTED`, `PRODUCT_COST_CHANGED`.
-- **Sales / AR** — `INVOICE_DELETED`, `INVOICE_SENT`, `INVOICE_CANCELLED`, `QUOTE_*`, `ORDER_*`, `RECURRING_GENERATED`, `REFUND_RECORDED`, `STATEMENT_SENT`.
-- **Finance / VAT** — `PAYMENT_DELETED`, `VAT_SETTINGS_CHANGED`, `VAT_RATE_CHANGED`, `VAT_RETURN_SAVED/SUBMITTED`, `INTERCOMPANY_SALE`.
-- **Settings / Admin** — `ORG_CREATED`, `SETTINGS_CHANGED`, `GROUP_CHANGED`, `ACCESS_DENIED`, `DATA_EXPORTED`, generic `RECORD_DELETED`.
+- **Authentication / Users & Roles** - `LOGIN`, `LOGIN_FAILED`, `LOGOUT`, `PASSWORD_CHANGED`, `ROLE_CHANGED`, `PERMISSION_CHANGED`, `USER_INVITED`, `USER_REMOVED`, `ACCESS_REQUEST*`, `LOCATION_ACCESS_CHANGED`.
+- **Inventory** - `STOCK_ADJ_REQUESTED`, `STOCK_ADJUSTED`, `STOCK_ADJ_APPROVED/REJECTED`, `PRODUCT_COST_CHANGED`.
+- **Sales / AR** - `INVOICE_DELETED`, `INVOICE_SENT`, `INVOICE_CANCELLED`, `QUOTE_*`, `ORDER_*`, `RECURRING_GENERATED`, `REFUND_RECORDED`, `STATEMENT_SENT`.
+- **Finance / VAT** - `PAYMENT_DELETED`, `VAT_SETTINGS_CHANGED`, `VAT_RATE_CHANGED`, `VAT_RETURN_SAVED/SUBMITTED`, `INTERCOMPANY_SALE`.
+- **Settings / Admin** - `ORG_CREATED`, `SETTINGS_CHANGED`, `GROUP_CHANGED`, `ACCESS_DENIED`, `DATA_EXPORTED`, generic `RECORD_DELETED`.
 
 ### Validations & rules
-- **Append-only / immutable**: `AuditLog.save()` raises `ValueError` if a row with an existing PK is re-saved — records can never be updated or edited.
+- **Append-only / immutable**: `AuditLog.save()` raises `ValueError` if a row with an existing PK is re-saved - records can never be updated or edited.
 - **Tenant-scoped**: both the viewer and export filter strictly on the active tenant; on tenant deletion the FK is `SET_NULL` so the trail survives.
 - **Admin-only access**: viewer and export require the Admin role; access-denied attempts elsewhere are themselves logged as `ACCESS_DENIED`.
 - **Best-effort, non-blocking**: `log_audit` swallows all exceptions so audit failures never break the user's primary action.
 - **Field truncation**: `entity_type` ≤ 80, `entity_id` ≤ 64, `detail` ≤ 255, `user_agent` ≤ 255 chars.
 - **Viewer/export caps**: viewer shows max 500 rows, export max 5000 rows.
-- **Soft-delete for sensitive records**: deletions of customer invoices and payments set `is_deleted` / `deleted_at` / `deleted_by` (the underlying row is retained) and emit `INVOICE_DELETED` / `PAYMENT_DELETED` audit entries rather than hard-deleting. Note: there is no auto-prune/retention job — entries persist indefinitely until manually managed.
+- **Soft-delete for sensitive records**: deletions of customer invoices and payments set `is_deleted` / `deleted_at` / `deleted_by` (the underlying row is retained) and emit `INVOICE_DELETED` / `PAYMENT_DELETED` audit entries rather than hard-deleting. Note: there is no auto-prune/retention job - entries persist indefinitely until manually managed.
 
 ### Database entities
 - `AuditLog` (fields: `tenant`, `user`, `username`, `action`, `entity_type`, `entity_id`, `old_value`, `new_value`, `detail`, `path`, `ip`, `user_agent`, `created_at`).
 - References `Tenant` and `auth.User` (both nullable, `SET_NULL`).
 
 ### API / page requirements
-- `GET /audit/` → `views.audit_log_list` (name `audit_log_list`) — filterable HTML viewer; query params `action`, `q`, `from`, `to`.
-- `GET /audit/export.csv` → `views.audit_log_export` (name `audit_log_export`) — CSV download; `?format=xlsx` returns Excel.
+- `GET /audit/` → `views.audit_log_list` (name `audit_log_list`) - filterable HTML viewer; query params `action`, `q`, `from`, `to`.
+- `GET /audit/export.csv` → `views.audit_log_export` (name `audit_log_export`) - CSV download; `?format=xlsx` returns Excel.
 - Sidebar entry: **Administration → Audit Log** (`/audit/`, icon `shield-lock`, Admin only).
 - Writer (not an endpoint): `core.audit.log_audit(...)`, invoked throughout `core/views.py` and `core/signals.py`.
 - No JSON/REST API is exposed for this module.
@@ -1575,11 +1575,11 @@ flowchart TD
 Provides bulk CSV import for master data (products, customers, suppliers) using upsert-by-key with per-row validation, plus CSV/Excel export of both master data and finance reports/ledgers. Lets a UK SME bootstrap its catalogue and contacts from spreadsheets and extract accounting data for accountants, HMRC filing prep, or backup. Every export is gated by the `export_data` permission and audited.
 
 ### Roles involved
-- **Admin** — full import (products, customers, suppliers) and all exports.
-- **Purchasing** (Procurement group) — import products and suppliers.
-- **Sales** — import customers.
-- **Finance / Accountant** — import customers; finance/master-data exports (via `EXPORT_DATA` permission).
-- Any authenticated user — download blank import templates (`import_template` is `@login_required` only).
+- **Admin** - full import (products, customers, suppliers) and all exports.
+- **Purchasing** (Procurement group) - import products and suppliers.
+- **Sales** - import customers.
+- **Finance / Accountant** - import customers; finance/master-data exports (via `EXPORT_DATA` permission).
+- Any authenticated user - download blank import templates (`import_template` is `@login_required` only).
 - Export endpoints are permission-gated by `EXPORT_DATA`, not role-gated, so any role granted that permission (including overrides) can export.
 
 ### Workflow
@@ -1602,18 +1602,18 @@ Provides bulk CSV import for master data (products, customers, suppliers) using 
 ### Output generated
 - Created/updated `Product` (+ auto-created `ProductCategory`, optional `ProductBarcode`), `Customer`, `Supplier` records.
 - Import summary dict: created/updated/errors(line, message)/total.
-- Master-data export files: `products.csv`, `customers.csv`, `suppliers.csv` (or `.xlsx`) — column order mirrors import so an export re-imports cleanly.
+- Master-data export files: `products.csv`, `customers.csv`, `suppliers.csv` (or `.xlsx`) - column order mirrors import so an export re-imports cleanly.
 - Finance export files (CSV/XLSX): trial balance, P&L, balance sheet, cash flow, aged receivables/payables, general ledger (journal), expenses, payments, customer invoices, supplier bills, credit notes, bank transactions, VAT return (9 boxes), VAT transactions, sales-history/by-product/by-customer/by-channel.
 - Audit log export: `audit-log.csv` (admin only, capped at 5000 rows).
 - `DATA_EXPORTED` audit log entries with `kind (N rows)` detail.
 
 ### Related modules
-- **Inventory / Products** — product + category + barcode upsert; export feeds stock valuation.
-- **Customers / Sales** — customer import; customer-invoice and sales-report exports.
-- **Suppliers / Procurement** — supplier import; supplier-bill exports.
-- **Finance / GL** — journal, trial balance, P&L, balance sheet, payments, expenses, credit notes exports.
-- **VAT (MTD)** — VAT return and VAT-transactions exports.
-- **Audit Log** — audit export and `DATA_EXPORTED` logging.
+- **Inventory / Products** - product + category + barcode upsert; export feeds stock valuation.
+- **Customers / Sales** - customer import; customer-invoice and sales-report exports.
+- **Suppliers / Procurement** - supplier import; supplier-bill exports.
+- **Finance / GL** - journal, trial balance, P&L, balance sheet, payments, expenses, credit notes exports.
+- **VAT (MTD)** - VAT return and VAT-transactions exports.
+- **Audit Log** - audit export and `DATA_EXPORTED` logging.
 - Bank statement import (`/bank/transactions/import/`) exists as a separate Finance feature, not part of `importer.py`.
 
 ### Validations & rules
@@ -1675,10 +1675,10 @@ flowchart TD
 Connects SwifPro BI to external sales channels (Shopify, Amazon) and outbound systems so a UK SME can pull channel orders/stock and reconcile them against internal inventory, and prepare HMRC MTD VAT returns. In the current build the channel sync and HMRC filing are deliberately mocked/stubbed seams: order sync runs from a management command with fake data, and VAT "submission" is recorded locally only. Email is the one genuinely live outbound integration, via Django's mail framework.
 
 ### Roles involved
-- **Admin** — full access to channel connections, reconcile, VAT, channel sales orders.
-- **Finance / Accountant** (Finance group) — create/edit/delete channel connections, save & submit VAT returns.
-- **Sales** — create and post channel Sales Orders, view sales-order list.
-- **Read-only** — view channel sales orders, VAT detail/records.
+- **Admin** - full access to channel connections, reconcile, VAT, channel sales orders.
+- **Finance / Accountant** (Finance group) - create/edit/delete channel connections, save & submit VAT returns.
+- **Sales** - create and post channel Sales Orders, view sales-order list.
+- **Read-only** - view channel sales orders, VAT detail/records.
 - Note: the `reconcile` view itself has no `@role_required` decorator on it (only `@login_required` upstream behaviour applies via the global pattern); any authenticated user reaching `/reconcile/` can view drift.
 
 ### Workflow
@@ -1690,11 +1690,11 @@ Connects SwifPro BI to external sales channels (Shopify, Amazon) and outbound sy
 6. A user opens `/reconcile/` to compare the latest `ChannelSnapshot` per SKU against summed `InventoryBalance.on_hand`, showing per-SKU drift.
 7. Separately, channel/ecommerce `SalesOrder`s can be entered/posted at `/sales-orders/` (drift between manual and synced is not auto-resolved).
 8. For VAT, Finance picks a period at `/vat/`, previews the 9 boxes (`compute_vat_return`), saves a DRAFT `VatReturn` (`/vat/save/`).
-9. Finance submits at `/vat/<id>/submit/`; `submit_vat_return()` only sets status=SUBMITTED locally and stamps `hmrc_reference = "LOCAL-STUB-<id>"` — no HMRC API call.
+9. Finance submits at `/vat/<id>/submit/`; `submit_vat_return()` only sets status=SUBMITTED locally and stamps `hmrc_reference = "LOCAL-STUB-<id>"` - no HMRC API call.
 
 ### Input data
-- Channel connection: channel type, connection name, `shop_domain`, `access_token` (stored plaintext — MVP note in code).
-- Mock Shopify orders (`SHP-10001`, line items by SKU) and inventory snapshot — hard-coded in `sync_shopify.py`, not real API responses.
+- Channel connection: channel type, connection name, `shop_domain`, `access_token` (stored plaintext - MVP note in code).
+- Mock Shopify orders (`SHP-10001`, line items by SKU) and inventory snapshot - hard-coded in `sync_shopify.py`, not real API responses.
 - Internal `InventoryBalance` / `Product.sku` for reconcile.
 - VAT period dates (from/to) for return computation.
 
@@ -1702,20 +1702,20 @@ Connects SwifPro BI to external sales channels (Shopify, Amazon) and outbound sy
 - `SyncRun` record (status RUNNING/SUCCESS/FAILED, detail line).
 - `ChannelOrder` rows + inventory `StockMovement`s (type SALE) + COGS GL posting via `post_cogs`.
 - `ChannelSnapshot` rows.
-- Reconcile drift table (`channel_qty − swifpro_qty`) — view-only, no auto-adjustment.
+- Reconcile drift table (`channel_qty − swifpro_qty`) - view-only, no auto-adjustment.
 - `VatReturn` (9 boxes), with `hmrc_reference` = `LOCAL-STUB-<id>` on submit. Audit events `VAT_RETURN_SAVED` / `VAT_RETURN_SUBMITTED`, `RECORD_DELETED` on channel delete.
 - Outbound emails via `django.core.mail` (`send_mail` / `EmailMessage`) for quotes, invoices, statements, access requests.
 
 ### Related modules
-- **Inventory** — `apply_movement`, `InventoryBalance` (reconcile + sync deductions).
-- **General Ledger / Finance** — `post_cogs` on synced orders.
-- **VAT/Tax** — VAT return draws on `CustomerInvoice`, `SupplierInvoice`, `Expense`, `CreditNote`, `TaxCode`.
-- **Sales** — channel `SalesOrder` posting.
-- **Notifications/Email** — `core/notify.py` outbound mail.
+- **Inventory** - `apply_movement`, `InventoryBalance` (reconcile + sync deductions).
+- **General Ledger / Finance** - `post_cogs` on synced orders.
+- **VAT/Tax** - VAT return draws on `CustomerInvoice`, `SupplierInvoice`, `Expense`, `CreditNote`, `TaxCode`.
+- **Sales** - channel `SalesOrder` posting.
+- **Notifications/Email** - `core/notify.py` outbound mail.
 
 ### Validations & rules
 - All entities tenant-scoped (`tenant=` filters on every query).
-- `ChannelOrder` is idempotent: `unique_together = (tenant, channel, external_order_id)` — re-syncing skips existing orders.
+- `ChannelOrder` is idempotent: `unique_together = (tenant, channel, external_order_id)` - re-syncing skips existing orders.
 - `VatReturn` unique per `(tenant, period_from, period_to)`; `vat_save` rejects invalid/reversed periods; re-saving uses `update_or_create` (refreshes DRAFT figures).
 - VAT submit is idempotent (returns early if already SUBMITTED); UI shows a warning that live HMRC filing is not connected.
 - VAT computation: only `CustomerInvoice` in ISSUED/SENT/PAID, `SupplierInvoice`/`Expense`/`CreditNote` POSTED; out-of-scope codes excluded from boxes 6/7; credit notes negated.
@@ -1764,21 +1764,21 @@ flowchart TD
 
 ## 18. AI Assistant / Copilot
 
-> **STATUS: PROPOSED — NOT YET IMPLEMENTED.** There is no AI assistant, copilot, LLM, or natural-language layer anywhere in `core/` today. A full-text search for `copilot`, `assistant`, `openai`, `anthropic`, `llm`, `gpt` returns zero source hits (only incidental `uom` substring matches in migrations). No `/copilot/` URL, no `CopilotConversation`/`CopilotMessage`/`CopilotAction` models, and no copilot service exist. Everything below is a design proposal grounded in the app's *real* services, models, roles and URLs so it can be built on top of them.
+> **STATUS: PROPOSED - NOT YET IMPLEMENTED.** There is no AI assistant, copilot, LLM, or natural-language layer anywhere in `core/` today. A full-text search for `copilot`, `assistant`, `openai`, `anthropic`, `llm`, `gpt` returns zero source hits (only incidental `uom` substring matches in migrations). No `/copilot/` URL, no `CopilotConversation`/`CopilotMessage`/`CopilotAction` models, and no copilot service exist. Everything below is a design proposal grounded in the app's *real* services, models, roles and URLs so it can be built on top of them.
 
 ### Purpose
 A read-mostly natural-language layer that lets a UK SME owner or finance user ask plain-English questions over existing SwifPro BI data ("what's my P&L this quarter?", "who's the most overdue customer?", "which products are below reorder?") and get answers sourced directly from the existing report services. It can also draft documents (sales invoices, POs, chase emails) and surface proactive insight alerts (overdue debtors, low stock, margin dips), but never posts to the ledger or sends anything without explicit human confirmation.
 
 ### Roles involved
-- **Admin** — full copilot access; only role that can see cross-module/admin insights (audit, users); manages copilot enablement.
-- **Accountant / Finance** — financial Q&A (P&L, balance sheet, aged debtors/creditors, VAT), draft chase emails and credit notes.
-- **Manager** — operations Q&A (sales, inventory analytics, supplier scorecard), draft POs.
-- **Sales** — sales/customer questions, draft quotes and customer invoices.
-- **Purchasing** — stock/reorder questions, draft purchase orders/requisitions.
-- **Warehouse** — low-stock and stock-movement questions (read-only answers).
-- **Read-only** — Q&A over the reports they can already view; no drafting.
+- **Admin** - full copilot access; only role that can see cross-module/admin insights (audit, users); manages copilot enablement.
+- **Accountant / Finance** - financial Q&A (P&L, balance sheet, aged debtors/creditors, VAT), draft chase emails and credit notes.
+- **Manager** - operations Q&A (sales, inventory analytics, supplier scorecard), draft POs.
+- **Sales** - sales/customer questions, draft quotes and customer invoices.
+- **Purchasing** - stock/reorder questions, draft purchase orders/requisitions.
+- **Warehouse** - low-stock and stock-movement questions (read-only answers).
+- **Read-only** - Q&A over the reports they can already view; no drafting.
 
-Proposed rule: the copilot inherits the *exact* visibility of the caller's role from `core/roles.py` `NAV` / group RBAC — it can never answer about a page the role cannot open.
+Proposed rule: the copilot inherits the *exact* visibility of the caller's role from `core/roles.py` `NAV` / group RBAC - it can never answer about a page the role cannot open.
 
 ### Workflow
 1. User opens `/copilot/` (proposed) or a side panel and types a question.
@@ -1786,7 +1786,7 @@ Proposed rule: the copilot inherits the *exact* visibility of the caller's role 
 3. An intent/router classifies the request into: **Q&A**, **draft document**, or **insight/alert**.
 4. For Q&A, the copilot maps intent to a whitelisted, tenant-scoped read function (e.g. `services.reports.profit_and_loss(tenant, …)`, `aged_receivables(tenant)`, `stock_valuation(tenant)`, `services.sales_reports.profitability(tenant, …)`) and runs it with the caller's `tenant` and role-derived location/permission filters.
 5. The LLM summarises the structured result in plain English and cites the underlying report/URL (e.g. links to `/reports/profit-and-loss/`).
-6. For a draft request, the copilot pre-fills a form (e.g. an `InvoiceForm`/PO draft) and returns it as a **proposed action** — a `CopilotAction` row in `proposed` status. Nothing is written to business tables yet.
+6. For a draft request, the copilot pre-fills a form (e.g. an `InvoiceForm`/PO draft) and returns it as a **proposed action** - a `CopilotAction` row in `proposed` status. Nothing is written to business tables yet.
 7. The user reviews the draft in the normal create page; on **Confirm**, the existing view/service performs the real create (and any GL posting via `services.gl`), exactly as a manual entry would.
 8. Every copilot interaction and every confirmed action is written via `core.audit.log_audit(...)` to the existing `AuditLog`.
 9. Background insight scan (scheduled, like existing `run_sales_housekeeping` / `run_recurring_invoices` commands) computes alerts and stores them as `insight`-type `CopilotMessage`s for the next session.
@@ -1799,42 +1799,42 @@ Proposed rule: the copilot inherits the *exact* visibility of the caller's role 
 
 ### Output generated
 - Conversational answer text with citations/links to the real report pages.
-- **Drafts (never auto-posted):** proposed `CustomerInvoice`, `PurchaseOrder`, `PurchaseRequisition`, `CreditNote`, or chase/RFQ email text — held as `CopilotAction(status=proposed)`.
+- **Drafts (never auto-posted):** proposed `CustomerInvoice`, `PurchaseOrder`, `PurchaseRequisition`, `CreditNote`, or chase/RFQ email text - held as `CopilotAction(status=proposed)`.
 - **Insight alerts:** overdue-debtor, low-stock, margin-dip, VAT-deadline notices.
 - **No GL postings of its own.** GL entries only happen when the user confirms and the existing service (`services.gl`) runs.
 - Audit records in `AuditLog` for every question and every confirmed action.
 
 ### Related modules
-- **Reports / Finance** — primary data source (P&L, balance sheet, aged debtors/creditors, VAT, cash flow).
-- **Sales** — sales reports + draft quotes/customer invoices.
-- **Procurement** — supplier scorecard + draft POs/requisitions.
-- **Inventory** — stock valuation, low-stock, inventory analytics.
-- **Audit & Access** — `core.audit` / `AuditLog` for the immutable trail; `core.roles` / RBAC for scoping.
+- **Reports / Finance** - primary data source (P&L, balance sheet, aged debtors/creditors, VAT, cash flow).
+- **Sales** - sales reports + draft quotes/customer invoices.
+- **Procurement** - supplier scorecard + draft POs/requisitions.
+- **Inventory** - stock valuation, low-stock, inventory analytics.
+- **Audit & Access** - `core.audit` / `AuditLog` for the immutable trail; `core.roles` / RBAC for scoping.
 
 ### Validations & rules
-- **Read-mostly / write-via-confirmation:** copilot can call only a whitelisted set of read functions directly; any state change must go through the existing view + human **Confirm** step — it cannot post a journal, send an email, or create a document autonomously.
+- **Read-mostly / write-via-confirmation:** copilot can call only a whitelisted set of read functions directly; any state change must go through the existing view + human **Confirm** step - it cannot post a journal, send an email, or create a document autonomously.
 - **Tenant scoping:** every service call passes the request's `tenant`; the copilot can never read another tenant's data (mirrors existing `core.current` / middleware scoping).
 - **Role visibility:** answers and draft permissions are gated by the caller's role exactly as `NAV` gates pages; Read-only cannot draft.
-- **Credit-limit / threshold respect:** draft invoices/POs surface (but do not bypass) existing checks such as customer credit limits and the tenant's `stock_adjustment_approval_threshold` — the human still hits the real validations on confirm.
+- **Credit-limit / threshold respect:** draft invoices/POs surface (but do not bypass) existing checks such as customer credit limits and the tenant's `stock_adjustment_approval_threshold` - the human still hits the real validations on confirm.
 - **Immutability & audit:** every prompt, answer and confirmed action logged via `log_audit`; conversation/messages should be append-only (soft-delete only, consistent with `deleted_at` pattern used on invoices).
 - **No hallucinated numbers:** financial figures must come from a service call, not the model's free text; if no whitelisted function matches, the copilot declines rather than guessing.
 - *(Proposed)* PII/prompt-injection guardrails on any externally-sourced text (e.g. supplier emails) before it reaches the model.
 
 ### Database entities
-*All proposed — none exist yet. Reuses existing:* `Tenant`, `OrgMembership`, `UserProfile`, `AuditLog`, plus the read-only report sources (`CustomerInvoice`, `Product`, `GLEntry`, etc.).
+*All proposed - none exist yet. Reuses existing:* `Tenant`, `OrgMembership`, `UserProfile`, `AuditLog`, plus the read-only report sources (`CustomerInvoice`, `Product`, `GLEntry`, etc.).
 
 Proposed new models:
-- **`CopilotConversation`** — `tenant` (FK), `user` (FK), `title`, `created_at`, `deleted_at` (soft-delete).
-- **`CopilotMessage`** — `conversation` (FK), `role` (`user`/`assistant`/`insight`), `content`, `cited_report`, `created_at`.
-- **`CopilotAction`** — `message` (FK), `action_type` (`draft_invoice`/`draft_po`/`draft_email`/…), `payload` (JSON), `status` (`proposed`/`confirmed`/`discarded`), `confirmed_by`, `confirmed_at`, `result_entity_type`, `result_entity_id`.
+- **`CopilotConversation`** - `tenant` (FK), `user` (FK), `title`, `created_at`, `deleted_at` (soft-delete).
+- **`CopilotMessage`** - `conversation` (FK), `role` (`user`/`assistant`/`insight`), `content`, `cited_report`, `created_at`.
+- **`CopilotAction`** - `message` (FK), `action_type` (`draft_invoice`/`draft_po`/`draft_email`/…), `payload` (JSON), `status` (`proposed`/`confirmed`/`discarded`), `confirmed_by`, `confirmed_at`, `result_entity_type`, `result_entity_id`.
 
 ### API / page requirements
-*All proposed — none of these routes exist in `core/urls.py` today.*
-- `GET /copilot/` — conversation UI (proposed nav entry, Admin-gated initially, then per-role).
-- `POST /copilot/ask/` — submit a question; returns answer + citations.
-- `POST /copilot/action/<id>/confirm/` — confirm a proposed draft; hands off to the existing create view/service.
-- `POST /copilot/action/<id>/discard/` — discard a draft.
-- `GET /copilot/insights/` — list current insight alerts.
+*All proposed - none of these routes exist in `core/urls.py` today.*
+- `GET /copilot/` - conversation UI (proposed nav entry, Admin-gated initially, then per-role).
+- `POST /copilot/ask/` - submit a question; returns answer + citations.
+- `POST /copilot/action/<id>/confirm/` - confirm a proposed draft; hands off to the existing create view/service.
+- `POST /copilot/action/<id>/discard/` - discard a draft.
+- `GET /copilot/insights/` - list current insight alerts.
 - Existing real endpoints it *links to / hands off to:* `/reports/profit-and-loss/`, `/reports/aged-receivables/`, `/reports/stock-valuation/`, `/sales/reports/profitability/`, `/ar/invoices/`, `/po/`, `/credit-notes/`, `/vat/`.
 
 ### Flow diagram
@@ -1865,7 +1865,7 @@ Relevant files inspected: `d:\swifpro_bi\core\roles.py`, `d:\swifpro_bi\core\aud
 
 ## 19. End-to-end ERP flow
 
-How the whole system connects — from company setup through master data, the buy-side and sell-side transaction
+How the whole system connects - from company setup through master data, the buy-side and sell-side transaction
 cycles, into the General Ledger, VAT, reporting, and the cross-cutting services (documents, notifications, audit,
 import/export, integrations, copilot).
 
@@ -1955,11 +1955,11 @@ flowchart TD
 
 ---
 
-### Appendix — module connectivity matrix
+### Appendix - module connectivity matrix
 
 | Module | Feeds into | Reads from |
 |---|---|---|
-| Company Setup | every module (tenant scope, defaults) | — |
+| Company Setup | every module (tenant scope, defaults) | - |
 | Roles & Permissions | every module (access control) | Company Setup |
 | Customer Mgmt | Sales, Finance (AR), Reports | Company Setup |
 | Supplier Mgmt | Purchasing, Finance (AP), Reports | Company Setup |

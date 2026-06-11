@@ -7,7 +7,7 @@ Returned stock is routed by `ReturnLine.disposition`:
     RETURN_TO_SUPPLIER -> inbound to a non-sellable hold (quarantine) location,
                           so it is owned but excluded from availability/ATP.
                           REPAIR and RTS reuse the hold (full repair / supplier-
-                          claim workflows are deferred — see the package notes).
+                          claim workflows are deferred - see the package notes).
   * SCRAP              -> inbound then immediately written off, booking the loss
                           through the existing write-off GL pattern.
 

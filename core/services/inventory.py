@@ -109,7 +109,7 @@ def _guard_serial_movement(tenant, product, location, qty_delta, lot_code, seria
         return
     if not serial_number:
         raise ValidationError(
-            f"{product.sku} is serial-tracked — a serial number is required for this movement.")
+            f"{product.sku} is serial-tracked - a serial number is required for this movement.")
     if qty_delta > 0:
         # Inbound: the serial must not already be on hand anywhere at this location
         # (across any lot/expiry row), so it can never be received twice.
@@ -119,7 +119,7 @@ def _guard_serial_movement(tenant, product, location, qty_delta, lot_code, seria
         if on_hand + qty_delta > 1:
             raise ValidationError(
                 f"Serial {serial_number} for {product.sku} is already in stock at "
-                f"{location.name} — it cannot be received again.")
+                f"{location.name} - it cannot be received again.")
     else:
         # Outbound: the exact serial row being relieved must hold the unit.
         lb = (InventoryLotBalance.objects
@@ -130,7 +130,7 @@ def _guard_serial_movement(tenant, product, location, qty_delta, lot_code, seria
         if current + qty_delta < 0:
             raise ValidationError(
                 f"Serial {serial_number} for {product.sku} is not available at "
-                f"{location.name} — it cannot be issued.")
+                f"{location.name} - it cannot be issued.")
 
 
 def apply_movement(*, tenant, product, location, movement_type, qty_delta, ref_type, ref_id,
@@ -376,7 +376,7 @@ def consume_reservations(*, tenant, ref_type, ref_id, qty=None):
 
     With ``qty=None`` every active reservation for the ref is consumed in full.
     With a quantity, consume up to that amount (oldest first); a reservation
-    that is only partially fulfilled is split — the consumed part becomes a
+    that is only partially fulfilled is split - the consumed part becomes a
     CONSUMED row and the remainder stays ACTIVE. Returns the qty consumed.
 
     Distinct from release_reservations (cancellation): both free the reserved

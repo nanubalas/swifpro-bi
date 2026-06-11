@@ -322,10 +322,10 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="n_svc_gl" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d0cee2;strokeColor=#56517e;align=left;fontSize=11;spacingLeft=6;" value="core/services/gl.py — GL posting&#xa;post_customer_invoice · post_supplier_invoice&#xa;post_inventory_receipt · post_cogs · post_expense&#xa;post_payment · post_stock_adjustment · post_credit_note" vertex="1">
+        <mxCell id="n_svc_gl" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d0cee2;strokeColor=#56517e;align=left;fontSize=11;spacingLeft=6;" value="core/services/gl.py - GL posting&#xa;post_customer_invoice · post_supplier_invoice&#xa;post_inventory_receipt · post_cogs · post_expense&#xa;post_payment · post_stock_adjustment · post_credit_note" vertex="1">
           <mxGeometry height="100" width="330" x="690" y="1085" as="geometry" />
         </mxCell>
-        <mxCell id="n_svc_inv" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d0cee2;strokeColor=#56517e;align=left;fontSize=11;spacingLeft=6;" value="core/services/inventory.py — apply_movement&#xa;(stock ledger + moving-average / FIFO valuation)" vertex="1">
+        <mxCell id="n_svc_inv" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d0cee2;strokeColor=#56517e;align=left;fontSize=11;spacingLeft=6;" value="core/services/inventory.py - apply_movement&#xa;(stock ledger + moving-average / FIFO valuation)" vertex="1">
           <mxGeometry height="50" width="330" x="690" y="1200" as="geometry" />
         </mxCell>
         <mxCell id="n_svc_rep" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d0cee2;strokeColor=#56517e;align=left;fontSize=11;spacingLeft=6;" value="core/services/reports.py (site-dimensioned)&#xa;Trial Balance · Profit &amp; Loss · Balance Sheet&#xa;Aged Receivables / Payables · Cash Flow&#xa;Stock Valuation · Inventory Analytics" vertex="1">

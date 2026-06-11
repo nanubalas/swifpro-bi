@@ -4,11 +4,11 @@
 Tracks on-hand and reserved stock per product and location across a Site → Location → Bin hierarchy, maintaining a full costed movement ledger and inventory valuation (moving average, FIFO, or standard cost). It supports manual adjustments with GL postings, location-to-location transfers, cycle counts, and low-stock reordering, keeping the stock ledger in step with the inventory control account.
 
 ### Roles involved
-- **Admin** — full access to all inventory pages, plus the only role that manages Location Access scoping (`/locations/access/`).
-- **Manager** — operational visibility across inventory, adjustments, transfers, cycle counts, sites/locations/bins.
-- **Warehouse** — day-to-day stock: adjustments, transfers, cycle counts, low-stock reorder.
-- **Purchasing** — views inventory, adjustments, movements, low stock; approves adjustments and raises reorders. (In code the group is `ROLE_PROCUREMENT`.)
-- **Read-only** — view-only access to inventory list, movements and low stock.
+- **Admin** - full access to all inventory pages, plus the only role that manages Location Access scoping (`/locations/access/`).
+- **Manager** - operational visibility across inventory, adjustments, transfers, cycle counts, sites/locations/bins.
+- **Warehouse** - day-to-day stock: adjustments, transfers, cycle counts, low-stock reorder.
+- **Purchasing** - views inventory, adjustments, movements, low stock; approves adjustments and raises reorders. (In code the group is `ROLE_PROCUREMENT`.)
+- **Read-only** - view-only access to inventory list, movements and low stock.
 
 Note: Accountant/Finance do not appear in the inventory views' `role_required` lists; they consume the resulting GL postings and the Stock Valuation report instead.
 
@@ -41,18 +41,18 @@ Note: Accountant/Finance do not appear in the inventory views' `role_required` l
 - Audit log entries (STOCK_ADJ_REQUESTED, STOCK_ADJUSTED, STOCK_ADJ_APPROVED/REJECTED, requisition_create).
 
 ### Related modules
-- **Procurement** — receipts (RECEIVE movements) raise stock; low-stock reorder creates Purchase Requisitions; return-to-supplier raises credit notes.
-- **Sales / Fulfilment** — sales fulfilment (SALE movements) and reservations (`reserve_stock` / `release_reservations`) draw on stock.
-- **General Ledger / Finance** — adjustments and receipts post journals via `services.gl`.
-- **Reports** — Stock Valuation and Inventory Analytics read movement value and balances.
-- **Products / BOMs** — cost method, reorder level, preferred supplier come from Product.
+- **Procurement** - receipts (RECEIVE movements) raise stock; low-stock reorder creates Purchase Requisitions; return-to-supplier raises credit notes.
+- **Sales / Fulfilment** - sales fulfilment (SALE movements) and reservations (`reserve_stock` / `release_reservations`) draw on stock.
+- **General Ledger / Finance** - adjustments and receipts post journals via `services.gl`.
+- **Reports** - Stock Valuation and Inventory Analytics read movement value and balances.
+- **Products / BOMs** - cost method, reorder level, preferred supplier come from Product.
 
 ### Validations & rules
 - **Approval threshold**: adjustments at/above `tenant.stock_adjustment_approval_threshold` go PENDING; below post immediately; zero/blank threshold means no approval gate.
 - **Tenant scoping**: every model/query is filtered by `tenant`.
 - **Location access scoping**: `accessible_location_ids` / `UserLocationAccess` narrows the inventory list and form location dropdowns; a user with no rows (or Admin) sees all locations.
 - **Valuation**: inbound with `unit_cost` updates moving average; FIFO also creates a cost layer; STANDARD always carries `standard_cost` (purchase variance handled in GL). Outbound is valued at average / consumed FIFO layers / standard.
-- **Negative stock**: allowed — FIFO shortfall is valued at fallback (current average) cost.
+- **Negative stock**: allowed - FIFO shortfall is valued at fallback (current average) cost.
 - **Idempotency**: `gl.post_stock_adjustment` returns the existing entry for the same `STOCK_ADJ` ref, preventing double-posting.
 - **GL gating**: zero-value adjustments post no journal.
 - **Status guards**: transfers skip if already POSTED; cycle counts only post when APPROVED; approve/reject only act on PENDING adjustments.
@@ -70,15 +70,15 @@ Note: Accountant/Finance do not appear in the inventory views' `role_required` l
 - Downstream: `JournalEntry` / `JournalLine`, `PurchaseRequisition` / `PurchaseRequisitionLine`, `CreditNote`
 
 ### API / page requirements
-- `/inventory/` — `inventory_list`
-- `/inventory/adjustments/` — `adjustment_list`; `/inventory/adjustments/new/` — `adjustment_create`
-- `/inventory/adjustments/<adj_id>/approve/` — `adjustment_approve`; `.../reject/` — `adjustment_reject`
-- `/inventory/movements/` — `stock_movements`
-- `/inventory/low-stock/` — `low_stock`; `/inventory/low-stock/reorder/` — `low_stock_reorder`
-- `/transfers/`, `/transfers/new/`, `/transfers/<id>/`, `/transfers/<id>/post/` — transfer views
+- `/inventory/` - `inventory_list`
+- `/inventory/adjustments/` - `adjustment_list`; `/inventory/adjustments/new/` - `adjustment_create`
+- `/inventory/adjustments/<adj_id>/approve/` - `adjustment_approve`; `.../reject/` - `adjustment_reject`
+- `/inventory/movements/` - `stock_movements`
+- `/inventory/low-stock/` - `low_stock`; `/inventory/low-stock/reorder/` - `low_stock_reorder`
+- `/transfers/`, `/transfers/new/`, `/transfers/<id>/`, `/transfers/<id>/post/` - transfer views
 - `/cycle-counts/`, `/cycle-counts/new/`, `/cycle-counts/<id>/`, `.../submit/`, `.../approve/`, `.../post/`
 - `/sites/` (+ new/edit/delete), `/locations/` (+ new/edit/delete), `/bins/` (+ new/edit/delete)
-- `/locations/access/` — `location_access` (Admin only)
+- `/locations/access/` - `location_access` (Admin only)
 
 These are server-rendered Django pages (template responses), not a JSON REST API.
 

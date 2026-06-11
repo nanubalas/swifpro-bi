@@ -1,9 +1,9 @@
-# SwifPro BI — Quick Start Demo Guide (v0.1.0-rc3)
+# SwifPro BI - Quick Start Demo Guide (v0.1.0-rc3)
 
 A 2-minute guide to start testing the **SwifPro BI** ERP demo. (Full details:
 *SwifPro BI First-Time User Handbook*.)
 
-> **This is a controlled demo / release candidate — not live production.**
+> **This is a controlled demo / release candidate - not live production.**
 > Don't enter real data. Don't reuse real passwords. Data may reset at any time.
 
 ---
@@ -20,7 +20,7 @@ A 2-minute guide to start testing the **SwifPro BI** ERP demo. (Full details:
 | `santhosh` | Owner / superuser |
 | `admin1` – `admin4` | Demo admins |
 
-*Passwords are shared separately — not in this guide.*
+*Passwords are shared separately - not in this guide.*
 
 > First load can take **30–60 seconds** (the free host wakes from sleep). That's normal.
 
@@ -30,7 +30,7 @@ A 2-minute guide to start testing the **SwifPro BI** ERP demo. (Full details:
 
 - **Dashboard** = your home screen (sales, money owed, low stock, stuck-stock worklist).
 - **Menu** (left / ☰) groups everything: **Sales · Procurement · Inventory · Finance · Reports · Administration**.
-- **Search box** (top) jumps to any page — try "products", "trial balance", "returns".
+- **Search box** (top) jumps to any page - try "products", "trial balance", "returns".
 - **Back** links return you safely; **Log out** when done.
 
 ---
@@ -59,11 +59,11 @@ kit → its components are relieved.
 
 ## 4. Features labelled experimental / advisory (by design)
 
-- **Channel Orders (Experimental)** — manual tool; **not** connected to Shopify/Amazon.
-- **Bins (Advisory)** — bin balances are advisory, not a full bin-aware warehouse yet.
-- **VAT submit** — **local only**; does **not** file to HMRC.
-- **BOM** — kits/bundles only; no manufacturing work orders.
-- **Inter-company** — P&L elimination works; balance-sheet elimination is incomplete.
+- **Channel Orders (Experimental)** - manual tool; **not** connected to Shopify/Amazon.
+- **Bins (Advisory)** - bin balances are advisory, not a full bin-aware warehouse yet.
+- **VAT submit** - **local only**; does **not** file to HMRC.
+- **BOM** - kits/bundles only; no manufacturing work orders.
+- **Inter-company** - P&L elimination works; balance-sheet elimination is incomplete.
 
 ---
 

@@ -1,6 +1,6 @@
 """Seed basic UOM data for a tenant so UOM conversion is usable/visible.
 
-Idempotent — safe to run repeatedly; matches existing rows by tenant + code and
+Idempotent - safe to run repeatedly; matches existing rows by tenant + code and
 never duplicates. Default tenant: "SwifPro BI Ltd".
 
     python manage.py seed_uom_demo

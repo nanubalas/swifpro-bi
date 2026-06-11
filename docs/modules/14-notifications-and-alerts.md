@@ -4,11 +4,11 @@
 SwifPro BI has no dedicated notification model or inbox; instead it combines best-effort transactional emails (invoices, quotes, dunning reminders, access-request and credential emails), an in-app low-stock alerts page, and Django's `messages` framework for toast feedback. All email sends are fire-and-forget (`fail_silently=True`) so a mail-server problem never breaks the underlying business flow. Overdue-payment dunning and quote-expiry alerts run via a once-a-day housekeeping pass, either opportunistically on page load or from a scheduled management command.
 
 ### Roles involved
-- **Admin** — receives new access-request emails (`notify_admins_new_request`); configures dunning on the tenant; sees all alert pages.
-- **Sales / Manager** — email quotes (`notify_sales_document`) and customer invoices (`notify_invoice`); trigger recurring-invoice runs; view low-stock alerts.
-- **Accountant / Finance** — email/issue invoices, rely on automatic overdue dunning reminders.
-- **Warehouse / Purchasing** — consume the Low Stock alert page and reorder from it.
-- **Read-only** — sees in-app `messages` toasts only; no send actions.
+- **Admin** - receives new access-request emails (`notify_admins_new_request`); configures dunning on the tenant; sees all alert pages.
+- **Sales / Manager** - email quotes (`notify_sales_document`) and customer invoices (`notify_invoice`); trigger recurring-invoice runs; view low-stock alerts.
+- **Accountant / Finance** - email/issue invoices, rely on automatic overdue dunning reminders.
+- **Warehouse / Purchasing** - consume the Low Stock alert page and reorder from it.
+- **Read-only** - sees in-app `messages` toasts only; no send actions.
 - Applicants (non-role) receive approval/rejection/credential emails.
 
 ### Workflow
@@ -35,16 +35,16 @@ SwifPro BI has no dedicated notification model or inbox; instead it combines bes
 - **In-app toasts** via Django `messages` (success/info/error).
 - **Status side effects**: quotes flipped to `EXPIRED`; recurring invoices generated; invoice `last_reminder_at`/`reminder_count` bumped; `tenant.last_housekeeping_date` set.
 - **Low Stock alert list** (rendered `inventory/low_stock.html`) and resulting Purchase Requisitions from the reorder action.
-- Not implemented: there is no persisted notification log/inbox model, no read/unread tracking, and no SMS/push channel — alerts are email + transient `messages` + on-demand pages only.
+- Not implemented: there is no persisted notification log/inbox model, no read/unread tracking, and no SMS/push channel - alerts are email + transient `messages` + on-demand pages only.
 
 ### Related modules
-- **AR / Invoicing** — invoice emails and overdue dunning.
-- **Sales / Quotes** — quote emails and quote-expiry automation.
-- **Recurring Invoices** — generated as part of the same housekeeping pass.
-- **Inventory / Procurement** — Low Stock alerts feed Purchase Requisitions.
-- **User Access / Onboarding** — access-request and credential emails.
-- **Tenant settings** — dunning enable/interval configuration.
-- **Audit Log** — `RECURRING_GENERATED` and related actions are logged.
+- **AR / Invoicing** - invoice emails and overdue dunning.
+- **Sales / Quotes** - quote emails and quote-expiry automation.
+- **Recurring Invoices** - generated as part of the same housekeeping pass.
+- **Inventory / Procurement** - Low Stock alerts feed Purchase Requisitions.
+- **User Access / Onboarding** - access-request and credential emails.
+- **Tenant settings** - dunning enable/interval configuration.
+- **Audit Log** - `RECURRING_GENERATED` and related actions are logged.
 
 ### Validations & rules
 - All emails are best-effort: `fail_silently=True`; senders return `False` (no exception) when the recipient has no email.

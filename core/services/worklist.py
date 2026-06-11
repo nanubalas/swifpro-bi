@@ -1,6 +1,6 @@
 """Operational worklist: stock stuck in transit or stuck in hold/quarantine.
 
-Read-only/advisory — it surfaces items that need a human to act (receive/cancel a
+Read-only/advisory - it surfaces items that need a human to act (receive/cancel a
 stale transfer, release/scrap a held return) and links to the existing action
 pages. It changes no inventory, costing or GL.
 """

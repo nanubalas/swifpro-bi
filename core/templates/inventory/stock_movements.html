@@ -38,8 +38,8 @@
           <td class="text-muted small">{{ m.created_at|date:'d M Y H:i' }}</td>
           <td>{{ m.product.sku }}</td>
           <td class="small">{{ m.location.name }}</td>
-          <td class="small text-muted">{% if m.bin %}{{ m.bin.code }}{% else %}—{% endif %}</td>
-          <td class="small">{% if m.serial_number %}<span class="badge text-bg-secondary">{{ m.serial_number }}</span>{% elif m.lot_code %}{{ m.lot_code }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+          <td class="small text-muted">{% if m.bin %}{{ m.bin.code }}{% else %}-{% endif %}</td>
+          <td class="small">{% if m.serial_number %}<span class="badge text-bg-secondary">{{ m.serial_number }}</span>{% elif m.lot_code %}{{ m.lot_code }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
           <td>{{ m.get_movement_type_display }}</td>
           <td class="text-end {% if m.qty_delta < 0 %}text-danger{% else %}text-success{% endif %}">{{ m.qty_delta|floatformat:2 }}</td>
           <td class="small text-muted">{{ m.ref_type }} {{ m.ref_id }}</td>

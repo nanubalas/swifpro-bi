@@ -18,7 +18,7 @@
       <select name="product" id="product" class="form-select form-select-sm">
         <option value="">Select product…</option>
         {% for p in products %}
-          <option value="{{ p.id }}" {% if product_id == p.id|stringformat:'s' %}selected{% endif %}>{{ p.sku }} — {{ p.name }}</option>
+          <option value="{{ p.id }}" {% if product_id == p.id|stringformat:'s' %}selected{% endif %}>{{ p.sku }} - {{ p.name }}</option>
         {% endfor %}
       </select>
     </div>
@@ -36,7 +36,7 @@
 
 {% if data %}
 <div class="card card-soft mb-3"><div class="card-body">
-  <h5 class="fw-semibold mb-1">{{ data.product.sku }} — {{ data.product.name }}</h5>
+  <h5 class="fw-semibold mb-1">{{ data.product.sku }} - {{ data.product.name }}</h5>
   <div class="text-muted">Lot <span class="badge text-bg-light">{{ data.lot_code|default:"(none)" }}</span>
     {% if data.serial_number %} · Serial <span class="badge text-bg-light">{{ data.serial_number }}</span>{% endif %}</div>
 </div></div>

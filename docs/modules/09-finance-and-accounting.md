@@ -4,9 +4,9 @@
 A double-entry general ledger that turns operational events (invoices, payments, expenses, credit notes, goods receipts, stock changes) into balanced journal entries automatically. It also handles cash recording (customer receipts, supplier payments, customer refunds) with FIFO allocation against open invoices, plus bank-statement reconciliation. Designed for a UK SME: VAT input/output accounts feed the MTD VAT return, and sensitive cash records are soft-deleted (never hard-deleted) for audit.
 
 ### Roles involved
-- **Finance** (Django group `Finance`, membership roles ACCOUNTANT and FINANCE) — primary writer for payments, GL accounts, credit notes, expenses, reconciliation.
-- **Admin** — full access; sees everything.
-- **Read-only** — can view the Journal (`journal_detail` allows ROLE_READONLY) and financial reports; no write access.
+- **Finance** (Django group `Finance`, membership roles ACCOUNTANT and FINANCE) - primary writer for payments, GL accounts, credit notes, expenses, reconciliation.
+- **Admin** - full access; sees everything.
+- **Read-only** - can view the Journal (`journal_detail` allows ROLE_READONLY) and financial reports; no write access.
 - Other roles (Manager, Sales, Warehouse, Purchasing) can only *record* expenses (the `/expenses/` page is open to them), but posting expenses to the GL is Finance/Admin.
 
 ### Workflow
@@ -17,7 +17,7 @@ A double-entry general ledger that turns operational events (invoices, payments,
 5. **Record a customer refund** at `/payments/refunds/new/`: DR AR / CR Bank (no allocation).
 6. **Credit notes** (`/credit-notes/new/`) are drafted then posted (`post_credit_note`); a sales credit reverses Sales/VAT Output against AR, a purchase credit reverses against AP.
 7. **Expenses** are recorded, optionally submitted/approved, then posted (`post_expense`) to the chosen expense account.
-8. **Import the bank statement** (`/bank/transactions/import/`, CSV: date, description, amount), then **reconcile** at `/bank/reconcile/` — auto-match or manually match each line to a Payment or paid Expense and mark reconciled.
+8. **Import the bank statement** (`/bank/transactions/import/`, CSV: date, description, amount), then **reconcile** at `/bank/reconcile/` - auto-match or manually match each line to a Payment or paid Expense and mark reconciled.
 9. **Reverse / delete:** soft-deleting a payment (`/payments/<id>/delete/`) calls `reverse_payment` to post a mirror entry, frees the settled invoices, and flags the row deleted (kept for audit).
 10. Resulting balances flow into the financial reports (trial balance, P&L, balance sheet) and the VAT return.
 
@@ -39,7 +39,7 @@ A double-entry general ledger that turns operational events (invoices, payments,
 - **Sales / AR** (CustomerInvoice → receipts, sales credit notes).
 - **Procurement / AP** (SupplierInvoice → supplier payments, GRNI, purchase credit notes).
 - **Inventory** (COGS, inventory receipt, stock-adjustment postings).
-- **VAT (MTD)** — VAT input/output accounts feed the 9-box `VatReturn`.
+- **VAT (MTD)** - VAT input/output accounts feed the 9-box `VatReturn`.
 - **Reports** (trial balance, P&L, balance sheet, aged debtors/creditors, cash flow) read the GL.
 
 ### Validations & rules
@@ -50,8 +50,8 @@ A double-entry general ledger that turns operational events (invoices, payments,
 - **Soft-delete (sensitive):** `Payment` uses `SoftDeleteManager` (`is_deleted`, `deleted_by`, `deleted_at`); the default manager hides deleted rows, `all_objects` retains them. Deletion posts a reversing entry rather than removing ledger history.
 - **No GL hard-edit:** journal entries are not editable through the UI; corrections go via reversals/new postings.
 - **GLAccount uniqueness:** `(tenant, code)` unique; accounts are PROTECTed from deletion by journal lines and expenses.
-- **Bank reconciliation posts nothing** to the ledger — it is matching/preparation only.
-- **Supplier invoices have no PAID state** — once settled they remain POSTED.
+- **Bank reconciliation posts nothing** to the ledger - it is matching/preparation only.
+- **Supplier invoices have no PAID state** - once settled they remain POSTED.
 - Approval thresholds: not implemented for payments/credit notes (expenses have a DRAFT→SUBMITTED→approve flow; payments and credit notes post directly with Finance/Admin rights).
 
 ### Database entities

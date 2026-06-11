@@ -39,12 +39,12 @@
           <td>{{ r.sku }}</td>
           <td class="small">{{ r.product_name }}</td>
           <td class="small">{{ r.location }}</td>
-          <td class="small text-muted">{{ r.lot_code|default:"—" }}</td>
-          <td class="small text-muted">{% if r.expiry_date %}{{ r.expiry_date|date:"d M Y" }}{% else %}—{% endif %}</td>
+          <td class="small text-muted">{{ r.lot_code|default:"-" }}</td>
+          <td class="small text-muted">{% if r.expiry_date %}{{ r.expiry_date|date:"d M Y" }}{% else %}-{% endif %}</td>
           <td class="text-end"><span class="badge text-bg-success">{{ r.on_hand|floatformat:0 }} avail</span></td>
-          <td class="text-end">{% if r.unit_cost != None %}{{ r.unit_cost|money:tenant.currency_code }}{% else %}—{% endif %}</td>
-          <td class="small text-muted">{{ r.source|default:"—" }}</td>
-          <td class="small text-muted">{% if r.received_at %}{{ r.received_at|date:"d M Y" }}{% else %}—{% endif %}</td>
+          <td class="text-end">{% if r.unit_cost != None %}{{ r.unit_cost|money:tenant.currency_code }}{% else %}-{% endif %}</td>
+          <td class="small text-muted">{{ r.source|default:"-" }}</td>
+          <td class="small text-muted">{% if r.received_at %}{{ r.received_at|date:"d M Y" }}{% else %}-{% endif %}</td>
           <td class="text-end"><a class="small" href="{% url 'report_lot_trace' %}?product={{ r.product_id }}&serial={{ r.serial_number|urlencode }}">History</a></td>
         </tr>
         {% empty %}

@@ -34,7 +34,7 @@
           <td class="text-end">{{ r.reorder|floatformat:0 }}</td>
           <td class="text-end">{{ r.shortfall|floatformat:0 }}</td>
           <td class="text-end"><input type="number" min="0" step="1" class="form-control form-control-sm text-end" name="qty_{{ r.product.id }}" value="{{ r.shortfall|floatformat:0 }}"></td>
-          <td class="small">{% if r.product.preferred_supplier %}{{ r.product.preferred_supplier.name }}{% else %}<span class="text-muted">— (unassigned)</span>{% endif %}</td>
+          <td class="small">{% if r.product.preferred_supplier %}{{ r.product.preferred_supplier.name }}{% else %}<span class="text-muted">- (unassigned)</span>{% endif %}</td>
         </tr>
         {% empty %}
         <tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-check-circle text-success me-1"></i> All stocked products are above their reorder level.</td></tr>
