@@ -75,9 +75,9 @@
   </div>
 
   <div class="row mb-3">
-    <div class="col-md-4"><strong>Department:</strong> {{ req.department|default:"—" }}</div>
-    <div class="col-md-4"><strong>Preferred Supplier:</strong> {% if req.preferred_supplier %}{{ req.preferred_supplier.name }}{% else %}—{% endif %}</div>
-    <div class="col-md-4"><strong>Needed By:</strong> {{ req.needed_by|date:"d M Y"|default:"—" }}</div>
+    <div class="col-md-4"><strong>Department:</strong> {{ req.department|default:"-" }}</div>
+    <div class="col-md-4"><strong>Preferred Supplier:</strong> {% if req.preferred_supplier %}{{ req.preferred_supplier.name }}{% else %}-{% endif %}</div>
+    <div class="col-md-4"><strong>Needed By:</strong> {{ req.needed_by|date:"d M Y"|default:"-" }}</div>
   </div>
   {% if req.justification %}<div class="mb-3"><strong>Justification:</strong> <span class="text-muted">{{ req.justification }}</span></div>{% endif %}
   {% if req.status == "REJECTED" and req.rejected_reason %}<div class="alert alert-danger py-2">Rejected: {{ req.rejected_reason }}</div>{% endif %}
@@ -95,7 +95,7 @@
         <td>{{ line.product.sku }}</td>
         <td>{{ line.product.name }}</td>
         <td class="text-end">{{ line.quantity|floatformat:2 }}</td>
-        <td class="text-end">{% if line.estimated_unit_cost %}{{ line.estimated_unit_cost|floatformat:2 }}{% else %}—{% endif %}</td>
+        <td class="text-end">{% if line.estimated_unit_cost %}{{ line.estimated_unit_cost|floatformat:2 }}{% else %}-{% endif %}</td>
         <td class="text-end">{{ line.estimated_total|money:tenant.currency_code }}</td>
         <td>{{ line.notes|default:"" }}</td>
       </tr>

@@ -1,6 +1,6 @@
 # 19. End-to-end ERP flow
 
-How the whole system connects — from company setup through master data, the buy-side and sell-side transaction
+How the whole system connects - from company setup through master data, the buy-side and sell-side transaction
 cycles, into the General Ledger, VAT, reporting, and the cross-cutting services (documents, notifications, audit,
 import/export, integrations, copilot).
 
@@ -90,11 +90,11 @@ flowchart TD
 
 ---
 
-### Appendix — module connectivity matrix
+### Appendix - module connectivity matrix
 
 | Module | Feeds into | Reads from |
 |---|---|---|
-| Company Setup | every module (tenant scope, defaults) | — |
+| Company Setup | every module (tenant scope, defaults) | - |
 | Roles & Permissions | every module (access control) | Company Setup |
 | Customer Mgmt | Sales, Finance (AR), Reports | Company Setup |
 | Supplier Mgmt | Purchasing, Finance (AP), Reports | Company Setup |

@@ -1,6 +1,6 @@
 """Replenishment planning: turn balances + policy into suggested actions.
 
-Pure planning/advisory — it reads the inventory ledger, open POs and in-transit
+Pure planning/advisory - it reads the inventory ledger, open POs and in-transit
 transfers and proposes purchase / transfer quantities. It never posts movements,
 costing or GL. The core formula:
 
@@ -310,7 +310,7 @@ def plan(tenant, *, location=None, supplier=None, category=None, status=None,
 
 def open_requisition_product_ids(tenant):
     """Product IDs that already sit on an open (draft/submitted/approved)
-    requisition — used to avoid raising duplicate replenishment requisitions."""
+    requisition - used to avoid raising duplicate replenishment requisitions."""
     open_statuses = [PurchaseRequisition.Status.DRAFT, PurchaseRequisition.Status.SUBMITTED,
                      PurchaseRequisition.Status.APPROVED]
     return set(PurchaseRequisitionLine.objects

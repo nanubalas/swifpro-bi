@@ -257,7 +257,7 @@ class AuditLog(models.Model):
     @property
     def change_summary(self):
         if self.old_value or self.new_value:
-            return f"{self.old_value or '—'} → {self.new_value or '—'}"
+            return f"{self.old_value or '-'} → {self.new_value or '-'}"
         return ""
 
 
@@ -609,7 +609,7 @@ class ReplenishmentPolicy(models.Model):
     """Min/max planning settings for a product, optionally overridden per location.
 
     A row with location=NULL is the product-level default; a row with a location
-    is that location's override (whole-row override — the resolver prefers it).
+    is that location's override (whole-row override - the resolver prefers it).
     These feed the replenishment planning service; they do NOT touch the
     inventory ledger, costing, or GL. Product.reorder_level / preferred_supplier
     remain the fallback when no policy exists."""
@@ -622,7 +622,7 @@ class ReplenishmentPolicy(models.Model):
     safety_stock = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     reorder_point = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     reorder_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
-    # Economic order quantity — a stored input (not auto-calculated here).
+    # Economic order quantity - a stored input (not auto-calculated here).
     eoq = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     lead_time_days = models.PositiveSmallIntegerField(default=0)
     preferred_supplier = models.ForeignKey("Supplier", on_delete=models.SET_NULL, null=True, blank=True,
@@ -658,7 +658,7 @@ class BillOfMaterialsLine(models.Model):
     bom = models.ForeignKey(BillOfMaterials, on_delete=models.CASCADE, related_name="lines")
     # ERP-style stable line number (10, 20, 30...) so components keep a fixed
     # display/order identity and new ones can be inserted between without
-    # renumbering. Display/order only — does not affect explosion quantities.
+    # renumbering. Display/order only - does not affect explosion quantities.
     line_no = models.PositiveIntegerField(default=10)
     component = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="bom_component_of")
     qty = models.DecimalField(max_digits=12, decimal_places=2)
@@ -1681,7 +1681,7 @@ class ReturnLine(models.Model):
     serial_number = models.CharField(max_length=100, blank=True, null=True)
     expiry_date = models.DateField(blank=True, null=True)
     # How the returned unit is routed on receipt. Defaults to QUARANTINE so a
-    # return is never silently made sellable — staff pick RESTOCK explicitly.
+    # return is never silently made sellable - staff pick RESTOCK explicitly.
     disposition = models.CharField(max_length=20, choices=Disposition.choices, default=Disposition.QUARANTINE)
     disposition_reason = models.CharField(max_length=200, blank=True, null=True)
     inspected_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
@@ -1995,7 +1995,7 @@ class Customer(models.Model):
         amount would push the outstanding balance over it.
         """
         if self.status == self.Status.ON_HOLD:
-            return False, f"{self.name} is on hold — new sales are blocked until released."
+            return False, f"{self.name} is on hold - new sales are blocked until released."
         if not self.credit_limit or self.credit_limit <= Decimal("0.00"):
             return True, ""  # no limit configured
         projected = self.outstanding_balance + (additional or Decimal("0.00"))

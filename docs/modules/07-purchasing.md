@@ -4,23 +4,23 @@
 Manages the full procure-to-pay cycle for a UK SME: internal Purchase Requisitions, Purchase Orders to suppliers, inbound Shipments, Goods Receipts (GRN) into inventory, and three-way-matched Supplier Invoices (bills) that post to the General Ledger. It captures supplier price history for cost intelligence, supports approval thresholds, PO amendments/versioning, backorder tracking, and PO PDF/email to suppliers.
 
 ### Roles involved
-- **Admin** — full access to all purchasing actions.
-- **Purchasing** (group `Procurement`) — create/submit/send/amend/cancel POs, create requisitions, convert approved requisitions, create shipments.
-- **Warehouse** — create requisitions, view POs/shipments, receive goods (GRN).
-- **Manager** — read access across requisitions, POs, backorders, shipments (via the `Procurement`/`Warehouse` group mapping).
-- **Accountant** / **Finance** — supplier invoices (bills) and posting (`/invoices/` is restricted to Admin/Accountant/Finance); Finance also approves/rejects requisitions.
-- **Read-only** — view-only on POs, requisitions, shipments.
+- **Admin** - full access to all purchasing actions.
+- **Purchasing** (group `Procurement`) - create/submit/send/amend/cancel POs, create requisitions, convert approved requisitions, create shipments.
+- **Warehouse** - create requisitions, view POs/shipments, receive goods (GRN).
+- **Manager** - read access across requisitions, POs, backorders, shipments (via the `Procurement`/`Warehouse` group mapping).
+- **Accountant** / **Finance** - supplier invoices (bills) and posting (`/invoices/` is restricted to Admin/Accountant/Finance); Finance also approves/rejects requisitions.
+- **Read-only** - view-only on POs, requisitions, shipments.
 
 Note: requisition **approve/reject** views are gated to `[ROLE_ADMIN, ROLE_FINANCE]`, not Procurement.
 
 ### Workflow
 1. A requester creates a **Purchase Requisition** (`requisition_create`) in Draft or directly Submitted (form `action`).
 2. Admin/Finance **approves** (`requisition_approve`) or rejects/cancels it.
-3. An approved requisition is **converted** (`requisition_convert`) into a Draft **PurchaseOrder** — supplier resolved from `preferred_supplier`, else a product's preferred supplier, else first supplier; lines copied with estimated/standard cost and STD tax code.
+3. An approved requisition is **converted** (`requisition_convert`) into a Draft **PurchaseOrder** - supplier resolved from `preferred_supplier`, else a product's preferred supplier, else first supplier; lines copied with estimated/standard cost and STD tax code.
 4. Purchasing **submits** the PO (`po_submit`): currency set from supplier/tenant, supplier prices recorded (`record_po_prices`), and a planned Shipment + ShipmentLines auto-created. If total > tenant `po_approval_threshold` the PO goes to **Approval Pending**, otherwise **Submitted**.
 5. If required, Admin/Procurement **approves** (`po_approve`) → **Approved** (also ensures a shipment exists).
 6. PO is **sent** to the supplier by email with PDF attached (`po_send`) → **Sent**.
-7. Goods arrive; warehouse posts a **Goods Receipt / GRN** (`receive_po`) against a shipment — qty validated against open qty, inventory movements applied, optional landed cost apportioned, GL receipt posted (`post_inventory_receipt`).
+7. Goods arrive; warehouse posts a **Goods Receipt / GRN** (`receive_po`) against a shipment - qty validated against open qty, inventory movements applied, optional landed cost apportioned, GL receipt posted (`post_inventory_receipt`).
 8. PO status becomes **Partially Received** or **Fully Received** based on remaining open qty; outstanding lines appear in **Backorders**.
 9. Finance/Accountant records and posts a **Supplier Invoice** (`invoice_post` → `post_supplier_invoice`): posts AP GL entry, marks the PO **Billed**, and captures actual billed prices (`record_bill_prices`).
 10. Payment of the supplier invoice is handled by the Finance/Payments module (`supplier_payment_create`).
@@ -34,15 +34,15 @@ Note: requisition **approve/reject** views are gated to `[ROLE_ADMIN, ROLE_FINAN
 
 ### Output generated
 - **Documents:** PO PDF (`po_pdf`, `documents/po_pdf.html`), PO email with PDF attachment (`po_email.html`).
-- **Statuses:** PO — Draft / Submitted / Approval Pending / Approved / Sent / In Transit / Partially Received / Fully Received / Billed / Closed / Cancelled. (In Transit and Closed exist as choices but are not set by the receive/submit flows reviewed.)
-- **GL postings:** GRN receipt — DR Inventory / CR GRNI / CR Accruals (landed) / ± Purchase Price Variance. Supplier invoice — DR GRNI + DR VAT Input / CR Accounts Payable.
+- **Statuses:** PO - Draft / Submitted / Approval Pending / Approved / Sent / In Transit / Partially Received / Fully Received / Billed / Closed / Cancelled. (In Transit and Closed exist as choices but are not set by the receive/submit flows reviewed.)
+- **GL postings:** GRN receipt - DR Inventory / CR GRNI / CR Accruals (landed) / ± Purchase Price Variance. Supplier invoice - DR GRNI + DR VAT Input / CR Accounts Payable.
 - **Records:** GoodsReceipt + GoodsReceiptLines, InventoryMovement (RECEIVE), SupplierPriceHistory (PO and BILL sources), PurchaseOrderAmendment (versioning).
 
 ### Related modules
-- **Inventory** — GRN applies costed stock movements and updates balances.
-- **Finance / GL** — receipt and AP-invoice journal entries (`post_inventory_receipt`, `post_supplier_invoice`).
-- **Payments** — supplier payments settle posted bills (DR AP / CR Bank).
-- **VAT / Tax** — `TaxCode` drives input VAT on PO/invoice lines.
+- **Inventory** - GRN applies costed stock movements and updates balances.
+- **Finance / GL** - receipt and AP-invoice journal entries (`post_inventory_receipt`, `post_supplier_invoice`).
+- **Payments** - supplier payments settle posted bills (DR AP / CR Bank).
+- **VAT / Tax** - `TaxCode` drives input VAT on PO/invoice lines.
 - **Suppliers & Products** master data; **Supplier Scorecard** report (`supplier_scorecard`) consumes bills + GRNs.
 
 ### Validations & rules

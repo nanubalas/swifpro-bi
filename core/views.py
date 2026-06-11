@@ -2357,7 +2357,7 @@ def adjustment_create(request):
             try:
                 _post_stock_adjustment(adj, request.user)
             except ValidationError as e:
-                # e.g. serial not available / missing — roll back and report cleanly.
+                # e.g. serial not available / missing - roll back and report cleanly.
                 transaction.set_rollback(True)
                 messages.error(request, "; ".join(e.messages))
                 return render(request, "inventory\adjustment_form.html", {"tenant": tenant, "form": form})
@@ -4330,7 +4330,7 @@ def stock_take_submit(request, session_id):
     session.save(update_fields=["status"])
     if pending:
         messages.warning(request, f"Submitted for review. {pending} line(s) were not counted and "
-                                  "will post no variance — recount them if that is unexpected.")
+                                  "will post no variance - recount them if that is unexpected.")
     else:
         messages.success(request, "Submitted for review.")
     return redirect("stock_take_detail", session_id=session.id)
@@ -4344,9 +4344,9 @@ def stock_take_approve(request, session_id):
     session = get_object_or_404(StockTakeSession, id=session_id, tenant=tenant)
     if request.method != "POST" or session.status != StockTakeSession.Status.REVIEW:
         return redirect("stock_take_detail", session_id=session.id)
-    # Don't approve over the top of drifted stock — refresh and keep in review.
+    # Don't approve over the top of drifted stock - refresh and keep in review.
     if refresh_staleness(session):
-        messages.warning(request, "Stock moved since the snapshot — the affected lines were "
+        messages.warning(request, "Stock moved since the snapshot - the affected lines were "
                                   "refreshed and flagged stale. Review/recount before approving.")
         return redirect("stock_take_detail", session_id=session.id)
     session.lines.filter(count_status=StockTakeLine.CountStatus.COUNTED).update(
@@ -4373,7 +4373,7 @@ def stock_take_post(request, session_id):
     if ok:
         messages.success(request, "Stock-take posted: variances written to stock and the GL.")
     elif reason == "stale":
-        messages.warning(request, "Stock changed since approval — the variances were refreshed and "
+        messages.warning(request, "Stock changed since approval - the variances were refreshed and "
                                   "the count returned to review. Re-approve before posting.")
     else:
         messages.error(request, "This stock-take is not approved for posting.")
@@ -5178,7 +5178,7 @@ def ar_invoice_create(request):
             if action == "issue":
                 ok, reason = inv.customer.credit_status(inv.total)
                 if not ok:
-                    messages.error(request, f"Saved as draft — not issued. {reason}")
+                    messages.error(request, f"Saved as draft - not issued. {reason}")
                 else:
                     post_customer_invoice(inv, user=request.user)
 
@@ -6582,7 +6582,7 @@ def expense_create(request):
                       detail=f"{expense.payee} {expense.total}")
             _notify_expense_submitted(request, tenant, expense)
             if action == "post" and is_approver and needs_approval:
-                messages.warning(request, f"Expense submitted — approval required (total {expense.total} ≥ threshold {threshold}).")
+                messages.warning(request, f"Expense submitted - approval required (total {expense.total} ≥ threshold {threshold}).")
             else:
                 messages.success(request, "Expense submitted for approval.")
         else:

@@ -1,4 +1,4 @@
-# SwifPro BI ERP — Module Workflows
+# SwifPro BI ERP - Module Workflows
 
 Module-wise workflow & architecture specification for the SwifPro BI multi-tenant ERP (Django 5).
 Each file follows the same structure: Purpose, Roles, Workflow, Input data, Output, Related modules,

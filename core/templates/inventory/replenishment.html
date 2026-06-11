@@ -24,7 +24,7 @@
   Set a receiving location on those POs so the stock counts here.
   <details class="mt-1"><summary class="text-decoration-underline" style="cursor:pointer;">Show lines</summary>
     <ul class="mb-0 mt-1">
-      {% for l in excluded_inbound.lines %}<li>{{ l.po_number }} — {{ l.sku }} {{ l.product }} · {{ l.open_qty|floatformat:2 }}</li>{% endfor %}
+      {% for l in excluded_inbound.lines %}<li>{{ l.po_number }} - {{ l.sku }} {{ l.product }} · {{ l.open_qty|floatformat:2 }}</li>{% endfor %}
     </ul>
   </details>
 </div>
@@ -93,14 +93,14 @@
                 <input type="number" step="0.01" name="qty_{{ r.token }}" value="{{ r.suggested_purchase_qty|floatformat:2 }}"
                        class="form-control form-control-sm text-end" style="width:80px;display:inline-block;">
                 <span class="small text-muted">{{ r.product.base_uom.code|default:r.product.uom }}</span>
-              {% else %}—{% endif %}
+              {% else %}-{% endif %}
             </td>
             <td class="text-end small">
               {% if r.suggested_transfer_qty > 0 %}<span class="text-info">{{ r.suggested_transfer_qty|floatformat:2 }}</span>
                 {% if r.transfer_from %}<div class="text-muted">from {{ r.transfer_from.name }}</div>{% endif %}
-              {% else %}—{% endif %}
+              {% else %}-{% endif %}
             </td>
-            <td class="small">{{ r.preferred_supplier.name|default:"—" }}{% if r.has_open_req %}<div class="text-warning small">open req exists</div>{% endif %}</td>
+            <td class="small">{{ r.preferred_supplier.name|default:"-" }}{% if r.has_open_req %}<div class="text-warning small">open req exists</div>{% endif %}</td>
             <td>
               {% if r.status == "critical" %}<span class="badge text-bg-danger">Critical</span>
               {% elif r.status == "below_safety" %}<span class="badge text-bg-danger">Below safety</span>
@@ -108,7 +108,7 @@
               {% elif r.status == "overstock" %}<span class="badge text-bg-info">Overstock</span>
               {% else %}<span class="badge text-bg-success">OK</span>{% endif %}
             </td>
-            <td class="text-end small text-muted">{% if r.days_cover != None %}{{ r.days_cover }}{% else %}—{% endif %}</td>
+            <td class="text-end small text-muted">{% if r.days_cover != None %}{{ r.days_cover }}{% else %}-{% endif %}</td>
             <td class="text-end"><a class="small" href="{% url 'replenishment_policy_edit' r.product.id %}?location={{ r.location.id }}">Settings</a></td>
           </tr>
           {% empty %}

@@ -4,10 +4,10 @@
 Lets staff record everyday business costs (rent, fuel, software, professional fees, etc.) that arrive without a formal supplier bill, optionally attaching a receipt photo or PDF. Each expense carries a net amount plus a VAT tax code, runs through a Draft → Submitted → Posted approval workflow, and on posting generates the GL double-entry (DR expense account + DR VAT input, CR Bank or Accounts Payable).
 
 ### Roles involved
-- **Admin** — full access (submit, approve, post, reject).
-- **Finance** — approver: submit, approve, reject, post (`EXPENSE_APPROVERS = [ROLE_FINANCE, ROLE_ADMIN]`).
-- **Manager, Sales, Warehouse, Purchasing** — staff: create, save draft, submit for approval (`EXPENSE_STAFF = [ROLE_ADMIN, ROLE_FINANCE, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES]`; note Manager maps to the Procurement/Warehouse/Sales groups).
-- **Read-only** — may view the list and detail only (`expense_list` / `expense_detail` include `ROLE_READONLY`).
+- **Admin** - full access (submit, approve, post, reject).
+- **Finance** - approver: submit, approve, reject, post (`EXPENSE_APPROVERS = [ROLE_FINANCE, ROLE_ADMIN]`).
+- **Manager, Sales, Warehouse, Purchasing** - staff: create, save draft, submit for approval (`EXPENSE_STAFF = [ROLE_ADMIN, ROLE_FINANCE, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_SALES]`; note Manager maps to the Procurement/Warehouse/Sales groups).
+- **Read-only** - may view the list and detail only (`expense_list` / `expense_detail` include `ROLE_READONLY`).
 - **Accountant** appears in the sidebar entry for `/expenses/` but is not in `EXPENSE_STAFF`/`EXPENSE_APPROVERS`, so its write access is via the Finance group mapping.
 
 ### Workflow
@@ -25,11 +25,11 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 
 ### Input data
 - Expense date, payee (merchant), optional supplier link.
-- Category — an active `GLAccount` of type EXPENSE (form restricts the queryset to `type=EXPENSE, is_active=True`).
+- Category - an active `GLAccount` of type EXPENSE (form restricts the queryset to `type=EXPENSE, is_active=True`).
 - Description, net amount (before VAT), tax code (optional; defaults to tenant `default_tax_code`).
 - Payment method (Bank transfer / Card / Cash / Other), reference.
 - Flags: `paid` (paid now vs owed), `reimbursable` (paid personally).
-- Receipt file upload — validated to `.pdf/.png/.jpg/.jpeg/.gif/.webp/.heic`, stored tenant-scoped under `expense_receipts/<tenant_id>/`.
+- Receipt file upload - validated to `.pdf/.png/.jpg/.jpeg/.gif/.webp/.heic`, stored tenant-scoped under `expense_receipts/<tenant_id>/`.
 
 ### Output generated
 - An `Expense` record with status Draft / Submitted / Rejected / Posted.
@@ -38,13 +38,13 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 - Posted expenses flow into VAT input reclaim and P&L expense reporting via the journal.
 
 ### Related modules
-- **General Ledger / Chart of Accounts** — categories are EXPENSE `GLAccount`s; posting writes `JournalEntry`/`JournalLine`.
-- **VAT / Tax Codes** — `tax_code` drives reclaimable VAT Input.
-- **Suppliers / Accounts Payable** — optional supplier link; unpaid expenses credit AP.
-- **Bank** — paid expenses credit the Bank account (feeds bank reconciliation).
-- **Reports** — Profit & Loss (expense accounts) and VAT return.
-- **Inter-company** — `is_intercompany` flag marks group purchases for consolidation elimination (set programmatically, not in the standard form).
-- **Tenant Settings** — `expense_approval_threshold` configured under Company Profile.
+- **General Ledger / Chart of Accounts** - categories are EXPENSE `GLAccount`s; posting writes `JournalEntry`/`JournalLine`.
+- **VAT / Tax Codes** - `tax_code` drives reclaimable VAT Input.
+- **Suppliers / Accounts Payable** - optional supplier link; unpaid expenses credit AP.
+- **Bank** - paid expenses credit the Bank account (feeds bank reconciliation).
+- **Reports** - Profit & Loss (expense accounts) and VAT return.
+- **Inter-company** - `is_intercompany` flag marks group purchases for consolidation elimination (set programmatically, not in the standard form).
+- **Tenant Settings** - `expense_approval_threshold` configured under Company Profile.
 
 ### Validations & rules
 - **Approval threshold**: if `tenant.expense_approval_threshold > 0` and `expense.total >= threshold`, the expense cannot be posted on creation and is forced to Submitted for approval.
@@ -55,7 +55,7 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 - **Receipt type validation**: PDF or image extensions only.
 - **Tenant scoping**: every query filters `tenant=_get_default_tenant(request)`; receipts stored per-tenant directory.
 - **Referential protection**: `category`, `supplier`, `tax_code` use `on_delete=PROTECT`.
-- **No soft-delete or immutability lock** on posted expenses is implemented — there is no edit/delete view or void path for a posted expense; not implemented.
+- **No soft-delete or immutability lock** on posted expenses is implemented - there is no edit/delete view or void path for a posted expense; not implemented.
 
 ### Database entities
 - `Expense` (statuses DRAFT/SUBMITTED/REJECTED/POSTED; methods BANK/CARD/CASH/OTHER; computed `tax_amount`, `total`).
@@ -63,7 +63,7 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 - `TaxCode`, `Supplier`, `Tenant` (holds `expense_approval_threshold`, `default_tax_code`, `currency_code`).
 - `JournalEntry` / `JournalLine` (the posted double-entry).
 - `auth.User` via `submitted_by`, `approved_by`, `posted_by`.
-- Note: `Expense` has no line-item child model — it is a single net amount plus one tax code.
+- Note: `Expense` has no line-item child model - it is a single net amount plus one tax code.
 
 ### API / page requirements
 - `GET /expenses/` → `expense_list` (list + total; read-only roles allowed).
@@ -73,7 +73,7 @@ Lets staff record everyday business costs (rent, fuel, software, professional fe
 - `POST /expenses/<int:expense_id>/approve/` → `expense_approve`.
 - `POST /expenses/<int:expense_id>/reject/` → `expense_reject` (reads `reason`).
 - `POST /expenses/<int:expense_id>/post/` → `expense_post` (Finance/Admin).
-- No JSON/REST API — these are server-rendered Django views/templates under `core/templates/expenses/`.
+- No JSON/REST API - these are server-rendered Django views/templates under `core/templates/expenses/`.
 
 ### Flow diagram
 ```mermaid

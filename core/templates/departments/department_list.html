@@ -18,8 +18,8 @@
       <tr {% if not d.is_active %}class="text-muted"{% endif %}>
         <td class="fw-semibold">{{ d.name }}</td>
         <td>{{ d.code|default:'' }}</td>
-        <td class="small">{{ d.site.name|default:'—' }}</td>
-        <td class="small">{% if d.manager %}{{ d.manager.get_full_name|default:d.manager.username }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+        <td class="small">{{ d.site.name|default:'-' }}</td>
+        <td class="small">{% if d.manager %}{{ d.manager.get_full_name|default:d.manager.username }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
         <td><span class="badge text-bg-light">{{ d.members.count }}</span></td>
         <td>{% if d.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
         <td class="text-end"><div class="btn-group">

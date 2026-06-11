@@ -1,7 +1,7 @@
 """Bootstrap demo admin accounts from environment variables.
 
 For hosted demos (e.g. Render free tier, which has no Shell to run
-`createsuperuser`). Idempotent and safe to run on every deploy — it never prints
+`createsuperuser`). Idempotent and safe to run on every deploy - it never prints
 passwords, never raises on missing config, and never touches other tenants.
 
 Creates:
@@ -13,7 +13,7 @@ All accounts are placed in a single demo tenant ("SwifPro BI Demo Ltd") with an
 ADMIN OrgMembership, which grants full, unrestricted app access (admins bypass
 site/location scoping and have all permissions).
 
-DEMO / TESTING ONLY — disable or delete these accounts before real production use.
+DEMO / TESTING ONLY - disable or delete these accounts before real production use.
 
 Environment variables
 ---------------------
@@ -56,7 +56,7 @@ class Command(BaseCommand):
         owner_pw = os.environ.get("DJANGO_SUPERUSER_PASSWORD", "")
         if not owner_pw:
             self.stdout.write(self.style.WARNING(
-                "DJANGO_SUPERUSER_PASSWORD not set — skipping main owner. (No accounts changed.)"))
+                "DJANGO_SUPERUSER_PASSWORD not set - skipping main owner. (No accounts changed.)"))
         else:
             owner_username = os.environ.get("DJANGO_SUPERUSER_USERNAME", DEFAULT_OWNER_USERNAME)
             owner_email = os.environ.get("DJANGO_SUPERUSER_EMAIL", DEFAULT_OWNER_EMAIL)
@@ -64,14 +64,14 @@ class Command(BaseCommand):
 
         # Four demo app-admins, only when explicitly enabled.
         if os.environ.get("DEMO_ADMINS_ENABLED", "") != "1":
-            self.stdout.write("DEMO_ADMINS_ENABLED != 1 — not creating the four demo admins.")
+            self.stdout.write("DEMO_ADMINS_ENABLED != 1 - not creating the four demo admins.")
             self.stdout.write(self.style.SUCCESS("bootstrap_demo_admins complete."))
             return
 
         demo_pw = os.environ.get("DEMO_ADMIN_DEFAULT_PASSWORD", "")
         if not demo_pw:
             self.stdout.write(self.style.WARNING(
-                "DEMO_ADMINS_ENABLED=1 but DEMO_ADMIN_DEFAULT_PASSWORD is not set — "
+                "DEMO_ADMINS_ENABLED=1 but DEMO_ADMIN_DEFAULT_PASSWORD is not set - "
                 "skipping the four demo admins."))
             self.stdout.write(self.style.SUCCESS("bootstrap_demo_admins complete."))
             return
@@ -80,7 +80,7 @@ class Command(BaseCommand):
             email = os.environ.get(email_var, "")
             if not email:
                 self.stdout.write(self.style.WARNING(
-                    f"{email_var} not set — skipping demo admin '{username}'."))
+                    f"{email_var} not set - skipping demo admin '{username}'."))
                 continue
             self._ensure_user(username, email, demo_pw, superuser=False)
 
@@ -110,7 +110,7 @@ class Command(BaseCommand):
                 user.is_superuser = True; changed = True
             if changed:
                 user.save()
-            self.stdout.write(f"User '{username}' already exists — left password unchanged.")
+            self.stdout.write(f"User '{username}' already exists - left password unchanged.")
 
         self._ensure_admin_membership(user)
 

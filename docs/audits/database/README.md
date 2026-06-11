@@ -16,7 +16,7 @@ actual database schema.
 
 ## Important notes
 
-- **Generated, documentation only.** These files are exports — they are not read
+- **Generated, documentation only.** These files are exports - they are not read
   by the application and changing them has no runtime effect.
 - **Release-candidate snapshot.** They reflect the schema at the current
   release-candidate stage (migrations through `0094`).

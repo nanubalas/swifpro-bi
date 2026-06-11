@@ -2,7 +2,7 @@
 
 The serial cardinality guard (apply_movement) is strict for new data, but stock
 that predates it may violate the rules. This module DETECTS such legacy data so
-it can be corrected before go-live. It is read-only — it never invents serials,
+it can be corrected before go-live. It is read-only - it never invents serials,
 never mutates balances/financials and never rewrites movements. Optional "apply"
 (in the command) only writes audit-log flags for traceability.
 
@@ -40,7 +40,7 @@ SUGGESTION = {
     "DUPLICATE_SERIAL": "A serial is unique; it cannot be on hand in two places/products. Reconcile which one truly holds it.",
     "COST_LAYER_MISSING_SERIAL": "FIFO layer for a serial product has no serial; costing falls back to lot/average. Re-tag if the serial is known.",
     "SERIAL_MISSING_COST_LAYER": "On-hand serial has no FIFO cost layer; issues fall back to average cost. Cost-correct if needed.",
-    "SERIALLESS_MOVEMENT": "Historical movement(s) without a serial — informational only; old movements are not rewritten.",
+    "SERIALLESS_MOVEMENT": "Historical movement(s) without a serial - informational only; old movements are not rewritten.",
 }
 
 # Bound the serialless-movement scan so a pathological history can't blow memory.

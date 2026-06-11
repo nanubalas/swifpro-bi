@@ -2147,7 +2147,7 @@ class InventoryGlReconciliationTests(TestCase):
         from core.models import JournalEntry, JournalLine
         from django.utils import timezone
         # Manual-style entry (no ref) so the duplicate-posting reconciliation test
-        # can create two — the uniq_journal_entry_ref constraint only binds
+        # can create two - the uniq_journal_entry_ref constraint only binds
         # ref'd document postings, not ref-less manual journals.
         je = JournalEntry.objects.create(tenant=self.t, entry_date=entry_date or timezone.localdate(),
                                          memo="t")
@@ -7481,7 +7481,7 @@ class BackNavCoverageTests(TestCase):
         OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
         self.client.login(username="coveru", password="pw")
 
-    # (url, expected data-back-url) — one or more per ERP area.
+    # (url, expected data-back-url) - one or more per ERP area.
     CASES = [
         # Sales
         ("/customers/", "/dashboard/"), ("/customers/new/", "/customers/"),
@@ -8373,7 +8373,7 @@ class ReplenishmentClarityTests(TestCase):
 
 class LandedCostAccrualTests(TestCase):
     """Landed-cost accrual (2150) is credited at receipt and cleared (DR 2150 /
-    into AP) when the supplier invoice posts — idempotent and bounded."""
+    into AP) when the supplier invoice posts - idempotent and bounded."""
 
     def setUp(self):
         self.t = Tenant.objects.create(name="Landed Co")   # signal seeds GL
@@ -8496,7 +8496,7 @@ class LandedCostAccrualTests(TestCase):
 
 class PerformanceHardeningTests(TestCase):
     """N+1 elimination (available_serials, near-expiry, dashboard low-stock),
-    pagination, and index presence — behaviour must be unchanged."""
+    pagination, and index presence - behaviour must be unchanged."""
 
     def setUp(self):
         from core.models import OrgMembership

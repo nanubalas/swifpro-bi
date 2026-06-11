@@ -69,7 +69,7 @@
                 <td class="fw-semibold">{{ l.product.sku }}</td>
                 <td>{{ l.product.name }}</td>
                 <td class="text-end">{{ l.qty|floatformat:2 }}</td>
-                <td class="small">{% if l.serial_number %}<span class="badge text-bg-secondary">{{ l.serial_number }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td class="small">{% if l.serial_number %}<span class="badge text-bg-secondary">{{ l.serial_number }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
                 <td>{{ l.reason|default:"-" }}</td>
                 <td>
                   {% if l.disposition == "RESTOCK" %}<span class="badge text-bg-success">Restock</span>
@@ -104,7 +104,7 @@
         </div>
 
         <div class="alert alert-info mt-4 mb-0">
-          On receipt each line is routed by its disposition — Restock makes stock sellable,
+          On receipt each line is routed by its disposition - Restock makes stock sellable,
           Quarantine / Repair / Return-to-supplier hold it off sale, and Scrap writes it off.
           Kits restock as components.
         </div>

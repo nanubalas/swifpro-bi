@@ -4,7 +4,7 @@
 {% block back_url %}{% url 'reports_index' %}{% endblock %}
 {% block body %}
 <div class="mb-3">
-  <h2 class="fw-bold mb-1">Consolidated Reports{% if group %} — {{ group.name }}{% endif %}</h2>
+  <h2 class="fw-bold mb-1">Consolidated Reports{% if group %} - {{ group.name }}{% endif %}</h2>
   <div class="text-muted">Combined performance across {{ company_count }} compan{{ company_count|pluralize:"y,ies" }} you can access in this group.</div>
 </div>
 

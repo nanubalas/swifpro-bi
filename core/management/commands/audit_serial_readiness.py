@@ -1,6 +1,6 @@
 """Audit legacy serial-tracked stock for data that violates the serial rules.
 
-Audit-first and DRY-RUN by default — it only reads and reports. It never invents
+Audit-first and DRY-RUN by default - it only reads and reports. It never invents
 serial numbers, never changes balances/financials and never rewrites movements.
 
     python manage.py audit_serial_readiness                 # all tenants, report
@@ -83,4 +83,4 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.NOTICE(
                 "Dry-run only (no changes). Re-run with --apply to record audit-log flags, "
-                "or --csv PATH to export. Corrections are manual — see each suggestion."))
+                "or --csv PATH to export. Corrections are manual - see each suggestion."))

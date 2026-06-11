@@ -38,7 +38,7 @@
           <td class="text-end">{{ r.receipts }}</td>
           <td class="text-end">{{ r.on_time }}/{{ r.rated }}</td>
           <td class="text-end">
-            {% if r.otd_pct is None %}<span class="text-muted">—</span>
+            {% if r.otd_pct is None %}<span class="text-muted">-</span>
             {% elif r.otd_pct >= 90 %}<span class="badge text-bg-success">{{ r.otd_pct }}%</span>
             {% elif r.otd_pct >= 70 %}<span class="badge text-bg-warning">{{ r.otd_pct }}%</span>
             {% else %}<span class="badge text-bg-danger">{{ r.otd_pct }}%</span>{% endif %}

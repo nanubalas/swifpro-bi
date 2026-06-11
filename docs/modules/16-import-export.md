@@ -4,11 +4,11 @@
 Provides bulk CSV import for master data (products, customers, suppliers) using upsert-by-key with per-row validation, plus CSV/Excel export of both master data and finance reports/ledgers. Lets a UK SME bootstrap its catalogue and contacts from spreadsheets and extract accounting data for accountants, HMRC filing prep, or backup. Every export is gated by the `export_data` permission and audited.
 
 ### Roles involved
-- **Admin** — full import (products, customers, suppliers) and all exports.
-- **Purchasing** (Procurement group) — import products and suppliers.
-- **Sales** — import customers.
-- **Finance / Accountant** — import customers; finance/master-data exports (via `EXPORT_DATA` permission).
-- Any authenticated user — download blank import templates (`import_template` is `@login_required` only).
+- **Admin** - full import (products, customers, suppliers) and all exports.
+- **Purchasing** (Procurement group) - import products and suppliers.
+- **Sales** - import customers.
+- **Finance / Accountant** - import customers; finance/master-data exports (via `EXPORT_DATA` permission).
+- Any authenticated user - download blank import templates (`import_template` is `@login_required` only).
 - Export endpoints are permission-gated by `EXPORT_DATA`, not role-gated, so any role granted that permission (including overrides) can export.
 
 ### Workflow
@@ -31,18 +31,18 @@ Provides bulk CSV import for master data (products, customers, suppliers) using 
 ### Output generated
 - Created/updated `Product` (+ auto-created `ProductCategory`, optional `ProductBarcode`), `Customer`, `Supplier` records.
 - Import summary dict: created/updated/errors(line, message)/total.
-- Master-data export files: `products.csv`, `customers.csv`, `suppliers.csv` (or `.xlsx`) — column order mirrors import so an export re-imports cleanly.
+- Master-data export files: `products.csv`, `customers.csv`, `suppliers.csv` (or `.xlsx`) - column order mirrors import so an export re-imports cleanly.
 - Finance export files (CSV/XLSX): trial balance, P&L, balance sheet, cash flow, aged receivables/payables, general ledger (journal), expenses, payments, customer invoices, supplier bills, credit notes, bank transactions, VAT return (9 boxes), VAT transactions, sales-history/by-product/by-customer/by-channel.
 - Audit log export: `audit-log.csv` (admin only, capped at 5000 rows).
 - `DATA_EXPORTED` audit log entries with `kind (N rows)` detail.
 
 ### Related modules
-- **Inventory / Products** — product + category + barcode upsert; export feeds stock valuation.
-- **Customers / Sales** — customer import; customer-invoice and sales-report exports.
-- **Suppliers / Procurement** — supplier import; supplier-bill exports.
-- **Finance / GL** — journal, trial balance, P&L, balance sheet, payments, expenses, credit notes exports.
-- **VAT (MTD)** — VAT return and VAT-transactions exports.
-- **Audit Log** — audit export and `DATA_EXPORTED` logging.
+- **Inventory / Products** - product + category + barcode upsert; export feeds stock valuation.
+- **Customers / Sales** - customer import; customer-invoice and sales-report exports.
+- **Suppliers / Procurement** - supplier import; supplier-bill exports.
+- **Finance / GL** - journal, trial balance, P&L, balance sheet, payments, expenses, credit notes exports.
+- **VAT (MTD)** - VAT return and VAT-transactions exports.
+- **Audit Log** - audit export and `DATA_EXPORTED` logging.
 - Bank statement import (`/bank/transactions/import/`) exists as a separate Finance feature, not part of `importer.py`.
 
 ### Validations & rules
