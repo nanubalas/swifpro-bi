@@ -136,6 +136,14 @@ class TemplateRenderTests(TestCase):
         self.assertContains(resp, "SwifPro")  # wordmark
         self.assertContains(resp, "Business intelligence")
 
+    def test_login_page_has_password_toggle(self):
+        # Show/hide password control (eye icon) on the login form.
+        resp = self.client.get("/login/")
+        self.assertContains(resp, 'id="togglePassword"')
+        self.assertContains(resp, 'id="loginPassword"')
+        self.assertContains(resp, "bi-eye")
+        self.assertContains(resp, 'aria-label="Show password"')
+
     def test_landing_page_renders(self):
         self.client.login(username="u", password="pw")
         resp = self.client.get("/", follow=True)

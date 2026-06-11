@@ -34,7 +34,11 @@
           <label class="form-label">Password</label>
           <div class="input-group">
             <span class="input-group-text"><i class="bi bi-lock"></i></span>
-            <input type="password" name="password" class="form-control" required>
+            <input type="password" name="password" id="loginPassword" class="form-control" required>
+            <button class="btn btn-outline-secondary" type="button" id="togglePassword"
+                    aria-label="Show password" aria-pressed="false" title="Show password">
+              <i class="bi bi-eye"></i>
+            </button>
           </div>
         </div>
 
@@ -42,6 +46,25 @@
           <i class="bi bi-box-arrow-in-right me-1"></i> Sign in
         </button>
       </form>
+
+      <script>
+        // Show / hide the password (eye toggle).
+        (function () {
+          var btn = document.getElementById("togglePassword");
+          var input = document.getElementById("loginPassword");
+          if (!btn || !input) return;
+          btn.addEventListener("click", function () {
+            var show = input.type === "password";
+            input.type = show ? "text" : "password";
+            btn.querySelector("i").className = show ? "bi bi-eye-slash" : "bi bi-eye";
+            btn.setAttribute("aria-pressed", String(show));
+            var label = show ? "Hide password" : "Show password";
+            btn.setAttribute("aria-label", label);
+            btn.setAttribute("title", label);
+            input.focus();
+          });
+        })();
+      </script>
 
       <div class="text-muted small text-center mt-4">
         Don’t have an account? <a href="{% url 'request_access' %}" class="text-decoration-none">Request access</a>.
