@@ -390,6 +390,9 @@
     a { text-underline-offset: 2px; }
     ::selection { background: rgba(var(--skn-brand-rgb), .22); }
 
+    /* Page-heading icon (mirrors the launcher card icon for the current page) */
+    .page-head-icon { color: var(--skn-brand); margin-right: .5rem; }
+
     /* ---------- Dashboards ---------- */
     .kpi-card { position: relative; overflow: hidden; }
     .kpi-card .kpi-icon { position: absolute; right: 14px; top: 14px; font-size: 1.6rem; opacity: .16; color: var(--skn-brand); }
@@ -415,7 +418,7 @@
   </style>
 </head>
 
-<body>
+<body data-nav-icon="{{ current_nav_icon }}">
 
 <nav class="navbar navbar-expand-lg skn-navbar sticky-top">
   <div class="container">
@@ -592,6 +595,22 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
+  // ---- Page heading icon (same icon as the page's launcher card) ----
+  (function () {
+    var icon = document.body.getAttribute("data-nav-icon");
+    if (!icon) return;                                  // unknown / dashboard page
+    var page = document.querySelector(".skn-page");
+    if (!page) return;
+    var h = page.querySelector("h1, h2, h3");           // the page title heading
+    if (!h) return;
+    var first = h.firstElementChild;                    // don't double up an icon
+    if (first && first.tagName === "I" && /\bbi-/.test(first.className)) return;
+    var i = document.createElement("i");
+    i.className = "bi bi-" + icon + " page-head-icon";
+    i.setAttribute("aria-hidden", "true");
+    h.insertBefore(i, h.firstChild);
+  })();
+
   // ---- Sidebar active state + collapsible groups ----
   (function () {
     const path = window.location.pathname;

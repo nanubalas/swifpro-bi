@@ -210,6 +210,22 @@ def section_slug(title):
     return title.lower().replace("&", "and").replace("/", "-").replace(" ", "-").strip("-")
 
 
+def icon_for_path(path):
+    """Bootstrap-icon name for a request path, chosen by the longest matching
+    NAV url prefix so a leaf/detail page (e.g. /quotes/5/) inherits its module
+    page's icon - the same icon shown on that page's dashboard card. The
+    self-referential Dashboard section is excluded (its pages have their own
+    headers). Returns "" when nothing matches."""
+    best_icon, best_len = "", -1
+    for title, items in NAV:
+        if title == "Dashboard":
+            continue
+        for label, url, icon, _roles in items:
+            if path.startswith(url) and len(url) > best_len:
+                best_icon, best_len = icon, len(url)
+    return best_icon
+
+
 def nav_section_by_slug(role, slug):
     """Return (section_title, [(label, url, icon), ...]) for the section whose
     slug matches `slug` and is visible to `role`, or None. Permission-aware and
