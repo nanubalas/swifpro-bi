@@ -1,0 +1,9 @@
+{# One launcher card. Expects `c` (a card dict: label, url, icon, badge) and
+   `gold` (bool) in context. Shared by the dashboard preview and module pages. #}
+<a href="{{ c.url }}" class="launch-card">
+  <span class="launch-icon{% if gold %} gold{% endif %}"><i class="bi bi-{{ c.icon }}"></i></span>
+  <div class="d-flex align-items-start justify-content-between gap-1">
+    <span class="fw-semibold">{{ c.label }}</span>
+    {% if c.badge %}<span class="launch-badge">{{ c.badge }}</span>{% endif %}
+  </div>
+</a>

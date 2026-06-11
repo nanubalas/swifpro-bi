@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ module_title }} - SwifPro BI{% endblock %}
+
+{# Logical back target for the global Back button: the role dashboard. #}
+{% block back_url %}{% url 'dashboard' %}{% endblock %}
+{% block back_label %}Dashboard{% endblock %}
+
+{% block body %}
+{% include "dashboards/_launcher_styles.html" %}
+<style>
+  .mod-hero { display: flex; align-items: flex-start; gap: .9rem; margin-bottom: 1.4rem; }
+  .mod-hero-ico {
+    width: 52px; height: 52px; border-radius: 14px; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; background: var(--skn-brand-soft); color: var(--skn-brand);
+  }
+  .mod-hero-ico.gold { background: var(--skn-gold-soft); color: var(--skn-gold); }
+  .mod-hero h1 { font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; margin: 0; }
+  .mod-hero .mod-hero-sub { color: var(--skn-muted); font-size: .92rem; margin-top: .15rem; }
+</style>
+
+<nav aria-label="breadcrumb" class="mb-2">
+  <a href="{% url 'dashboard' %}" class="text-decoration-none small">
+    <i class="bi bi-arrow-left me-1"></i>Back to dashboard
+  </a>
+</nav>
+
+<div class="mod-hero">
+  <span class="mod-hero-ico{% if is_gold %} gold{% endif %}"><i class="bi bi-{{ module_icon }}"></i></span>
+  <div>
+    <h1>{{ module_title }}</h1>
+    {% if module_desc %}<div class="mod-hero-sub">{{ module_desc }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  {% for c in cards %}
+  <div class="col-6 col-md-4 col-xl-3">
+    {% include "dashboards/_launcher_card.html" with c=c gold=is_gold %}
+  </div>
+  {% empty %}
+  <div class="col-12 text-muted">No pages are available in this module for your role.</div>
+  {% endfor %}
+</div>
+{% endblock %}

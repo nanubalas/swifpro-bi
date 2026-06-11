@@ -14,6 +14,7 @@ urlpatterns = [
     path("dashboard/purchasing", views.dashboard_purchasing, name="dashboard_purchasing"),
     path("dashboard/finance", views.dashboard_finance, name="dashboard_finance"),
     path("dashboard/read-only", views.dashboard_readonly, name="dashboard_readonly"),
+    path("dashboard/modules/<slug:slug>/", views.dashboard_module, name="dashboard_module"),
     path("select-org/", views.select_org, name="select_org"),
     path("select-site/", views.select_site, name="select_site"),
     path("switch-company/", views.switch_company, name="switch_company"),
