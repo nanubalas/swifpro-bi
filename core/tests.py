@@ -7302,6 +7302,18 @@ class DashboardGroupingTests(TestCase):
         self.assertEqual(resp.context["current_nav_icon"], "")
         self.assertContains(resp, 'data-nav-icon=""')
 
+    def test_sites_under_administration_not_inventory(self):
+        # Company->Site is org structure, so Sites + Site Access live under
+        # Administration. Locations/Bins stay in Inventory (Sites-only move).
+        from core.roles import sidebar_for_role, ADMIN
+        secs = {t: [u for _, u, _ in items] for t, items in sidebar_for_role(ADMIN)}
+        self.assertIn("/sites/", secs["Administration"])
+        self.assertIn("/sites/access/", secs["Administration"])
+        self.assertNotIn("/sites/", secs["Inventory"])
+        self.assertNotIn("/sites/access/", secs["Inventory"])
+        self.assertIn("/locations/", secs["Inventory"])
+        self.assertIn("/bins/", secs["Inventory"])
+
     # ---- hamburger menu still grouped/collapsible (unchanged) ----
     def test_hamburger_grouping_intact(self):
         self.client.login(username="dash_admin", password="pw")
