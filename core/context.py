@@ -42,6 +42,9 @@ def nav(request):
         # Drives the offcanvas menu (incl. its instant filter) and keeps a single
         # permission-aware source for navigation + search.
         "nav_groups": roles.search_groups(role),
+        # Icon for the current page's heading, matched to its NAV card icon, so
+        # interior pages show the same icon their launcher card does.
+        "current_nav_icon": roles.icon_for_path(getattr(request, "path", "")),
         "membership_count": len(memberships),
         "active_tenant_name": getattr(tenant, "name", ""),
         "active_tenant_id": getattr(tenant, "id", None),

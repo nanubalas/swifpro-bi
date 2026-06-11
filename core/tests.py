@@ -7239,6 +7239,40 @@ class DashboardGroupingTests(TestCase):
             self.assertNotContains(resp, "One launcher card")
             self.assertNotContains(resp, "Shared launcher-card styling")
 
+    # ---- page heading icon mirrors the launcher card icon ----
+    def test_icon_for_path_matches_card_icon(self):
+        from core.roles import icon_for_path, sidebar_for_role, ADMIN
+        # Icon for a page equals the icon on its NAV card.
+        icons = {url: icon for _, items in sidebar_for_role(ADMIN)
+                 for (label, url, icon) in items}
+        self.assertEqual(icon_for_path("/quotes/"), icons["/quotes/"])
+        self.assertEqual(icon_for_path("/inventory/"), icons["/inventory/"])
+        # Leaf/detail pages inherit the longest-matching module icon.
+        self.assertEqual(icon_for_path("/quotes/5/"), icons["/quotes/"])
+        self.assertEqual(icon_for_path("/po/5/receive/"), icons["/po/"])
+        # A more specific NAV url wins over a shorter prefix.
+        self.assertEqual(icon_for_path("/po/backorders/"), icons["/po/backorders/"])
+        # Dashboard pages are excluded; unknown paths return "".
+        self.assertEqual(icon_for_path("/dashboard/admin"), "")
+        self.assertEqual(icon_for_path("/totally-unknown/"), "")
+
+    def test_interior_page_exposes_heading_icon(self):
+        from core.roles import icon_for_path
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/quotes/")
+        self.assertEqual(resp.status_code, 200)
+        # The context + body hook carry the icon for the JS to apply to the heading.
+        self.assertEqual(resp.context["current_nav_icon"], icon_for_path("/quotes/"))
+        self.assertContains(resp, 'data-nav-icon="%s"' % icon_for_path("/quotes/"))
+        self.assertContains(resp, "page-head-icon")
+
+    def test_dashboard_pages_have_no_heading_icon(self):
+        # The dashboard/module pages have their own headers - no auto-injection.
+        self.client.login(username="dash_admin", password="pw")
+        resp = self.client.get("/dashboard/admin")
+        self.assertEqual(resp.context["current_nav_icon"], "")
+        self.assertContains(resp, 'data-nav-icon=""')
+
     # ---- hamburger menu still grouped/collapsible (unchanged) ----
     def test_hamburger_grouping_intact(self):
         self.client.login(username="dash_admin", password="pw")
