@@ -7749,6 +7749,14 @@ class BackNavigationTests(TestCase):
         resp = self.client.get("/", follow=True)
         self.assertContains(resp, 'data-back-url=""')
 
+    def test_back_button_prefers_module_referrer(self):
+        # When a page is reached from a "View all" module page, the global Back
+        # returns there (View all -> card -> Back loop) rather than the dashboard.
+        resp = self.client.get("/inventory/")
+        self.assertContains(resp, "moduleReferrer")   # helper defined
+        self.assertContains(resp, "fromModule")       # checked first in the click handler
+        self.assertContains(resp, "dashboard\\/modules")  # matches module-page referrer
+
 
 class BackNavCoverageTests(TestCase):
     """Representative back_url coverage across Sales, Procurement, Finance,

@@ -816,8 +816,9 @@
   })();
 
   // ---- Hybrid Back button (interior pages only) ----
-  // Priority: 1) page-declared logical back URL, 2) safe same-origin browser
-  // history, 3) the authenticated landing page (never the public "/").
+  // Priority: 0) the "View all" module page we arrived from (its logical
+  // parent in that flow), 1) page-declared logical back URL, 2) safe same-origin
+  // browser history, 3) the authenticated landing page (never the public "/").
   (function () {
     var btn = document.getElementById("sknBack");
     if (!btn) return;
@@ -830,24 +831,34 @@
     var LANDING = "/dashboard/";
     var declared = (btn.getAttribute("data-back-url") || "").trim();
 
-    // Only trust an in-app (same-origin) referrer that isn't this very page.
-    function safeReferrer() {
+    function sameOriginReferrer() {
       try {
         if (!document.referrer) return null;
         var u = new URL(document.referrer);
         if (u.origin !== window.location.origin) return null;
         if (u.pathname === window.location.pathname) return null;
-        return true;
+        return u;
       } catch (e) { return null; }
+    }
+    // Only trust an in-app (same-origin) referrer that isn't this very page.
+    function safeReferrer() { return sameOriginReferrer() !== null; }
+    // If we arrived from a dashboard "View all" module page, return there rather
+    // than the generic dashboard so the View all -> card -> Back loop is intact.
+    function moduleReferrer() {
+      var u = sameOriginReferrer();
+      if (u && /^\/dashboard\/modules\/[^/]+\/?$/.test(u.pathname)) return u.pathname + u.search;
+      return null;
     }
 
     btn.style.display = "inline-flex";
     btn.addEventListener("click", function () {
-      if (declared) { window.location.href = declared; return; }   // 1
-      if (safeReferrer() && window.history.length > 1) {           // 2
+      var fromModule = moduleReferrer();
+      if (fromModule) { window.location.href = fromModule; return; } // 0
+      if (declared) { window.location.href = declared; return; }     // 1
+      if (safeReferrer() && window.history.length > 1) {             // 2
         window.history.back(); return;
       }
-      window.location.href = LANDING;                              // 3
+      window.location.href = LANDING;                                // 3
     });
   })();
 </script>
