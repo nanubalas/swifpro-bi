@@ -7724,6 +7724,12 @@ class BackNavigationTests(TestCase):
         resp = self.client.get("/reports/stock-take/")
         self.assertContains(resp, 'data-back-url="/reports/"')
 
+    def test_reports_index_declares_dashboard_back(self):
+        # The reports hub must declare its logical parent (dashboard); otherwise
+        # Back falls through to history and bounces to the last report opened.
+        resp = self.client.get("/reports/")
+        self.assertContains(resp, 'data-back-url="/dashboard/"')
+
     def test_stock_take_detail_back_to_list(self):
         resp = self.client.get(f"/stock-takes/{self.session.id}/")
         self.assertContains(resp, 'data-back-url="/stock-takes/"')
