@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Reports - SwifPro BI{% endblock %}
-{# The reports hub's logical parent is the dashboard, so Back doesn't bounce
-   into browser history (e.g. back to the report you just came from). #}
+{# The reports hub's logical parent is the dashboard, so Back doesn't bounce into browser history (e.g. back to the report you just came from). #}
 {% block back_url %}{% url 'dashboard' %}{% endblock %}
 
 {% block body %}

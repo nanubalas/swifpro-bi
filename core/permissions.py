@@ -22,6 +22,7 @@ VIEW_FINANCE_REPORTS = "view_finance_reports"
 EXPORT_DATA = "export_data"
 DELETE_RECORDS = "delete_records"
 APPROVE_TRANSACTIONS = "approve_transactions"
+VIEW_FIELD_TECHNICAL_METADATA = "can_view_field_technical_metadata"
 
 # Catalog: (code, label, category) - drives the matrix UI.
 PERMISSIONS = [
@@ -39,6 +40,7 @@ PERMISSIONS = [
     (EXPORT_DATA, "Export data", "Data"),
     (DELETE_RECORDS, "Delete records", "Data"),
     (APPROVE_TRANSACTIONS, "Approve transactions", "Workflow"),
+    (VIEW_FIELD_TECHNICAL_METADATA, "View field technical (database) metadata", "Administration"),
 ]
 ALL_PERMISSIONS = {code for code, _, _ in PERMISSIONS}
 PERMISSION_LABELS = {code: label for code, label, _ in PERMISSIONS}

@@ -144,6 +144,24 @@ class TemplateRenderTests(TestCase):
         self.assertContains(resp, "bi-eye")
         self.assertContains(resp, 'aria-label="Show password"')
 
+    def test_no_multiline_django_comments_in_templates(self):
+        # Django {# #} comments are single-line only; a multi-line one renders as
+        # literal text and can mis-parse {% %}/{{ }} inside it. Guard every template.
+        import os
+        base = os.path.join(os.path.dirname(__file__), "templates")
+        offenders = []
+        for root, _dirs, files in os.walk(base):
+            for fn in files:
+                if not fn.endswith(".html"):
+                    continue
+                path = os.path.join(root, fn)
+                with open(path, encoding="utf-8") as fh:
+                    for i, line in enumerate(fh, 1):
+                        idx = line.find("{#")
+                        if idx != -1 and "#}" not in line[idx:]:
+                            offenders.append(f"{path}:{i}")
+        self.assertEqual(offenders, [], "Multi-line {# #} comment(s): " + ", ".join(offenders))
+
     def test_landing_page_renders(self):
         self.client.login(username="u", password="pw")
         resp = self.client.get("/", follow=True)
@@ -7328,6 +7346,124 @@ class DashboardGroupingTests(TestCase):
         from django.core.management import call_command
         out = StringIO()
         call_command("makemigrations", "--check", "--dry-run", stdout=out, stderr=out)
+
+
+class FieldHelpSystemTests(TestCase):
+    """Reusable field-help + metadata: business help for every authenticated
+    user; technical DB metadata only for superusers, app ADMIN, or users granted
+    `can_view_field_technical_metadata`. UI/helper only - no schema change."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Location
+        self.t = Tenant.objects.create(name="Help Co")      # signal seeds STD tax code
+        self.std = TaxCode.objects.get(tenant=self.t, code="STD")
+        self.loc = Location.objects.create(tenant=self.t, name="WH", type=Location.Type.WAREHOUSE)
+        self.su = User.objects.create_superuser("fh_su", "su@x.com", "pw")
+        OrgMembership.objects.create(user=self.su, tenant=self.t, role="ADMIN", is_default=True)
+        self.admin = User.objects.create_user("fh_admin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.t, role="ADMIN", is_default=True)
+        # Normal operational user who can reach the product form (Procurement)
+        # but is NOT allowed technical metadata.
+        self.normal = User.objects.create_user("fh_norm", password="pw")
+        OrgMembership.objects.create(user=self.normal, tenant=self.t, role="PURCHASING", is_default=True)
+        self.granted = User.objects.create_user("fh_grant", password="pw")
+        OrgMembership.objects.create(user=self.granted, tenant=self.t, role="PURCHASING", is_default=True)
+
+    def _form(self, username):
+        self.client.login(username=username, password="pw")
+        return self.client.get("/products/new/")
+
+    # ---- info icon + business help (all authenticated users) ----
+    def test_info_icon_and_business_help_render(self):
+        resp = self._form("fh_norm")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "field-help-btn")        # the info icon
+        self.assertContains(resp, "Field help")            # popover heading
+        self.assertContains(resp, "Unique product code")   # Product.sku business desc
+        self.assertContains(resp, "SKU-001")               # example value
+
+    def test_normal_user_sees_help_but_no_technical(self):
+        resp = self._form("fh_norm")
+        self.assertContains(resp, "field-help-btn")
+        self.assertNotContains(resp, "Technical details")
+        self.assertNotContains(resp, "core_product")
+
+    # ---- technical metadata visibility ----
+    def test_technical_details_for_superuser(self):
+        resp = self._form("fh_su")
+        self.assertContains(resp, "Technical details")
+        self.assertContains(resp, "core_product")
+        self.assertContains(resp, "tenant + sku")          # unique_together for sku
+
+    def test_technical_details_for_app_admin(self):
+        resp = self._form("fh_admin")
+        self.assertContains(resp, "Technical details")
+        self.assertContains(resp, "core_product")
+
+    def test_technical_details_for_granted_user(self):
+        from core.models import UserPermissionOverride
+        from core import permissions as P
+        UserPermissionOverride.objects.create(
+            tenant=self.t, user=self.granted,
+            permission=P.VIEW_FIELD_TECHNICAL_METADATA, effect=UserPermissionOverride.GRANT)
+        resp = self._form("fh_grant")
+        self.assertContains(resp, "Technical details")
+        self.assertContains(resp, "core_product")
+
+    def test_readonly_role_lacks_technical_permission(self):
+        from core import permissions as P
+        eff = P.effective_permissions("READONLY", {})
+        self.assertNotIn(P.VIEW_FIELD_TECHNICAL_METADATA, eff)
+        # ADMIN and superuser baselines include it.
+        self.assertIn(P.VIEW_FIELD_TECHNICAL_METADATA, P.effective_permissions("ADMIN", {}))
+
+    # ---- FK metadata derived purely from Django introspection ----
+    def test_fk_metadata_shows_related_table_and_on_delete(self):
+        from core import field_help as fh
+        resp = self._form("fh_su")
+        meta = fh.technical_metadata(resp.context["form"]["preferred_supplier"])
+        self.assertEqual(meta["type"], "ForeignKey")
+        self.assertEqual(meta["fk_table"], "core_supplier")
+        self.assertEqual(meta["on_delete"], "SET_NULL")
+        self.assertContains(resp, "core_supplier")          # rendered in the popover
+
+    # ---- sensitive fields never expose secrets / risky metadata ----
+    def test_sensitive_field_is_redacted(self):
+        from core import field_help as fh
+        from core.forms import ChannelConnectionForm
+        meta = fh.technical_metadata(ChannelConnectionForm()["access_token"])
+        self.assertTrue(meta.get("sensitive"))
+        self.assertNotIn("column", meta)                    # no column/type/length leaked
+        self.assertNotIn("type", meta)
+        self.assertTrue(fh.is_sensitive("api_key"))
+        self.assertTrue(fh.is_sensitive("refresh_token"))
+        self.assertFalse(fh.is_sensitive("name"))
+
+    # ---- fallback for fields without a registry entry ----
+    def test_business_help_fallback_without_registry_entry(self):
+        from core import field_help as fh
+        from core.forms import ProductForm
+        biz = fh.business_help(ProductForm()["variant_name"])   # not in FIELD_HELP
+        self.assertTrue(biz["label"])
+        self.assertIn("required", biz)
+
+    # ---- forms still submit normally with the tag present ----
+    def test_form_still_submits(self):
+        from core.models import Product
+        self.client.login(username="fh_admin", password="pw")
+        resp = self.client.post("/products/new/", {
+            "sku": "FH-1", "name": "Helper Widget", "product_type": "STOCK",
+            "description": "x", "is_active": "on", "uom": "each", "sales_price": "9.99",
+            "tax_code": self.std.id, "cost_method": "AVERAGE", "standard_cost": "4.00",
+            "reorder_level": "5", "barcode": "5000000000001",
+        })
+        self.assertIn(resp.status_code, (302, 200))
+        self.assertTrue(Product.objects.filter(tenant=self.t, sku="FH-1").exists())
+
+    def test_no_migrations_created(self):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
 
 
 class GlobalSearchAndNavTests(TestCase):

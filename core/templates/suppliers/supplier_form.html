@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load field_help_tags %}
 {% block title %}{% if mode == "create" %}Create Supplier{% else %}Edit Supplier{% endif %} - SwifPro BI{% endblock %}
 {% block back_url %}{% url 'supplier_list' %}{% endblock %}
 
@@ -26,11 +27,11 @@
       </div>
       {% endif %}
       <div class="row g-3">
-        <div class="col-md-6"><label class="form-label">Name</label>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-6"><label class="form-label">Name {% field_help form.name %}</label>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
         <div class="col-md-3"><label class="form-label">Status</label>{{ form.status }}</div>
         <div class="col-md-3"><label class="form-label">Currency</label>{{ form.currency_code }}</div>
         <div class="col-md-6"><label class="form-label">Contact person</label>{{ form.contact_person }}</div>
-        <div class="col-md-6"><label class="form-label">Email</label>{{ form.email }}{% for e in form.email.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-6"><label class="form-label">Email {% field_help form.email %}</label>{{ form.email }}{% for e in form.email.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
         <div class="col-md-6"><label class="form-label">Phone</label>{{ form.phone }}</div>
         <div class="col-md-6"><label class="form-label">Categories</label>{{ form.categories }}<div class="form-text">{{ form.categories.help_text }}</div></div>
         <div class="col-md-6"><label class="form-label">VAT Number</label>{{ form.vat_number }}</div>

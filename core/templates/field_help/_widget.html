@@ -1,0 +1,43 @@
+{# Field-help icon + popover: business help for everyone, technical DB metadata (collapsed) only when can_tech. Rendered by the field_help inclusion tag. #}
+<span class="field-help">
+  <button type="button" class="field-help-btn" aria-expanded="false"
+          aria-controls="{{ pop_id }}" aria-label="Help for {{ label }}" title="What is this?">
+    <i class="bi bi-info-circle" aria-hidden="true"></i>
+  </button>
+  <span class="field-help-pop" id="{{ pop_id }}" role="dialog" aria-label="Field help: {{ label }}" hidden>
+    <span class="fh-head">Field help</span>
+    <span class="fh-fieldname">{{ label }}</span>
+    {% if biz.desc %}<span class="fh-desc">{{ biz.desc }}</span>{% endif %}
+    <ul class="fh-list">
+      <li><span>Required</span><b>{% if biz.required %}Yes{% else %}No{% endif %}</b></li>
+      {% if biz.expected %}<li><span>Expected</span><b>{{ biz.expected }}</b></li>{% endif %}
+      {% if biz.default %}<li><span>Default</span><b>{{ biz.default }}</b></li>{% endif %}
+      {% if biz.choices %}<li><span>Options</span><b>{{ biz.choices|join:", " }}</b></li>{% endif %}
+      {% if biz.example %}<li><span>Example</span><b>{{ biz.example }}</b></li>{% endif %}
+      {% if biz.warning %}<li class="fh-warn"><span>Note</span><b>{{ biz.warning }}</b></li>{% endif %}
+    </ul>
+    {% if can_tech and tech %}
+    <details class="fh-tech">
+      <summary>Technical details</summary>
+      {% if tech.sensitive %}
+      <ul class="fh-list"><li class="fh-sensitive">Sensitive field - value and database details are hidden.</li>
+        <li><span>Model</span><b>{{ tech.model }}</b></li></ul>
+      {% else %}
+      <ul class="fh-list">
+        <li><span>Model</span><b>{{ tech.model }}</b></li>
+        <li><span>Table</span><b>{{ tech.table }}</b></li>
+        {% if tech.column %}<li><span>Column</span><b>{{ tech.column }}</b></li>{% endif %}
+        {% if tech.type %}<li><span>Type</span><b>{{ tech.type }}</b></li>{% endif %}
+        {% if tech.max_length %}<li><span>Max length</span><b>{{ tech.max_length }}</b></li>{% endif %}
+        <li><span>Nullable</span><b>{% if tech.nullable %}Yes{% else %}No{% endif %}</b></li>
+        {% if tech.unique_together %}<li><span>Unique</span><b>{{ tech.unique_together }}</b></li>
+        {% elif tech.unique %}<li><span>Unique</span><b>Yes</b></li>{% endif %}
+        {% if tech.indexed %}<li><span>Indexed</span><b>Yes</b></li>{% endif %}
+        {% if tech.fk_table %}<li><span>References</span><b>{{ tech.fk_table }}.{{ tech.fk_column }}</b></li>{% endif %}
+        {% if tech.on_delete %}<li><span>on_delete</span><b>{{ tech.on_delete }}</b></li>{% endif %}
+      </ul>
+      {% endif %}
+    </details>
+    {% endif %}
+  </span>
+</span>

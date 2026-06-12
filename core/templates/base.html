@@ -393,6 +393,35 @@
     /* Page-heading icon (mirrors the launcher card icon for the current page) */
     .page-head-icon { color: var(--skn-brand); margin-right: .5rem; }
 
+    /* ---------- Field help (info icon + popover) ---------- */
+    .field-help { position: relative; display: inline-flex; vertical-align: middle; }
+    .field-help-btn {
+      border: 0; background: transparent; color: var(--skn-muted); cursor: pointer;
+      padding: 0; margin-left: .2rem; line-height: 1; font-size: .82rem; border-radius: 50%;
+    }
+    .field-help-btn:hover, .field-help-btn:focus-visible, .field-help-btn[aria-expanded="true"] { color: var(--skn-brand); outline: none; }
+    .field-help-btn:focus-visible { box-shadow: 0 0 0 .18rem rgba(var(--skn-brand-rgb), .25); }
+    .field-help-pop {
+      position: absolute; z-index: 1090; top: calc(100% + 6px); left: 0; width: 300px; max-width: 80vw;
+      background: var(--skn-surface); border: 1px solid var(--skn-border); border-radius: 12px;
+      box-shadow: var(--skn-shadow-lg); padding: .75rem .85rem; text-align: left;
+      font-weight: 400; font-size: .85rem; color: var(--skn-text); white-space: normal;
+    }
+    .field-help-pop[hidden] { display: none; }
+    .field-help-pop .fh-head { display: block; font-size: .64rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--skn-muted); }
+    .field-help-pop .fh-fieldname { display: block; font-weight: 700; margin-bottom: .15rem; color: var(--bs-emphasis-color); }
+    .field-help-pop .fh-desc { display: block; margin: .15rem 0 .5rem; }
+    .field-help-pop .fh-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .2rem; font-size: .8rem; }
+    .field-help-pop .fh-list li { display: flex; gap: .5rem; align-items: baseline; }
+    .field-help-pop .fh-list li > span { color: var(--skn-muted); min-width: 86px; flex: none; }
+    .field-help-pop .fh-list li > b { font-weight: 600; }
+    .field-help-pop .fh-warn b { color: var(--skn-gold); }
+    .field-help-pop .fh-tech { margin-top: .55rem; border-top: 1px solid var(--skn-border); padding-top: .45rem; }
+    .field-help-pop .fh-tech > summary { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--skn-muted); cursor: pointer; list-style: revert; }
+    .field-help-pop .fh-tech[open] > summary { margin-bottom: .35rem; color: var(--skn-brand); }
+    .field-help-pop .fh-sensitive { color: var(--skn-muted); font-style: italic; }
+    @media (max-width: 575.98px) { .field-help-pop { width: 16rem; } }
+
     /* ---------- Dashboards ---------- */
     .kpi-card { position: relative; overflow: hidden; }
     .kpi-card .kpi-icon { position: absolute; right: 14px; top: 14px; font-size: 1.6rem; opacity: .16; color: var(--skn-brand); }
@@ -609,6 +638,39 @@
     i.className = "bi bi-" + icon + " page-head-icon";
     i.setAttribute("aria-hidden", "true");
     h.insertBefore(i, h.firstChild);
+  })();
+
+  // ---- Field help popovers (info icon beside form fields) ----
+  (function () {
+    function closeAll(except) {
+      document.querySelectorAll(".field-help-pop:not([hidden])").forEach(function (p) {
+        if (p === except) return;
+        p.hidden = true;
+        var b = p.parentElement && p.parentElement.querySelector(".field-help-btn");
+        if (b) b.setAttribute("aria-expanded", "false");
+      });
+    }
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest(".field-help-btn");
+      if (btn) {
+        e.preventDefault();
+        var wrap = btn.closest(".field-help");
+        var pop = wrap.querySelector(".field-help-pop");
+        var wasOpen = !pop.hidden;
+        closeAll(pop);
+        pop.hidden = wasOpen;
+        btn.setAttribute("aria-expanded", String(!wasOpen));
+        if (!wasOpen) {
+          // Keep it on-screen: flip to the right edge if it would overflow.
+          pop.style.left = ""; pop.style.right = "";
+          var r = pop.getBoundingClientRect();
+          if (r.right > window.innerWidth - 8) { pop.style.left = "auto"; pop.style.right = "0"; }
+        }
+        return;
+      }
+      if (!e.target.closest(".field-help-pop")) closeAll(null);
+    });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeAll(null); });
   })();
 
   // ---- Sidebar active state + collapsible groups ----

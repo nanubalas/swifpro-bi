@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load field_help_tags %}
 {% block title %}{% if mode == "create" %}Create Product{% else %}Edit Product{% endif %}{% endblock %}
 {% block back_url %}{% url 'product_list' %}{% endblock %}
 
@@ -20,11 +21,11 @@
 
       <h6 class="fw-bold text-muted mb-2">Identity</h6>
       <div class="row g-3 mb-3">
-        <div class="col-md-3"><label class="form-label">SKU</label>{{ form.sku }}{% for e in form.sku.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
-        <div class="col-md-3"><label class="form-label">Barcode (EAN/UPC)</label>{{ form.barcode }}{% for e in form.barcode.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
-        <div class="col-md-6"><label class="form-label">Name</label>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-3"><label class="form-label">SKU {% field_help form.sku %}</label>{{ form.sku }}{% for e in form.sku.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-3"><label class="form-label">Barcode (EAN/UPC) {% field_help form.barcode %}</label>{{ form.barcode }}{% for e in form.barcode.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-6"><label class="form-label">Name {% field_help form.name %}</label>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
         <div class="col-md-3"><label class="form-label">Type</label>{{ form.product_type }}</div>
-        <div class="col-md-3"><label class="form-label">Category</label>{{ form.category }}</div>
+        <div class="col-md-3"><label class="form-label">Category {% field_help form.category %}</label>{{ form.category }}</div>
         <div class="col-md-3"><label class="form-label">Brand</label>{{ form.brand }}</div>
         <div class="col-md-3 d-flex align-items-end"><div class="form-check"><label class="form-check-label">{{ form.is_active }} Active</label></div></div>
         <div class="col-md-8"><label class="form-label">Description</label>{{ form.description }}</div>
@@ -33,14 +34,14 @@
 
       <h6 class="fw-bold text-muted mb-2">Pricing &amp; costing</h6>
       <div class="row g-3 mb-3">
-        <div class="col-md-3"><label class="form-label">Sales price</label>{{ form.sales_price }}</div>
-        <div class="col-md-3"><label class="form-label">VAT rate</label>{{ form.tax_code }}</div>
-        <div class="col-md-3"><label class="form-label">Cost method</label>{{ form.cost_method }}</div>
-        <div class="col-md-3"><label class="form-label">Standard cost</label>{{ form.standard_cost }}</div>
-        <div class="col-md-3"><label class="form-label">Reorder level</label>{{ form.reorder_level }}</div>
+        <div class="col-md-3"><label class="form-label">Sales price {% field_help form.sales_price %}</label>{{ form.sales_price }}</div>
+        <div class="col-md-3"><label class="form-label">VAT rate {% field_help form.tax_code %}</label>{{ form.tax_code }}</div>
+        <div class="col-md-3"><label class="form-label">Cost method {% field_help form.cost_method %}</label>{{ form.cost_method }}</div>
+        <div class="col-md-3"><label class="form-label">Standard cost {% field_help form.standard_cost %}</label>{{ form.standard_cost }}</div>
+        <div class="col-md-3"><label class="form-label">Reorder level {% field_help form.reorder_level %}</label>{{ form.reorder_level }}</div>
         <div class="col-md-3"><label class="form-label">Base UOM</label>{{ form.base_uom }}</div>
         <div class="col-md-3"><label class="form-label">Display UOM</label>{{ form.uom }}</div>
-        <div class="col-md-3"><label class="form-label">Preferred supplier</label>{{ form.preferred_supplier }}</div>
+        <div class="col-md-3"><label class="form-label">Preferred supplier {% field_help form.preferred_supplier %}</label>{{ form.preferred_supplier }}</div>
       </div>
 
       {% if mode == "create" %}
