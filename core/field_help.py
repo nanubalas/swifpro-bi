@@ -66,6 +66,20 @@ FIELD_HELP = {
     "Expense.amount": {"desc": "Gross amount of the expense.", "example": "48.00"},
     "Expense.category": {"desc": "What the spend was for - drives the nominal account it posts to."},
     "Expense.tax_code": {"desc": "VAT treatment of the expense, used to split net and VAT."},
+    # Sales quote (header)
+    "SalesQuote.customer": {"desc": "The customer this quotation is for."},
+    "SalesQuote.quote_number": {"desc": "Reference number for the quote; leave blank to auto-generate.", "example": "Q-0001"},
+    "SalesQuote.quote_date": {"desc": "Date the quote is issued.", "expected": "A date.", "example": "2026-06-13"},
+    "SalesQuote.valid_until": {"desc": "Date the quoted prices expire and the quote should be revised."},
+    "SalesQuote.notes": {"desc": "Internal or customer-facing notes shown on the quote."},
+    "SalesQuote.terms": {"desc": "Payment / delivery terms printed on the quote document."},
+    # Sales quote / order / invoice lines (shared field names)
+    "SalesQuoteLine.product": {"desc": "Product being quoted; sets the default description, price and tax."},
+    "SalesQuoteLine.qty": {"desc": "Quantity quoted, in the chosen unit of measure.", "example": "10"},
+    "SalesQuoteLine.unit_price": {"desc": "Price per unit before discount and VAT.", "example": "12.50"},
+    "SalesQuoteLine.discount_pct": {"desc": "Line discount as a percentage.", "expected": "0-100.", "example": "5"},
+    "SalesQuoteLine.tax_code": {"desc": "VAT rate applied to this line."},
+    "SalesQuoteLine.uom": {"desc": "Unit of measure for the quantity; blank uses the product's base unit."},
 }
 
 
