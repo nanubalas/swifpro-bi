@@ -7879,6 +7879,78 @@ class SalesOrderFormLayoutTests(TestCase):
         call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
 
 
+class HeaderLinesDocumentViewTests(TestCase):
+    """Reusable Header + Lines two-panel document view, wired to Purchase Order
+    and Sales Order as reference integrations. Read-only presentation - no
+    business logic."""
+
+    def setUp(self):
+        from core.models import (OrgMembership, Supplier, PurchaseOrder, PurchaseOrderLine,
+                                  Customer, CustomerOrder, CustomerOrderLine)
+        self.t = Tenant.objects.create(name="DocView Co")
+        self.admin = User.objects.create_user("dv_admin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.t, role="ADMIN", is_default=True)
+        self.sup = Supplier.objects.create(tenant=self.t, name="Acme Supplies")
+        self.prod = Product.objects.create(tenant=self.t, sku="DV-1", name="Widget")
+        self.po = PurchaseOrder.objects.create(tenant=self.t, po_number="PO-DV1", supplier=self.sup)
+        PurchaseOrderLine.objects.create(po=self.po, product=self.prod,
+                                         ordered_qty=Decimal("10"), unit_cost=Decimal("3.00"))
+        self.cust = Customer.objects.create(tenant=self.t, name="Beta Buyer")
+        self.order = CustomerOrder.objects.create(tenant=self.t, customer=self.cust, order_number="SO-DV1")
+        CustomerOrderLine.objects.create(order=self.order, product=self.prod, description="Widget",
+                                         qty=Decimal("2"), unit_price=Decimal("5.00"), discount_pct=Decimal("0"))
+
+    def test_po_document_view_renders(self):
+        self.client.login(username="dv_admin", password="pw")
+        resp = self.client.get(f"/po/{self.po.id}/view/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Purchase Order PO-DV1")
+        self.assertContains(resp, "Acme Supplies")          # header field
+        self.assertContains(resp, "Part")                   # summary column
+        self.assertContains(resp, "Receive goods")          # action
+        self.assertContains(resp, "Back to lines")          # line detail control
+
+    def test_corder_document_view_renders(self):
+        self.client.login(username="dv_admin", password="pw")
+        resp = self.client.get(f"/customer-orders/{self.order.id}/view/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Sales Order SO-DV1")
+        self.assertContains(resp, "Beta Buyer")
+
+    def test_two_panel_structure_present(self):
+        self.client.login(username="dv_admin", password="pw")
+        resp = self.client.get(f"/po/{self.po.id}/view/")
+        self.assertContains(resp, 'data-pane="header"')     # left nav: Header
+        self.assertContains(resp, 'data-pane="lines"')      # left nav: Lines
+        self.assertContains(resp, 'data-pane="line-1"')     # left nav: a line
+        self.assertContains(resp, 'id="hl-pane-header"')    # right: header pane
+        self.assertContains(resp, 'id="hl-pane-lines"')     # right: lines summary
+        self.assertContains(resp, 'id="hl-pane-line-1"')    # right: full line detail
+
+    def test_login_required(self):
+        resp = self.client.get(f"/po/{self.po.id}/view/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp.url)
+
+    def test_builder_produces_configured_view(self):
+        from core.views import _po_document_view
+        from core.document_view import DocumentView
+        doc = _po_document_view(self.po)
+        self.assertIsInstance(doc, DocumentView)
+        self.assertEqual(doc.title, "Purchase Order PO-DV1")
+        self.assertTrue(doc.sections and doc.columns)
+        self.assertEqual(len(doc.lines), 1)
+        line = doc.lines[0]
+        self.assertEqual(len(line.summary), len(doc.columns))   # cells parallel to columns
+        self.assertEqual(line.summary[0].value, 1)              # first cell = line number
+        self.assertTrue(line.detail)                            # full detail present
+
+    def test_no_migrations_created(self):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
+
+
 class GlobalSearchAndNavTests(TestCase):
     """Permission-aware global search + grouped/collapsible hamburger menu, all
     driven from the navigation registry in core.roles."""

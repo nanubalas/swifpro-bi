@@ -3986,6 +3986,179 @@ def uom_conversion_delete(request, conv_id):
     return render(request, "uoms/conversion_delete.html", {"tenant": tenant, "conv": obj})
 
 
+# ===========================================================================
+# Reusable Header + Lines document view (see core/document_view.py).
+# Each document builds a DocumentView config; the shared template renders it.
+# ===========================================================================
+_DOC_STATUS_TONE = {
+    "DRAFT": "secondary", "SUBMITTED": "info", "PENDING_APPROVAL": "warning",
+    "APPROVED": "primary", "SENT": "info", "IN_TRANSIT": "info",
+    "PARTIALLY_RECEIVED": "warning", "RECEIVED": "success", "CANCELLED": "danger",
+    "CONFIRMED": "primary", "INVOICED": "success", "POSTED": "success", "CLOSED": "dark",
+}
+
+
+def _doc_status_tone(code):
+    return _DOC_STATUS_TONE.get((code or "").upper(), "secondary")
+
+
+def _po_document_view(po):
+    from core import document_view as dv
+    cur = po.currency_code
+    secs = [
+        dv.Section("Purchase order", [
+            dv.Field("PO number", po.po_number),
+            dv.Field("Supplier", po.supplier.name if po.supplier_id else "-"),
+            dv.Field("Status", po.get_status_display()),
+            dv.Field("Version", po.version),
+            dv.Field("Expected date", po.expected_date or "-"),
+            dv.Field("Created", timezone.localtime(po.created_at).strftime("%Y-%m-%d %H:%M") if po.created_at else "-"),
+        ]),
+        dv.Section("Delivery", [
+            dv.Field("Receiving location", str(po.receiving_location) if po.receiving_location_id else "-"),
+            dv.Field("Site", str(po.site) if po.site_id else "-"),
+            dv.Field("Delivery address", po.delivery_address or "-"),
+        ]),
+        dv.Section("Totals", [
+            dv.Field("Subtotal", dv.money(po.subtotal, cur)),
+            dv.Field("Tax", dv.money(po.tax_total, cur)),
+            dv.Field("Total", dv.money(po.total, cur)),
+        ]),
+        dv.Section("Notes", [dv.Field("Notes", po.notes or "-")]),
+    ]
+    columns = [
+        dv.Column("Line"), dv.Column("Part"), dv.Column("Description"),
+        dv.Column("Qty", "end"), dv.Column("UOM"), dv.Column("Unit cost", "end"),
+        dv.Column("Line total", "end"), dv.Column("Status"),
+    ]
+    lines = []
+    for i, l in enumerate(po.lines.select_related("product", "uom").all(), start=1):
+        uom = l.uom.code if l.uom_id else "-"
+        if l.open_qty <= 0:
+            status = "Received"
+        elif l.received_qty > 0:
+            status = "Partial"
+        else:
+            status = "Open"
+        lines.append(dv.Line(
+            number=i,
+            summary=[
+                dv.Cell(i), dv.Cell(l.product.sku), dv.Cell(l.product.name),
+                dv.Cell(l.ordered_qty, "end"), dv.Cell(uom),
+                dv.Cell(dv.money(l.unit_cost, cur), "end"),
+                dv.Cell(dv.money(l.line_total, cur), "end"), dv.Cell(status),
+            ],
+            status=status,
+            detail=[dv.Section("Line detail", [
+                dv.Field("Part number", l.product.sku),
+                dv.Field("Description", l.product.name),
+                dv.Field("Ordered qty", l.ordered_qty),
+                dv.Field("UOM", uom),
+                dv.Field("Unit cost", dv.money(l.unit_cost, cur)),
+                dv.Field("Received qty", l.received_qty),
+                dv.Field("Open qty", l.open_qty),
+                dv.Field("Line total", dv.money(l.line_total, cur)),
+                dv.Field("Tax code", l.tax_code.code if l.tax_code_id else "-"),
+                dv.Field("Status", status),
+            ])],
+        ))
+    return dv.DocumentView(
+        title=f"Purchase Order {po.po_number}",
+        subtitle=po.supplier.name if po.supplier_id else "",
+        status=po.get_status_display(), status_tone=_doc_status_tone(po.status),
+        back_url=reverse("po_detail", args=[po.id]),
+        sections=secs, columns=columns, lines=lines,
+        actions=[
+            dv.Action("Classic view", reverse("po_detail", args=[po.id]), "outline-secondary", "card-list"),
+            dv.Action("Receive goods", reverse("receive_po", args=[po.id]), "outline-primary", "box-arrow-in-down"),
+            dv.Action("PDF", reverse("po_pdf", args=[po.id]), "outline-secondary", "filetype-pdf"),
+        ],
+    )
+
+
+@login_required
+@role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE, ROLE_FINANCE, ROLE_READONLY])
+def po_document_view(request, po_id):
+    tenant = _get_default_tenant(request)
+    po = get_object_or_404(PurchaseOrder, id=po_id, tenant=tenant)
+    return render(request, "documents/header_lines.html", {"tenant": tenant, "doc": _po_document_view(po)})
+
+
+def _corder_document_view(o):
+    from core import document_view as dv
+    cur = o.currency_code
+    secs = [
+        dv.Section("Sales order", [
+            dv.Field("Order number", o.order_number),
+            dv.Field("Customer", o.customer.name if o.customer_id else "-"),
+            dv.Field("Status", o.get_status_display()),
+            dv.Field("Order date", o.order_date or "-"),
+            dv.Field("Created", timezone.localtime(o.created_at).strftime("%Y-%m-%d %H:%M") if o.created_at else "-"),
+        ]),
+        dv.Section("Fulfilment", [
+            dv.Field("Site", str(o.site) if o.site_id else "-"),
+            dv.Field("Location", str(o.location) if o.location_id else "-"),
+        ]),
+        dv.Section("Totals", [
+            dv.Field("Subtotal", dv.money(o.subtotal, cur)),
+            dv.Field("Tax", dv.money(o.tax_total, cur)),
+            dv.Field("Total", dv.money(o.total, cur)),
+        ]),
+        dv.Section("Notes", [dv.Field("Notes", o.notes or "-"), dv.Field("Terms", o.terms or "-")]),
+    ]
+    columns = [
+        dv.Column("Line"), dv.Column("Product"), dv.Column("Description"),
+        dv.Column("Qty", "end"), dv.Column("UOM"), dv.Column("Unit price", "end"),
+        dv.Column("Disc %", "end"), dv.Column("Line total", "end"),
+    ]
+    lines = []
+    for i, l in enumerate(o.lines.select_related("product", "uom", "tax_code").all(), start=1):
+        uom = l.uom.code if l.uom_id else "-"
+        lines.append(dv.Line(
+            number=i,
+            summary=[
+                dv.Cell(i), dv.Cell(l.product.sku if l.product_id else "-"),
+                dv.Cell(l.description or (l.product.name if l.product_id else "-")),
+                dv.Cell(l.qty, "end"), dv.Cell(uom),
+                dv.Cell(dv.money(l.unit_price, cur), "end"),
+                dv.Cell(l.discount_pct, "end"), dv.Cell(dv.money(l.line_total, cur), "end"),
+            ],
+            detail=[dv.Section("Line detail", [
+                dv.Field("Product", l.product.sku if l.product_id else "-"),
+                dv.Field("Description", l.description or "-"),
+                dv.Field("Quantity", l.qty),
+                dv.Field("UOM", uom),
+                dv.Field("Unit price", dv.money(l.unit_price, cur)),
+                dv.Field("Discount %", l.discount_pct),
+                dv.Field("Tax code", l.tax_code.code if l.tax_code_id else "-"),
+                dv.Field("Lot", l.lot_code or "-"),
+                dv.Field("Serial", l.serial_number or "-"),
+                dv.Field("Expiry", l.expiry_date or "-"),
+                dv.Field("Line total", dv.money(l.line_total, cur)),
+            ])],
+        ))
+    return dv.DocumentView(
+        title=f"Sales Order {o.order_number}",
+        subtitle=o.customer.name if o.customer_id else "",
+        status=o.get_status_display(), status_tone=_doc_status_tone(o.status),
+        back_url=reverse("corder_detail", args=[o.id]),
+        sections=secs, columns=columns, lines=lines, line_noun="Line",
+        actions=[
+            dv.Action("Classic view", reverse("corder_detail", args=[o.id]), "outline-secondary", "card-list"),
+            dv.Action("Edit", reverse("corder_edit", args=[o.id]), "outline-primary", "pencil"),
+            dv.Action("PDF", reverse("corder_pdf", args=[o.id]), "outline-secondary", "filetype-pdf"),
+        ],
+    )
+
+
+@role_required([ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN, ROLE_READONLY],
+               write_groups=[ROLE_SALES, ROLE_FINANCE, ROLE_ADMIN])
+def corder_document_view(request, order_id):
+    tenant = _get_default_tenant(request)
+    o = get_object_or_404(CustomerOrder, id=order_id, tenant=tenant)
+    return render(request, "documents/header_lines.html", {"tenant": tenant, "doc": _corder_document_view(o)})
+
+
 def _sync_bom_placements(formset):
     """Reconcile each surviving BOM line's reference designators with the
     comma-separated `placements` text on its form. Creates missing designators

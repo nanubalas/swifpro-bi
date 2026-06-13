@@ -6,6 +6,7 @@
 {% block body %}
 
 <div class="d-flex gap-2 flex-wrap mb-3">
+  <a class="btn btn-outline-secondary" href="{% url 'po_document_view' po.id %}"><i class="bi bi-layout-sidebar me-1"></i> Header / Lines view</a>
   {% if po.status == "DRAFT" %}
     <form method="post" action="/po/{{ po.id }}/submit/">{% csrf_token %}
       <button class="btn btn-primary" type="submit">Submit PO</button>
