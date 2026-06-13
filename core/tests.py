@@ -7460,6 +7460,20 @@ class FieldHelpSystemTests(TestCase):
         self.assertIn(resp.status_code, (302, 200))
         self.assertTrue(Product.objects.filter(tenant=self.t, sku="FH-1").exists())
 
+    # ---- shared sales document form (quote/order/invoice) ----
+    def test_quote_form_shows_field_help(self):
+        self.client.login(username="fh_admin", password="pw")
+        resp = self.client.get("/quotes/new/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "field-help-btn")
+        self.assertContains(resp, "Field help")
+
+    def test_quote_form_technical_for_superuser_header_and_lines(self):
+        self.client.login(username="fh_su", password="pw")
+        resp = self.client.get("/quotes/new/")
+        self.assertContains(resp, "core_salesquote")        # header form model
+        self.assertContains(resp, "core_salesquoteline")    # line formset model (column headers)
+
     def test_no_migrations_created(self):
         from io import StringIO
         from django.core.management import call_command
