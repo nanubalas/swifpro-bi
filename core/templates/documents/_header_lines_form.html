@@ -1,0 +1,221 @@
+{% comment %}
+Reusable EDITABLE Header + Lines two-panel form. Renders one <form> that submits
+the header form + the line formset in a single POST (field names unchanged), so
+no view logic changes. Left nav: Header + collapsible Lines + line items + Add
+line. Right: editable header pane + one editable pane per line. Include with
+{% templatetag openblock %} include "documents/_header_lines_form.html" with
+list_url="/po/" save_label="Save PO" line_noun="Line" {% templatetag closeblock %}.
+Expects `form` (header ModelForm) and `formset` (inline line formset).
+{% endcomment %}
+<style>
+  .hlf-left .list-group-item { cursor: pointer; border: 0; border-radius: 8px; }
+  .hlf-left .hlf-nav.active { background: var(--skn-brand-soft); color: var(--skn-brand); font-weight: 650; }
+  .hlf-left .hlf-subitem { padding-left: 2.4rem; font-size: .9rem; }
+  .hlf-sublist.collapsed { display: none; }
+  .hlf-caret { transition: transform .18s ease; font-size: .8rem; }
+  #hlf-lines-toggle.lines-collapsed .hlf-caret { transform: rotate(-90deg); }
+  @media (min-width: 992px) {
+    .hlf-left { position: sticky; top: 84px; }
+    .hlf-right { max-height: calc(100vh - 200px); overflow: auto; }
+  }
+</style>
+
+<form method="post" id="hlf-form">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  {{ formset.management_form }}
+  {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
+
+  <div class="row g-3">
+    <!-- Left: navigation -->
+    <div class="col-lg-3">
+      <div class="card hlf-left"><div class="list-group list-group-flush p-2">
+        <button type="button" class="hlf-nav list-group-item list-group-item-action active" data-pane="header">
+          <i class="bi bi-card-heading me-2"></i>Header{% if form.errors %} <i class="bi bi-exclamation-circle text-danger ms-1"></i>{% endif %}
+        </button>
+        <button type="button" class="hlf-nav list-group-item list-group-item-action d-flex justify-content-between align-items-center" id="hlf-lines-toggle" data-pane="lines">
+          <span><i class="bi bi-list-ol me-2"></i>Lines</span>
+          <i class="bi bi-chevron-down hlf-caret"></i>
+        </button>
+        <div id="hlf-line-list" class="hlf-sublist">
+          {% for lf in formset %}
+          <button type="button" class="hlf-nav hlf-subitem list-group-item list-group-item-action" data-pane="line-{{ forloop.counter0 }}">
+            {{ line_noun|default:"Line" }} {{ forloop.counter }}{% if lf.errors %} <i class="bi bi-exclamation-circle text-danger ms-1"></i>{% endif %}
+          </button>
+          {% endfor %}
+        </div>
+        <button type="button" class="list-group-item list-group-item-action text-primary fw-semibold" id="hlf-add-line">
+          <i class="bi bi-plus-lg me-2"></i>Add {{ line_noun|default:"line"|lower }}
+        </button>
+      </div></div>
+    </div>
+
+    <!-- Right: editable detail -->
+    <div class="col-lg-9">
+      <div class="card hlf-right"><div class="card-body">
+
+        {# Header pane #}
+        <div class="hlf-pane" id="hlf-pane-header">
+          <h5 class="fw-semibold mb-3">Header</h5>
+          <div class="row g-3">
+            {% for field in form %}{% if not field.is_hidden %}
+            <div class="col-md-6">
+              <label class="form-label">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+            {% endif %}{% endfor %}
+            {% for field in form.hidden_fields %}{{ field }}{% endfor %}
+          </div>
+        </div>
+
+        {# Lines placeholder pane #}
+        <div class="hlf-pane" id="hlf-pane-lines" hidden>
+          <div class="text-muted">Select a line on the left to edit it, or add a new one.</div>
+          <button type="button" class="btn btn-outline-primary mt-3 hlf-add-line2"><i class="bi bi-plus-lg me-1"></i> Add {{ line_noun|default:"line"|lower }}</button>
+        </div>
+
+        {# Editable per-line panes #}
+        <div id="hlf-line-panes">
+          {% for lf in formset %}
+          <div class="hlf-pane hlf-line-pane" id="hlf-pane-line-{{ forloop.counter0 }}" hidden>
+            {% for h in lf.hidden_fields %}{{ h }}{% endfor %}
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h5 class="fw-semibold mb-0">{{ line_noun|default:"Line" }} <span class="hlf-line-num">{{ forloop.counter }}</span></h5>
+              <button type="button" class="btn btn-sm btn-outline-danger hlf-remove-line"><i class="bi bi-trash me-1"></i> Remove</button>
+            </div>
+            <div class="row g-3">
+              {% for field in lf %}{% if not field.is_hidden and field.name != "DELETE" %}
+              <div class="col-md-6">
+                <label class="form-label">{{ field.label }}</label>
+                {{ field }}
+                {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+              </div>
+              {% endif %}{% endfor %}
+            </div>
+            <div class="d-none">{{ lf.DELETE }}</div>
+          </div>
+          {% endfor %}
+        </div>
+
+        <template id="hlf-empty-template">
+          <div class="hlf-pane hlf-line-pane" id="hlf-pane-line-__prefix__" hidden>
+            {% for h in formset.empty_form.hidden_fields %}{{ h }}{% endfor %}
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h5 class="fw-semibold mb-0">{{ line_noun|default:"Line" }} <span class="hlf-line-num"></span></h5>
+              <button type="button" class="btn btn-sm btn-outline-danger hlf-remove-line"><i class="bi bi-trash me-1"></i> Remove</button>
+            </div>
+            <div class="row g-3">
+              {% for field in formset.empty_form %}{% if not field.is_hidden and field.name != "DELETE" %}
+              <div class="col-md-6"><label class="form-label">{{ field.label }}</label>{{ field }}</div>
+              {% endif %}{% endfor %}
+            </div>
+            <div class="d-none">{{ formset.empty_form.DELETE }}</div>
+          </div>
+        </template>
+
+        <div class="d-flex justify-content-end gap-2 mt-4">
+          <a class="btn btn-outline-secondary" href="{{ list_url|default:'/' }}">Cancel</a>
+          <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i> {{ save_label|default:"Save" }}</button>
+        </div>
+      </div></div>
+    </div>
+  </div>
+</form>
+
+<script>
+  (function () {
+    var form = document.getElementById("hlf-form");
+    if (!form) return;
+    var navList = document.getElementById("hlf-line-list");
+    var linesToggle = document.getElementById("hlf-lines-toggle");
+    var panesWrap = document.getElementById("hlf-line-panes");
+    var tmpl = document.getElementById("hlf-empty-template");
+    var totalForms = form.querySelector('input[name$="-TOTAL_FORMS"]');
+    var LINE_NOUN = "{{ line_noun|default:'Line' }}";
+
+    function styleControls(scope) {
+      scope.querySelectorAll("select, input, textarea").forEach(function (el) {
+        if (el.type === "checkbox") el.classList.add("form-check-input");
+        else if (el.type !== "hidden") el.classList.add("form-control");
+      });
+    }
+    styleControls(form);
+
+    function show(key) {
+      form.querySelectorAll(".hlf-pane").forEach(function (p) { p.hidden = (p.id !== "hlf-pane-" + key); });
+      form.querySelectorAll(".hlf-nav").forEach(function (n) {
+        var a = n.getAttribute("data-pane") === key ||
+                (key.indexOf("line-") === 0 && n.getAttribute("data-pane") === "lines");
+        n.classList.toggle("active", a);
+      });
+      var r = document.querySelector(".hlf-right"); if (r) r.scrollTop = 0;
+    }
+    function expandLines(open) {
+      navList.classList.toggle("collapsed", !open);
+      linesToggle.classList.toggle("lines-collapsed", !open);
+    }
+    function addLine() {
+      var i = parseInt(totalForms.value, 10);
+      var holder = document.createElement("div");
+      holder.innerHTML = tmpl.innerHTML.replaceAll("__prefix__", i).trim();
+      var pane = holder.querySelector(".hlf-line-pane");
+      var num = pane.querySelector(".hlf-line-num"); if (num) num.textContent = i + 1;
+      panesWrap.appendChild(pane);
+      var nav = document.createElement("button");
+      nav.type = "button";
+      nav.className = "hlf-nav hlf-subitem list-group-item list-group-item-action";
+      nav.setAttribute("data-pane", "line-" + i);
+      nav.textContent = LINE_NOUN + " " + (i + 1);
+      navList.appendChild(nav);
+      totalForms.value = i + 1;
+      styleControls(pane);
+      expandLines(true);
+      show("line-" + i);
+    }
+
+    form.addEventListener("click", function (e) {
+      if (e.target.closest("#hlf-add-line") || e.target.closest(".hlf-add-line2")) { e.preventDefault(); addLine(); return; }
+      var rm = e.target.closest(".hlf-remove-line");
+      if (rm) {
+        var pane = rm.closest(".hlf-line-pane");
+        var del = pane.querySelector('input[name$="-DELETE"]');
+        if (del) del.checked = true;
+        var nav = navList.querySelector('.hlf-nav[data-pane="' + pane.id.replace("hlf-pane-", "") + '"]');
+        if (nav) nav.style.textDecoration = "line-through";
+        if (!pane.querySelector(".hlf-removed-note")) {
+          var note = document.createElement("div");
+          note.className = "alert alert-warning hlf-removed-note mt-2";
+          note.innerHTML = 'Removed on save. <button type="button" class="btn btn-sm btn-link p-0 hlf-undo-remove">Undo</button>';
+          pane.insertBefore(note, pane.firstChild);
+        }
+        return;
+      }
+      var undo = e.target.closest(".hlf-undo-remove");
+      if (undo) {
+        var p2 = undo.closest(".hlf-line-pane");
+        var d2 = p2.querySelector('input[name$="-DELETE"]'); if (d2) d2.checked = false;
+        var n2 = navList.querySelector('.hlf-nav[data-pane="' + p2.id.replace("hlf-pane-", "") + '"]');
+        if (n2) n2.style.textDecoration = "";
+        var note2 = p2.querySelector(".hlf-removed-note"); if (note2) note2.remove();
+        return;
+      }
+      var navBtn = e.target.closest(".hlf-nav");
+      if (navBtn) {
+        var pane = navBtn.getAttribute("data-pane");
+        if (pane === "lines") { expandLines(navList.classList.contains("collapsed")); show("lines"); return; }
+        if (pane.indexOf("line-") === 0) expandLines(true);
+        show(pane);
+      }
+    });
+
+    // Open the first pane that has a validation error, else the Header.
+    var errNav = form.querySelector(".hlf-nav .bi-exclamation-circle");
+    if (errNav) {
+      var en = errNav.closest(".hlf-nav"), pane = en.getAttribute("data-pane");
+      if (pane.indexOf("line-") === 0) expandLines(true);
+      show(pane);
+    } else { show("header"); }
+  })();
+</script>

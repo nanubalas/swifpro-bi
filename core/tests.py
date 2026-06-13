@@ -7879,6 +7879,52 @@ class SalesOrderFormLayoutTests(TestCase):
         call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
 
 
+class POCreateTwoPanelTests(TestCase):
+    """The Create PO page uses the reusable EDITABLE Header + Lines two-panel
+    layout; the header form + line formset still submit in one POST. UI only."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Supplier
+        self.t = Tenant.objects.create(name="PO 2panel Co")
+        self.std = TaxCode.objects.get(tenant=self.t, code="STD")
+        self.sup = Supplier.objects.create(tenant=self.t, name="Sup")
+        self.prod = Product.objects.create(tenant=self.t, sku="P2P-1", name="Widget")
+        self.user = User.objects.create_user("p2p", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="p2p", password="pw")
+
+    def test_create_page_uses_two_panel_editable_layout(self):
+        resp = self.client.get("/po/new/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'id="hlf-form"')             # single submitting form
+        self.assertContains(resp, 'data-pane="header"')        # left nav: Header
+        self.assertContains(resp, 'id="hlf-lines-toggle"')     # left nav: collapsible Lines
+        self.assertContains(resp, "hlf-line-pane")             # editable per-line pane
+        self.assertContains(resp, 'id="hlf-add-line"')         # add line control
+        self.assertContains(resp, "lines-TOTAL_FORMS")         # formset still posts
+        self.assertContains(resp, "-ordered_qty")              # editable line field present
+        self.assertNotContains(resp, 'col-lg-8')               # not the old cramped split
+
+    def test_create_still_saves_po_with_line(self):
+        from core.models import PurchaseOrder
+        resp = self.client.post("/po/new/", {
+            "supplier": self.sup.id, "expected_date": "2026-02-01", "action": "save",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-product": self.prod.id, "lines-0-ordered_qty": "10",
+            "lines-0-unit_cost": "4.00", "lines-0-tax_code": self.std.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        po = PurchaseOrder.objects.get(tenant=self.t)
+        self.assertEqual(po.lines.count(), 1)
+        self.assertEqual(po.lines.first().ordered_qty, Decimal("10"))
+
+    def test_no_migrations_created(self):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
+
+
 class HeaderLinesDocumentViewTests(TestCase):
     """Reusable Header + Lines two-panel document view, wired to Purchase Order
     and Sales Order as reference integrations. Read-only presentation - no

@@ -3,204 +3,44 @@
 {% block back_url %}{% url 'po_list' %}{% endblock %}
 
 {% block body %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
   <div>
     <h2 class="fw-bold mb-1">Create Purchase Order</h2>
-    <div class="text-muted">Raise a supplier-ready PO with line items.</div>
+    <div class="text-muted">Raise a supplier-ready PO - edit the header and each line in the panel on the right.</div>
   </div>
   <a class="btn btn-outline-secondary" href="/po/">Back to POs</a>
 </div>
 
-<form method="post">
-  {% csrf_token %}
-
-  <div class="row g-4">
-    <!-- Header -->
-    <div class="col-lg-4">
-      <div class="card shadow-sm border-0">
-        <div class="card-body">
-          <h5 class="fw-semibold mb-3">PO Details</h5>
-
-          <div class="mb-3">
-            <label class="form-label">Supplier</label>
-            {{ form.supplier }}
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Receiving location</label>
-            {{ form.receiving_location }}
-            <div class="form-text">Warehouse / store goods are received into.</div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Expected Delivery Date</label>
-            {{ form.expected_date }}
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Delivery address (optional)</label>
-            {{ form.delivery_address }}
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Notes (optional)</label>
-            {{ form.notes }}
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Action</label>
-            {{ form.action }}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Lines -->
-    <div class="col-lg-8">
-      <div class="card shadow-sm border-0">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="fw-semibold mb-0">Line Items</h5>
-            <button type="button" class="btn btn-sm btn-outline-primary" id="add-line-btn">
-              + Add line
-            </button>
-          </div>
-
-          {{ formset.management_form }}
-
-          <div class="table-responsive">
-            <table class="table table-bordered align-middle mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th style="width:32%">Product</th>
-                  <th class="text-end" style="width:10%">Qty</th>
-                  <th style="width:12%">UOM</th>
-                  <th class="text-end" style="width:16%">Unit Cost</th>
-                  <th style="width:16%">VAT</th>
-                  <th class="text-center" style="width:10%">Remove</th>
-                </tr>
-              </thead>
-
-              <tbody id="lines-body">
-                {% for f in formset %}
-                <tr class="line-row">
-                  {{ f.id }}
-                  <td>{{ f.product }}</td>
-                  <td class="text-end">{{ f.ordered_qty }}</td>
-                  <td>{{ f.uom }}<div class="form-text small">blank = base unit</div></td>
-                  <td class="text-end">{{ f.unit_cost }}</td>
-                  <td>{{ f.tax_code }}</td>
-                  <td class="text-center">
-                    <div class="form-check d-inline-block">
-                      {{ f.DELETE }}
-                    </div>
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          <p class="form-text small mb-0">Qty &amp; unit cost are in the chosen UOM; stock is received and costed in the product's base unit per its conversion rules.</p>
-
-          <!-- Empty form template (hidden) -->
-          <template id="empty-form-template">
-            <tr class="line-row">
-              {{ formset.empty_form.id }}
-              <td>{{ formset.empty_form.product }}</td>
-              <td class="text-end">{{ formset.empty_form.ordered_qty }}</td>
-              <td>{{ formset.empty_form.uom }}</td>
-              <td class="text-end">{{ formset.empty_form.unit_cost }}</td>
-              <td>{{ formset.empty_form.tax_code }}</td>
-              <td class="text-center">
-                <div class="form-check d-inline-block">
-                  {{ formset.empty_form.DELETE }}
-                </div>
-              </td>
-            </tr>
-          </template>
-
-          <div class="d-flex justify-content-end gap-2 mt-3">
-            <a class="btn btn-outline-secondary" href="/po/">Cancel</a>
-            <button class="btn btn-primary" type="submit">Save PO</button>
-          </div>
-
-          <div class="form-text mt-2">
-            Tip: Use “Remove” to delete a row (it will be removed on save).
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</form>
+{% include "documents/_header_lines_form.html" with list_url="/po/" save_label="Save PO" line_noun="Line" %}
 
 <script>
-  // Add Bootstrap classes to Django widgets
-  document.querySelectorAll("select, input, textarea").forEach(el => {
-    if (el.type === "checkbox") el.classList.add("form-check-input");
-    else el.classList.add("form-control");
-  });
+  // ---- PO-specific: prefill empty unit-cost from the supplier's last paid price.
+  // Works with the two-panel layout (line fields live in .hlf-line-pane panels).
+  (function () {
+    var priceMap = {};
+    var supplierSelect = document.querySelector('[name="supplier"]');
 
-  // ---- Supplier price prefill: fill empty unit-cost fields from last paid ----
-  let priceMap = {};
-  const supplierSelect = document.querySelector('[name="supplier"]');
-
-  function fillUnitCost(row) {
-    const prodSel = row.querySelector('select[name$="-product"]');
-    const costInput = row.querySelector('input[name$="-unit_cost"]');
-    if (!prodSel || !costInput) return;
-    const last = priceMap[prodSel.value];
-    if (last && (!costInput.value || parseFloat(costInput.value) === 0)) {
-      costInput.value = last;
+    function fillUnitCost(row) {
+      if (!row) return;
+      var prodSel = row.querySelector('select[name$="-product"]');
+      var costInput = row.querySelector('input[name$="-unit_cost"]');
+      if (!prodSel || !costInput) return;
+      var last = priceMap[prodSel.value];
+      if (last && (!costInput.value || parseFloat(costInput.value) === 0)) costInput.value = last;
     }
-  }
-
-  function loadPrices() {
-    if (!supplierSelect || !supplierSelect.value) { priceMap = {}; return; }
-    fetch(`/po/supplier/${supplierSelect.value}/prices/`)
-      .then(r => r.ok ? r.json() : {prices: {}})
-      .then(d => { priceMap = d.prices || {}; })
-      .catch(() => { priceMap = {}; });
-  }
-
-  if (supplierSelect) {
-    loadPrices();
-    supplierSelect.addEventListener("change", loadPrices);
-  }
-  document.addEventListener("change", (e) => {
-    if (e.target.matches('select[name$="-product"]')) {
-      fillUnitCost(e.target.closest("tr"));
+    function loadPrices() {
+      if (!supplierSelect || !supplierSelect.value) { priceMap = {}; return; }
+      fetch("/po/supplier/" + supplierSelect.value + "/prices/")
+        .then(function (r) { return r.ok ? r.json() : {prices: {}}; })
+        .then(function (d) { priceMap = d.prices || {}; })
+        .catch(function () { priceMap = {}; });
     }
-  });
-
-  const addBtn = document.getElementById("add-line-btn");
-  const tbody = document.getElementById("lines-body");
-  const template = document.getElementById("empty-form-template");
-
-  function updateAttributes(html, index) {
-    // Replace __prefix__ with the new index
-    return html.replaceAll("__prefix__", index);
-  }
-
-  addBtn.addEventListener("click", () => {
-    const totalFormsInput = document.querySelector('input[name="{{ formset.prefix }}-TOTAL_FORMS"]');
-    const index = parseInt(totalFormsInput.value, 10);
-
-    // Clone template
-    const tempHtml = updateAttributes(template.innerHTML, index);
-    const wrapper = document.createElement("tbody");
-    wrapper.innerHTML = tempHtml.trim();
-    const newRow = wrapper.querySelector("tr");
-
-    tbody.appendChild(newRow);
-
-    // Increase TOTAL_FORMS
-    totalFormsInput.value = index + 1;
-
-    // Re-apply Bootstrap classes for new fields
-    newRow.querySelectorAll("select, input, textarea").forEach(el => {
-      if (el.type === "checkbox") el.classList.add("form-check-input");
-      else el.classList.add("form-control");
+    if (supplierSelect) { loadPrices(); supplierSelect.addEventListener("change", loadPrices); }
+    document.addEventListener("change", function (e) {
+      if (e.target.matches('select[name$="-product"]')) {
+        fillUnitCost(e.target.closest(".hlf-line-pane") || e.target.closest("tr"));
+      }
     });
-  });
+  })();
 </script>
 {% endblock %}
