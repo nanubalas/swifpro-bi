@@ -7799,6 +7799,86 @@ class VgsInventoryLifecycleTests(TestCase):
         call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
 
 
+class SalesOrderFormLayoutTests(TestCase):
+    """The shared sales-document form (quote / sales order / recurring invoice)
+    renders a full-width line table that stacks on mobile; the line formset still
+    submits, validates and handles serials. UI/layout only."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.t = Tenant.objects.create(name="SO Layout Co")   # signal seeds STD
+        self.std = TaxCode.objects.get(tenant=self.t, code="STD")
+        self.cust = Customer.objects.create(tenant=self.t, name="Cust", email="c@example.com")
+        self.prod = Product.objects.create(tenant=self.t, sku="SO-1", name="Widget")
+        self.user = User.objects.create_user("sou", password="pw")
+        OrgMembership.objects.create(user=self.user, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="sou", password="pw")
+
+    def test_create_page_renders_full_width_layout(self):
+        resp = self.client.get("/customer-orders/new/")
+        self.assertEqual(resp.status_code, 200)
+        # Full-width responsive line table (not the old narrow col-lg-8 card).
+        self.assertContains(resp, "doc-lines")
+        self.assertContains(resp, 'data-label="Product"')
+        self.assertContains(resp, 'data-label="Serial"')
+        self.assertContains(resp, "js-add-line")           # add-line control(s)
+        self.assertContains(resp, "table-responsive")      # horizontal scroll wrapper
+        self.assertNotContains(resp, 'col-lg-8')           # lines no longer squeezed
+
+    def test_line_formset_submits(self):
+        from core.models import CustomerOrder
+        resp = self.client.post("/customer-orders/new/", {
+            "customer": self.cust.id, "order_date": "2026-06-01",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-product": self.prod.id, "lines-0-description": "Widget",
+            "lines-0-qty": "2", "lines-0-unit_price": "100",
+            "lines-0-discount_pct": "0", "lines-0-tax_code": self.std.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        o = CustomerOrder.objects.get(tenant=self.t)
+        self.assertEqual(o.lines.count(), 1)
+        self.assertEqual(o.lines.first().qty, Decimal("2"))
+
+    def test_multiple_lines_submit(self):
+        from core.models import CustomerOrder
+        p2 = Product.objects.create(tenant=self.t, sku="SO-2", name="Gadget")
+        resp = self.client.post("/customer-orders/new/", {
+            "customer": self.cust.id, "order_date": "2026-06-01",
+            "lines-TOTAL_FORMS": "2", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-product": self.prod.id, "lines-0-qty": "2", "lines-0-unit_price": "10",
+            "lines-0-discount_pct": "0", "lines-0-tax_code": self.std.id,
+            "lines-1-product": p2.id, "lines-1-qty": "3", "lines-1-unit_price": "5",
+            "lines-1-discount_pct": "0", "lines-1-tax_code": self.std.id,
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(CustomerOrder.objects.get(tenant=self.t).lines.count(), 2)
+
+    def test_validation_error_redisplays_form(self):
+        # A bad quantity keeps the user on the form (no redirect), form re-rendered.
+        resp = self.client.post("/customer-orders/new/", {
+            "customer": self.cust.id, "order_date": "2026-06-01",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-product": self.prod.id, "lines-0-qty": "notanumber",
+            "lines-0-unit_price": "100", "lines-0-discount_pct": "0", "lines-0-tax_code": self.std.id,
+        })
+        self.assertEqual(resp.status_code, 200)        # stays on the page
+        self.assertContains(resp, "doc-lines")
+
+    def test_serial_picker_still_wired(self):
+        # The serial picker include (product -> serial behaviour) is still present.
+        resp = self.client.get("/customer-orders/new/")
+        self.assertContains(resp, "OPTS_URL")          # serial-picker script
+        self.assertContains(resp, "-serial_number")
+
+    def test_no_migrations_created(self):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
+
+
 class GlobalSearchAndNavTests(TestCase):
     """Permission-aware global search + grouped/collapsible hamburger menu, all
     driven from the navigation registry in core.roles."""

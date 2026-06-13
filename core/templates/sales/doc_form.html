@@ -2,86 +2,140 @@
 {% load field_help_tags %}
 {% block title %}{% if is_edit %}Edit{% else %}New{% endif %} {{ doc_label }} - SwifPro BI{% endblock %}
 {% block body %}
+<style>
+  /* Full-width, readable line-item table; collapses to stacked cards on phones. */
+  .doc-lines { min-width: 880px; }              /* keep columns readable; wrapper scrolls if narrower */
+  .doc-lines td, .doc-lines th { vertical-align: middle; }
+  .doc-lines td .form-control, .doc-lines td .form-select { min-width: 0; }
+  /* Serial that the picker disables for non-serial products reads as a badge,
+     not a broken cramped input. */
+  .doc-lines input[name$="-serial_number"]:disabled {
+    background: var(--skn-surface-2); color: var(--skn-muted); border-style: dashed; font-style: italic;
+  }
+  @media (max-width: 767.98px) {
+    .doc-lines { min-width: 0; }
+    .doc-lines thead { display: none; }
+    .doc-lines, .doc-lines tbody { display: block; }
+    .doc-lines tr.line-row {
+      display: block; border: 1px solid var(--skn-border); border-radius: var(--skn-radius-sm);
+      background: var(--skn-surface); padding: .35rem .7rem .6rem; margin-bottom: .85rem;
+    }
+    .doc-lines tr.line-row > td {
+      display: flex; align-items: center; gap: .75rem; border: 0;
+      padding: .35rem 0; text-align: left !important;
+    }
+    .doc-lines tr.line-row > td::before {
+      content: attr(data-label); flex: 0 0 7rem; color: var(--skn-muted);
+      font-size: .8rem; font-weight: 600;
+    }
+    .doc-lines tr.line-row > td > *:not(.text-danger) { flex: 1 1 auto; }
+  }
+</style>
+
 <div class="d-flex align-items-center gap-2 mb-4">
   <h2 class="fw-bold mb-0">{% if is_edit %}Edit{% else %}New{% endif %} {{ doc_label|lower }}</h2>
 </div>
 
 <form method="post">
   {% csrf_token %}
-  <div class="row g-4">
-    <div class="col-lg-4">
-      <div class="card"><div class="card-body">
-        <h5 class="fw-semibold mb-3">Header</h5>
-        {% for field in form %}
-        <div class="mb-3">
-          <label class="form-label">{{ field.label }} {% field_help field %}</label>
-          {{ field }}
-          {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
-          {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
-        </div>
-        {% endfor %}
-      </div></div>
+
+  {# Header: full width, fields in a responsive grid (no narrow side column). #}
+  <div class="card mb-4"><div class="card-body">
+    <h5 class="fw-semibold mb-3">Header</h5>
+    <div class="row g-3">
+      {% for field in form %}
+      <div class="col-md-6 col-lg-4">
+        <label class="form-label">{{ field.label }} {% field_help field %}</label>
+        {{ field }}
+        {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+        {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div></div>
+
+  {# Lines: full width card spanning the page. #}
+  <div class="card mb-4"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h5 class="fw-semibold mb-0">Lines</h5>
+      <button type="button" class="btn btn-sm btn-outline-primary js-add-line"><i class="bi bi-plus-lg me-1"></i> Add line</button>
+    </div>
+    {{ formset.management_form }}
+    {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
+
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle mb-0 doc-lines">
+        <thead class="table-light">
+          <tr>
+            <th style="min-width:220px">Product {% field_help formset.empty_form.product %}</th>
+            <th style="min-width:180px">Description</th>
+            <th class="text-end" style="min-width:90px">Qty {% field_help formset.empty_form.qty %}</th>
+            <th style="min-width:110px">UOM {% field_help formset.empty_form.uom %}</th>
+            <th class="text-end" style="min-width:120px">Unit price {% field_help formset.empty_form.unit_price %}</th>
+            <th class="text-end" style="min-width:95px">Disc % {% field_help formset.empty_form.discount_pct %}</th>
+            <th style="min-width:120px">Tax {% field_help formset.empty_form.tax_code %}</th>
+            <th style="min-width:140px">Serial</th>
+            <th class="text-center" style="min-width:70px">Remove</th>
+          </tr>
+        </thead>
+        <tbody id="lines-body">
+          {% for f in formset %}
+          <tr class="line-row">
+            {{ f.id }}
+            <td data-label="Product">{{ f.product }}{% for e in f.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td data-label="Description">{{ f.description }}</td>
+            <td data-label="Qty" class="text-end">{{ f.qty }}{% for e in f.qty.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td data-label="UOM">{{ f.uom }}</td>
+            <td data-label="Unit price" class="text-end">{{ f.unit_price }}{% for e in f.unit_price.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td data-label="Disc %" class="text-end">{{ f.discount_pct }}</td>
+            <td data-label="Tax">{{ f.tax_code }}</td>
+            <td data-label="Serial">{{ f.serial_number }}{% for e in f.serial_number.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td data-label="Remove" class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
 
-    <div class="col-lg-8">
-      <div class="card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="fw-semibold mb-0">Lines</h5>
-          <button type="button" class="btn btn-sm btn-outline-primary" id="add-line-btn">+ Add line</button>
-        </div>
-        {{ formset.management_form }}
-        <div class="table-responsive">
-          <table class="table table-bordered align-middle mb-0">
-            <thead class="table-light">
-              <tr><th style="width:24%">Product {% field_help formset.empty_form.product %}</th><th style="width:18%">Description</th>
-                  <th class="text-end" style="width:8%">Qty {% field_help formset.empty_form.qty %}</th><th style="width:10%">UOM {% field_help formset.empty_form.uom %}</th><th class="text-end" style="width:13%">Unit price {% field_help formset.empty_form.unit_price %}</th>
-                  <th class="text-end" style="width:8%">Disc % {% field_help formset.empty_form.discount_pct %}</th><th style="width:11%">Tax {% field_help formset.empty_form.tax_code %}</th>
-                  <th style="width:11%">Serial</th>
-                  <th class="text-center" style="width:6%">Remove</th></tr>
-            </thead>
-            <tbody id="lines-body">
-              {% for f in formset %}
-              <tr class="line-row">
-                {{ f.id }}
-                <td>{{ f.product }}</td><td>{{ f.description }}</td>
-                <td class="text-end">{{ f.qty }}</td><td>{{ f.uom }}</td><td class="text-end">{{ f.unit_price }}</td>
-                <td class="text-end">{{ f.discount_pct }}</td><td>{{ f.tax_code }}</td>
-                <td>{{ f.serial_number }}</td>
-                <td class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        <p class="form-text small mb-0">Leave UOM blank to use the product's base unit; stock is relieved in the base unit per the conversion rules.</p>
-        <template id="empty-form-template">
-          <tr class="line-row">
-            {{ formset.empty_form.id }}
-            <td>{{ formset.empty_form.product }}</td><td>{{ formset.empty_form.description }}</td>
-            <td class="text-end">{{ formset.empty_form.qty }}</td><td>{{ formset.empty_form.uom }}</td><td class="text-end">{{ formset.empty_form.unit_price }}</td>
-            <td class="text-end">{{ formset.empty_form.discount_pct }}</td><td>{{ formset.empty_form.tax_code }}</td>
-            <td>{{ formset.empty_form.serial_number }}</td>
-            <td class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
-          </tr>
-        </template>
-        <div class="d-flex justify-content-end gap-2 mt-3">
-          <a class="btn btn-link" href="{{ list_url }}">Cancel</a>
-          <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i> Save {{ doc_label|lower }}</button>
-        </div>
-      </div></div>
+    <template id="empty-form-template">
+      <tr class="line-row">
+        {{ formset.empty_form.id }}
+        <td data-label="Product">{{ formset.empty_form.product }}</td>
+        <td data-label="Description">{{ formset.empty_form.description }}</td>
+        <td data-label="Qty" class="text-end">{{ formset.empty_form.qty }}</td>
+        <td data-label="UOM">{{ formset.empty_form.uom }}</td>
+        <td data-label="Unit price" class="text-end">{{ formset.empty_form.unit_price }}</td>
+        <td data-label="Disc %" class="text-end">{{ formset.empty_form.discount_pct }}</td>
+        <td data-label="Tax">{{ formset.empty_form.tax_code }}</td>
+        <td data-label="Serial">{{ formset.empty_form.serial_number }}</td>
+        <td data-label="Remove" class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
+      </tr>
+    </template>
+
+    <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+      <p class="form-text small mb-0">Leave UOM blank to use the product's base unit; stock is relieved in the base unit per the conversion rules. Serial is disabled for non-serial products.</p>
+      <button type="button" class="btn btn-sm btn-outline-primary js-add-line"><i class="bi bi-plus-lg me-1"></i> Add line</button>
     </div>
+  </div></div>
+
+  <div class="d-flex justify-content-end gap-2">
+    <a class="btn btn-outline-secondary" href="{{ list_url }}">Cancel</a>
+    <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i> Save {{ doc_label|lower }}</button>
   </div>
 </form>
 
 <script>
-  document.querySelectorAll("form select, form input, form textarea").forEach(el => {
-    if (el.type === "checkbox") el.classList.add("form-check-input");
-    else if (el.type !== "hidden") el.classList.add("form-control");
-  });
-  const addBtn = document.getElementById("add-line-btn");
+  function sknStyleControls(scope) {
+    scope.querySelectorAll("select, input, textarea").forEach(el => {
+      if (el.type === "checkbox") el.classList.add("form-check-input");
+      else if (el.type !== "hidden") el.classList.add("form-control");
+    });
+  }
+  sknStyleControls(document);
+
   const tbody = document.getElementById("lines-body");
   const template = document.getElementById("empty-form-template");
-  addBtn.addEventListener("click", () => {
+  document.querySelectorAll(".js-add-line").forEach(btn => btn.addEventListener("click", () => {
     const totalForms = document.querySelector('input[name="{{ formset.prefix }}-TOTAL_FORMS"]');
     const index = parseInt(totalForms.value, 10);
     const wrapper = document.createElement("tbody");
@@ -89,11 +143,11 @@
     const row = wrapper.querySelector("tr");
     tbody.appendChild(row);
     totalForms.value = index + 1;
-    row.querySelectorAll("select, input, textarea").forEach(el => {
-      if (el.type === "checkbox") el.classList.add("form-check-input");
-      else if (el.type !== "hidden") el.classList.add("form-control");
-    });
-  });
+    sknStyleControls(row);
+    // Let the serial picker wire up the new row's product->serial behaviour.
+    const prod = row.querySelector('select[name$="-product"]');
+    if (prod) prod.dispatchEvent(new Event("change", {bubbles: true}));
+  }));
 </script>
 {% include "inventory/_serial_picker.html" %}
 {% endblock %}
