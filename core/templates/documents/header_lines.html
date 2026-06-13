@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.title }} - SwifPro BI{% endblock %}
+{% block back_url %}{{ doc.back_url }}{% endblock %}
+{% block body %}
+<style>
+  .hl-left .list-group-item { cursor: pointer; border: 0; border-radius: 8px; }
+  .hl-left .hl-nav.active { background: var(--skn-brand-soft); color: var(--skn-brand); font-weight: 650; }
+  .hl-left .hl-subitem { padding-left: 2.4rem; font-size: .9rem; }
+  .hl-sublist.collapsed { display: none; }
+  .hl-caret { transition: transform .18s ease; font-size: .8rem; }
+  #hl-lines-toggle.lines-collapsed .hl-caret { transform: rotate(-90deg); }
+  .hl-section { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 700;
+               color: var(--skn-muted); margin: 1rem 0 .5rem; }
+  .hl-section:first-child { margin-top: 0; }
+  .hl-fields { display: grid; grid-template-columns: 1fr 1fr; gap: .15rem 1.5rem; margin: 0; }
+  .hl-field { display: flex; flex-direction: column; padding: .4rem 0; border-bottom: 1px solid var(--skn-border); }
+  .hl-field dt { font-size: .78rem; color: var(--skn-muted); font-weight: 600; }
+  .hl-field dd { margin: 0; font-weight: 500; white-space: pre-wrap; }
+  .hl-line-link { font-weight: 650; }
+  @media (min-width: 992px) {
+    .hl-left { position: sticky; top: 84px; }
+    .hl-right { max-height: calc(100vh - 170px); overflow: auto; }
+  }
+  @media (max-width: 575.98px) { .hl-fields { grid-template-columns: 1fr; } }
+</style>
+
+<div class="d-flex justify-content-between align-items-start gap-2 mb-3 flex-wrap">
+  <div>
+    <h2 class="fw-bold mb-1">{{ doc.title }}</h2>
+    {% if doc.subtitle %}<div class="text-muted">{{ doc.subtitle }}</div>{% endif %}
+  </div>
+  {% if doc.status %}<span class="badge text-bg-{{ doc.status_tone }} fs-6">{{ doc.status }}</span>{% endif %}
+</div>
+
+{% if doc.actions %}
+<div class="d-flex flex-wrap gap-2 mb-3">
+  {% for a in doc.actions %}
+    {% if a.method == "post" %}
+    <form method="post" action="{{ a.url }}" class="m-0">{% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-{{ a.style }}">{% if a.icon %}<i class="bi bi-{{ a.icon }} me-1"></i>{% endif %}{{ a.label }}</button>
+    </form>
+    {% else %}
+    <a class="btn btn-sm btn-{{ a.style }}" href="{{ a.url }}">{% if a.icon %}<i class="bi bi-{{ a.icon }} me-1"></i>{% endif %}{{ a.label }}</a>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <!-- Left: document navigation -->
+  <div class="col-lg-3">
+    <div class="card hl-left"><div class="list-group list-group-flush p-2">
+      <button type="button" class="list-group-item list-group-item-action hl-nav active" data-pane="header">
+        <i class="bi bi-card-heading me-2"></i>Header
+      </button>
+      <button type="button" class="list-group-item list-group-item-action hl-nav d-flex justify-content-between align-items-center" data-pane="lines" id="hl-lines-toggle">
+        <span><i class="bi bi-list-ol me-2"></i>Lines <span class="badge text-bg-secondary ms-1">{{ doc.lines|length }}</span></span>
+        <i class="bi bi-chevron-down hl-caret"></i>
+      </button>
+      <div id="hl-line-list" class="hl-sublist collapsed">
+        {% for ln in doc.lines %}
+        <button type="button" class="list-group-item list-group-item-action hl-nav hl-subitem" data-pane="line-{{ ln.number }}">
+          {{ doc.line_noun }} {{ ln.number }}
+        </button>
+        {% endfor %}
+      </div>
+    </div></div>
+  </div>
+
+  <!-- Right: detail -->
+  <div class="col-lg-9">
+    <div class="card hl-right"><div class="card-body">
+
+      {# Header detail #}
+      <div class="hl-pane" id="hl-pane-header">
+        {% for s in doc.sections %}
+        <div class="hl-section">{{ s.title }}</div>
+        <dl class="hl-fields">
+          {% for f in s.fields %}
+          <div class="hl-field"><dt>{{ f.label }}</dt><dd>{{ f.value|default:"-" }}</dd></div>
+          {% endfor %}
+        </dl>
+        {% endfor %}
+      </div>
+
+      {# Lines summary table #}
+      <div class="hl-pane" id="hl-pane-lines" hidden>
+        {% if doc.lines %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light"><tr>{% for c in doc.columns %}<th class="text-{{ c.align }}">{{ c.label }}</th>{% endfor %}</tr></thead>
+            <tbody>
+              {% for ln in doc.lines %}
+              <tr>
+                {% for cell in ln.summary %}
+                <td class="text-{{ cell.align }}">
+                  {% if forloop.first %}
+                  <button type="button" class="btn btn-link p-0 hl-line-link" data-pane="line-{{ ln.number }}">{{ cell.value }}</button>
+                  {% else %}{{ cell.value|default:"-" }}{% endif %}
+                </td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}<div class="text-muted">{{ doc.empty_lines_msg }}</div>{% endif %}
+      </div>
+
+      {# Full per-line detail #}
+      {% for ln in doc.lines %}
+      <div class="hl-pane" id="hl-pane-line-{{ ln.number }}" hidden>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="fw-semibold mb-0">{{ doc.line_noun }} {{ ln.number }}{% if ln.status %} <span class="badge text-bg-secondary ms-1">{{ ln.status }}</span>{% endif %}</h5>
+          <button type="button" class="btn btn-sm btn-outline-secondary hl-back-lines"><i class="bi bi-arrow-left me-1"></i>Back to lines</button>
+        </div>
+        {% for s in ln.detail %}
+        <div class="hl-section">{{ s.title }}</div>
+        <dl class="hl-fields">
+          {% for f in s.fields %}
+          <div class="hl-field"><dt>{{ f.label }}</dt><dd>{{ f.value|default:"-" }}</dd></div>
+          {% endfor %}
+        </dl>
+        {% endfor %}
+      </div>
+      {% endfor %}
+
+    </div></div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var navs = Array.prototype.slice.call(document.querySelectorAll(".hl-nav"));
+    var panes = Array.prototype.slice.call(document.querySelectorAll(".hl-pane"));
+    var lineList = document.getElementById("hl-line-list");
+    var linesToggle = document.getElementById("hl-lines-toggle");
+    var right = document.querySelector(".hl-right");
+
+    function show(pane) {
+      panes.forEach(function (p) { p.hidden = (p.id !== "hl-pane-" + pane); });
+      navs.forEach(function (n) {
+        // A specific line keeps both the "Lines" group and the line item highlighted.
+        var active = n.getAttribute("data-pane") === pane ||
+                     (pane.indexOf("line-") === 0 && n.getAttribute("data-pane") === "lines");
+        n.classList.toggle("active", active);
+      });
+      if (right) right.scrollTop = 0;
+    }
+    function expandLines(open) {
+      lineList.classList.toggle("collapsed", !open);
+      linesToggle.classList.toggle("lines-collapsed", !open);
+    }
+
+    document.addEventListener("click", function (e) {
+      var nav = e.target.closest(".hl-nav");
+      var link = e.target.closest(".hl-line-link");
+      var back = e.target.closest(".hl-back-lines");
+      if (back) { show("lines"); return; }
+      if (link) { var t = link.getAttribute("data-pane"); expandLines(true); show(t); return; }
+      if (nav) {
+        var pane = nav.getAttribute("data-pane");
+        if (pane === "lines") { expandLines(lineList.classList.contains("collapsed")); show("lines"); return; }
+        if (pane.indexOf("line-") === 0) { expandLines(true); }
+        show(pane);
+      }
+    });
+
+    show("header");
+  })();
+</script>
+{% endblock %}
