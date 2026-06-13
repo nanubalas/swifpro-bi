@@ -3986,6 +3986,27 @@ def uom_conversion_delete(request, conv_id):
     return render(request, "uoms/conversion_delete.html", {"tenant": tenant, "conv": obj})
 
 
+def _sync_bom_placements(formset):
+    """Reconcile each surviving BOM line's reference designators with the
+    comma-separated `placements` text on its form. Creates missing designators
+    (qty 1), drops ones no longer listed, and never touches the line qty used
+    for explosion/planning. No-op for lines with an empty field and no rows."""
+    from core.models import BillOfMaterialsLinePlacement
+    from core.forms import BOMLineForm
+    for f in formset.forms:
+        cd = getattr(f, "cleaned_data", None)
+        if not cd or cd.get("DELETE"):
+            continue
+        line = f.instance
+        if not getattr(line, "pk", None):
+            continue
+        refs = BOMLineForm.parse_placements(cd.get("placements", ""))
+        for ref in refs:
+            BillOfMaterialsLinePlacement.objects.get_or_create(
+                bom_line=line, reference=ref, defaults={"qty": Decimal("1")})
+        line.placements.exclude(reference__in=refs).delete()
+
+
 @login_required
 @role_required([ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_SALES], [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_SALES])
 def bom_list(request):
@@ -4019,6 +4040,7 @@ def bom_detail(request, bom_id):
         if form.is_valid() and formset.is_valid():
             form.save()
             formset.save()
+            _sync_bom_placements(formset)
             messages.success(request, "BOM updated.")
             return redirect("bom_detail", bom_id=bom.id)
     else:

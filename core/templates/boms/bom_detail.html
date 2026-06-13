@@ -28,6 +28,16 @@
             {{ form.name }}
           </div>
           <div class="mb-3">
+            <label class="form-label">Output quantity</label>
+            {{ form.output_qty }}
+            <div class="form-text">Units produced per run. Build/batch quantity is entered at planning time, not stored here.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Notes</label>
+            {{ form.notes }}
+            <div class="form-text">e.g. "R1 is open / not fitted".</div>
+          </div>
+          <div class="mb-3">
             <label class="form-label">Active</label>
             {{ form.is_active }}
           </div>
@@ -50,11 +60,13 @@
             <table class="table table-bordered align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:10%">Line</th>
-                  <th style="width:45%">Component</th>
-                  <th class="text-end" style="width:15%">Quantity</th>
-                  <th style="width:20%">UOM</th>
-                  <th class="text-center" style="width:10%">Actions</th>
+                  <th style="width:7%">Line</th>
+                  <th style="width:28%">Component</th>
+                  <th class="text-end" style="width:9%">Quantity</th>
+                  <th style="width:12%">UOM</th>
+                  <th style="width:12%">Notes</th>
+                  <th style="width:24%">Placements <span class="text-muted fw-normal">(ref designators)</span></th>
+                  <th class="text-center" style="width:8%">Actions</th>
                 </tr>
               </thead>
               <tbody id="lines-body">
@@ -65,12 +77,21 @@
                   <td>{{ f.component }}</td>
                   <td class="text-end">{{ f.qty }}</td>
                   <td>{{ f.uom }}</td>
+                  <td>{{ f.notes }}</td>
+                  <td>
+                    {{ f.placements }}
+                    {% if f.instance.pk and not f.instance.placements_match_qty %}
+                    <div class="text-warning small mt-1"><i class="bi bi-exclamation-triangle"></i>
+                      Placement total {{ f.instance.placement_qty_sum }} &ne; line qty {{ f.instance.qty }}</div>
+                    {% endif %}
+                  </td>
                   <td class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
                 </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
+          <p class="form-text small mb-0">Placements are reference designators (e.g. <code>Z1,Z2,Z3</code>); each defaults to qty 1 and should add up to the line quantity. They are descriptive only - explosion and planning use the line quantity.</p>
 
           <template id="empty-form-template">
             <tr class="line-row">
@@ -78,6 +99,8 @@
               <td>{{ formset.empty_form.component }}</td>
               <td class="text-end">{{ formset.empty_form.qty }}</td>
               <td>{{ formset.empty_form.uom }}</td>
+              <td>{{ formset.empty_form.notes }}</td>
+              <td>{{ formset.empty_form.placements }}</td>
               <td class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
             </tr>
           </template>

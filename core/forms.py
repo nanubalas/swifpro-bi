@@ -445,19 +445,48 @@ class UOMConversionForm(TenantModelForm):
 class BillOfMaterialsForm(TenantModelForm):
     class Meta:
         model = BillOfMaterials
-        fields = ["product", "name", "is_active"]
+        fields = ["product", "name", "output_qty", "notes", "is_active"]
 
 
 class BOMLineForm(TenantModelForm):
+    # Non-model field: comma-separated reference designators (R2, Z1, Z2 ...).
+    # Synced to BillOfMaterialsLinePlacement rows after save (each defaults to
+    # qty 1). Does not affect the line qty used for explosion/planning.
+    placements = forms.CharField(
+        required=False,
+        label="Placements",
+        help_text="Comma-separated reference designators, e.g. Z1,Z2,Z3 (each = qty 1).",
+        widget=forms.TextInput(attrs={"placeholder": "e.g. Z1,Z2,Z3"}),
+    )
+
     class Meta:
         model = BillOfMaterialsLine
-        fields = ("line_no", "component", "qty", "uom")
+        fields = ("line_no", "component", "qty", "uom", "notes")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        inst = getattr(self, "instance", None)
+        if inst is not None and inst.pk:
+            refs = list(inst.placements.order_by("id").values_list("reference", flat=True))
+            self.fields["placements"].initial = ", ".join(refs)
 
     def clean_line_no(self):
         n = self.cleaned_data.get("line_no")
         if n is not None and n < 1:
             raise forms.ValidationError("Line number must be a positive number (e.g. 10, 20, 30).")
         return n
+
+    @staticmethod
+    def parse_placements(text):
+        """Comma/newline-separated references -> de-duplicated, order-preserving
+        list (case-insensitive de-dup, original casing kept)."""
+        out, seen = [], set()
+        for raw in (text or "").replace("\n", ",").split(","):
+            ref = raw.strip()
+            if ref and ref.lower() not in seen:
+                seen.add(ref.lower())
+                out.append(ref)
+        return out
 
 
 # extra=0: don't pre-render a blank line (its default line_no=10 would collide on
@@ -469,7 +498,7 @@ BOMLineFormSet = inlineformset_factory(
     BillOfMaterials,
     BillOfMaterialsLine,
     form=BOMLineForm,
-    fields=("line_no", "component", "qty", "uom"),
+    fields=("line_no", "component", "qty", "uom", "notes"),
     extra=0,
     can_delete=True
 )

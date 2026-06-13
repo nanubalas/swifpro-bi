@@ -9,6 +9,7 @@ from core.models import (
     InventoryBalance, InventoryMovement,
     ChannelConnection, SyncRun, ChannelSnapshot, ChannelOrder,
     UnitOfMeasure, UOMConversion, ProductBarcode, BillOfMaterials, BillOfMaterialsLine,
+    BillOfMaterialsLinePlacement,
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine,
     GLAccount, JournalEntry, JournalLine, Expense, CreditNote, CreditNoteLine,
     BankTransaction
@@ -22,6 +23,29 @@ admin.site.register(SalesQuote)
 admin.site.register(CustomerOrder)
 admin.site.register(ProductCategory)
 admin.site.register(StockAdjustment)
+
+
+# --- BOM (header -> lines -> reference designators / placements) ---
+class BillOfMaterialsLineInline(admin.TabularInline):
+    model = BillOfMaterialsLine
+    extra = 0
+
+
+@admin.register(BillOfMaterials)
+class BillOfMaterialsAdmin(admin.ModelAdmin):
+    list_display = ("product", "name", "output_qty", "is_active")
+    inlines = [BillOfMaterialsLineInline]
+
+
+class BillOfMaterialsLinePlacementInline(admin.TabularInline):
+    model = BillOfMaterialsLinePlacement
+    extra = 0
+
+
+@admin.register(BillOfMaterialsLine)
+class BillOfMaterialsLineAdmin(admin.ModelAdmin):
+    list_display = ("bom", "line_no", "component", "qty", "notes")
+    inlines = [BillOfMaterialsLinePlacementInline]
 
 class UserProfileInline(admin.StackedInline):
     model = UserProfile
@@ -87,8 +111,7 @@ admin.site.register(ChannelOrder)
 admin.site.register(UnitOfMeasure)
 admin.site.register(UOMConversion)
 admin.site.register(ProductBarcode)
-admin.site.register(BillOfMaterials)
-admin.site.register(BillOfMaterialsLine)
+# BillOfMaterials / BillOfMaterialsLine are registered above with inlines.
 
 admin.site.register(TaxCode)
 admin.site.register(Customer)

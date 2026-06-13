@@ -7480,6 +7480,165 @@ class FieldHelpSystemTests(TestCase):
         call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
 
 
+class ElectronicsBomTests(TestCase):
+    """PCB/electronics BOM: reference-designator placements on BOM lines, with
+    line qty remaining the authoritative figure for explosion and planning.
+    Master data only - no inventory/costing/GL changes."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.core.management import call_command
+        call_command("seed_vgs_pcb_bom")
+
+    def setUp(self):
+        from core.models import Tenant, BillOfMaterials
+        self.t = Tenant.objects.get(name="VGS and Technologies Pvt Ltd")
+        self.parent = Product.objects.get(tenant=self.t, sku="VGS-PCB-ASSY-001")
+        self.bom = BillOfMaterials.objects.get(tenant=self.t, product=self.parent)
+
+    def _line(self, line_no):
+        return self.bom.lines.get(line_no=line_no)
+
+    def test_placement_model_and_table_exist(self):
+        from core.models import BillOfMaterialsLinePlacement
+        self.assertEqual(BillOfMaterialsLinePlacement._meta.db_table,
+                         "core_billofmaterialslineplacement")
+
+    def test_seed_created_lines_and_placements(self):
+        from core.models import BillOfMaterialsLinePlacement
+        self.assertEqual(self.bom.lines.count(), 5)
+        total = BillOfMaterialsLinePlacement.objects.filter(bom_line__bom=self.bom).count()
+        self.assertEqual(total, 28)   # 1 + 8 + 5 + 1 + 13
+        self.assertEqual(self.bom.output_qty, Decimal("1"))
+        self.assertIn("R1 is open", self.bom.notes)
+
+    def test_can_create_placement_for_line(self):
+        from core.models import BillOfMaterialsLinePlacement
+        line = self._line(40)   # PCB line
+        p = BillOfMaterialsLinePlacement.objects.create(
+            bom_line=line, reference="PCB-EXTRA", qty=Decimal("1"))
+        self.assertEqual(p.bom_line, line)
+
+    def test_duplicate_reference_same_line_rejected(self):
+        from django.db import IntegrityError, transaction
+        from core.models import BillOfMaterialsLinePlacement
+        line20 = self._line(20)   # Z1..Z8 already exist here
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                BillOfMaterialsLinePlacement.objects.create(
+                    bom_line=line20, reference="Z1", qty=Decimal("1"))
+
+    def test_same_reference_allowed_on_different_lines(self):
+        from core.models import BillOfMaterialsLinePlacement
+        BillOfMaterialsLinePlacement.objects.create(bom_line=self._line(10), reference="TST", qty=Decimal("1"))
+        BillOfMaterialsLinePlacement.objects.create(bom_line=self._line(20), reference="TST", qty=Decimal("1"))
+        self.assertEqual(
+            BillOfMaterialsLinePlacement.objects.filter(bom_line__bom=self.bom, reference="TST").count(), 2)
+
+    def test_placement_qty_sum_matches_line_qty(self):
+        for line in self.bom.lines.all():
+            self.assertTrue(line.placements_match_qty(), f"line {line.line_no} mismatch")
+        self.assertEqual(self._line(20).placement_qty_sum(), Decimal("8"))
+        self.assertEqual(self._line(50).placement_qty_sum(), Decimal("13"))
+
+    def test_z1_and_z8_belong_to_2v7_zener_qty_one(self):
+        from core.models import BillOfMaterialsLinePlacement
+        for ref in ("Z1", "Z8"):
+            p = BillOfMaterialsLinePlacement.objects.get(bom_line__bom=self.bom, reference=ref)
+            self.assertEqual(p.qty, Decimal("1"))
+            self.assertEqual(p.bom_line.component.name, "2V7 Zener Diode")
+
+    def test_l13_belongs_to_white_led_qty_one(self):
+        from core.models import BillOfMaterialsLinePlacement
+        p = BillOfMaterialsLinePlacement.objects.get(bom_line__bom=self.bom, reference="L13")
+        self.assertEqual(p.qty, Decimal("1"))
+        self.assertEqual(p.bom_line.component.name, "5mm White LED")
+
+    def test_r1_not_created_as_component(self):
+        from core.models import BillOfMaterialsLinePlacement
+        self.assertFalse(Product.objects.filter(tenant=self.t, sku="R1").exists())
+        self.assertFalse(
+            BillOfMaterialsLinePlacement.objects.filter(bom_line__bom=self.bom, reference="R1").exists())
+
+    def test_material_requirement_uses_line_qty_not_placements(self):
+        # required = line qty per assembly x build qty (placements are descriptive).
+        from core.services.bom import explode_product
+        exploded = {c.sku: q for c, q in explode_product(self.parent, Decimal("750"))}
+        self.assertEqual(exploded["ZD-2V7-DO41-2"], Decimal("6000"))    # 8 x 750
+        self.assertEqual(exploded["LED-5MM-WHITE-NSPW500DS"], Decimal("9750"))  # 13 x 750
+        self.assertNotIn("R1", exploded)
+
+    def test_plain_bom_without_placements_still_works(self):
+        from core.models import Tenant, BillOfMaterials, BillOfMaterialsLine
+        from core.services.bom import explode_product
+        t2 = Tenant.objects.create(name="Plain Kit Co")
+        kit = Product.objects.create(tenant=t2, sku="KIT-1", name="Kit")
+        comp = Product.objects.create(tenant=t2, sku="COMP-1", name="Comp")
+        b = BillOfMaterials.objects.create(tenant=t2, product=kit)
+        line = BillOfMaterialsLine.objects.create(bom=b, line_no=10, component=comp, qty=Decimal("3"))
+        self.assertIsNone(line.placement_qty_sum())     # no placements
+        self.assertTrue(line.placements_match_qty())    # nothing to reconcile
+        exploded = {c.sku: q for c, q in explode_product(kit, Decimal("2"))}
+        self.assertEqual(exploded["COMP-1"], Decimal("6"))   # 3 x 2, unchanged
+
+    def test_seed_is_idempotent(self):
+        from django.core.management import call_command
+        from core.models import BillOfMaterialsLinePlacement
+        before = BillOfMaterialsLinePlacement.objects.filter(bom_line__bom=self.bom).count()
+        call_command("seed_vgs_pcb_bom")
+        after = BillOfMaterialsLinePlacement.objects.filter(bom_line__bom=self.bom).count()
+        self.assertEqual(before, after)
+        self.assertEqual(Product.objects.filter(tenant=self.t, sku="VGS-PCB-ASSY-001").count(), 1)
+
+    def test_bom_create_and_detail_views_work_with_new_fields(self):
+        # BOM create (now includes output_qty/notes) and the detail edit form
+        # (with the placements column) must keep working.
+        from core.models import OrgMembership, BillOfMaterials
+        admin = User.objects.create_user("bomadmin", password="pw")
+        OrgMembership.objects.create(user=admin, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="bomadmin", password="pw")
+        kit = Product.objects.create(tenant=self.t, sku="NEW-KIT", name="New Kit",
+                                     product_type="FINISHED_GOOD")
+        resp = self.client.post("/boms/new/", {
+            "product": kit.id, "name": "Kit BOM", "output_qty": "1", "notes": "", "is_active": "on"})
+        self.assertEqual(resp.status_code, 302)
+        b = BillOfMaterials.objects.get(tenant=self.t, product=kit, name="Kit BOM")
+        # Detail page renders, including the placements input for the seeded BOM.
+        detail = self.client.get(f"/boms/{self.bom.id}/")
+        self.assertEqual(detail.status_code, 200)
+        self.assertContains(detail, "Placements")
+        self.assertContains(detail, "Z1, Z2, Z3, Z4, Z5, Z6, Z7, Z8")   # placements initial
+
+    def test_placements_round_trip_through_detail_form(self):
+        # Editing a line's comma-separated placements creates/syncs rows.
+        from core.models import OrgMembership, BillOfMaterials, BillOfMaterialsLine, BillOfMaterialsLinePlacement
+        admin = User.objects.create_user("bomadmin2", password="pw")
+        OrgMembership.objects.create(user=admin, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="bomadmin2", password="pw")
+        line40 = self._line(40)   # PCB, currently one placement "PCB"
+        post = {
+            "product": self.parent.id, "name": self.bom.name, "output_qty": "1",
+            "notes": self.bom.notes, "is_active": "on",
+            "lines-TOTAL_FORMS": "1", "lines-INITIAL_FORMS": "1",
+            "lines-MIN_NUM_FORMS": "0", "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-id": line40.id, "lines-0-bom": self.bom.id,
+            "lines-0-line_no": "40", "lines-0-component": line40.component_id,
+            "lines-0-qty": "2", "lines-0-uom": line40.uom_id or "",
+            "lines-0-notes": "PCB",
+            "lines-0-placements": "PCB, PCB2",
+        }
+        resp = self.client.post(f"/boms/{self.bom.id}/", post)
+        self.assertEqual(resp.status_code, 302)
+        refs = set(BillOfMaterialsLinePlacement.objects.filter(bom_line=line40)
+                   .values_list("reference", flat=True))
+        self.assertEqual(refs, {"PCB", "PCB2"})
+
+    def test_no_migrations_created(self):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
+
+
 class GlobalSearchAndNavTests(TestCase):
     """Permission-aware global search + grouped/collapsible hamburger menu, all
     driven from the navigation registry in core.roles."""

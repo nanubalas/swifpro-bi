@@ -644,6 +644,10 @@ class BillOfMaterials(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="boms")
     name = models.CharField(max_length=200, default="Default BOM")
+    # Units produced by one run of this BOM (master data only; build/batch
+    # quantity is supplied at planning time, never stored here).
+    output_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1"))
+    notes = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -661,8 +665,12 @@ class BillOfMaterialsLine(models.Model):
     # renumbering. Display/order only - does not affect explosion quantities.
     line_no = models.PositiveIntegerField(default=10)
     component = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="bom_component_of")
+    # Total quantity of this component per assembly. This is the authoritative
+    # figure for kit explosion and material planning - placement rows below are
+    # descriptive (which board positions use it) and never override this.
     qty = models.DecimalField(max_digits=12, decimal_places=2)
     uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, blank=True, null=True)
+    notes = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         ordering = ["line_no", "id"]
@@ -670,6 +678,48 @@ class BillOfMaterialsLine(models.Model):
 
     def __str__(self):
         return f"{self.line_no}. {self.component.sku} x {self.qty}"
+
+    def placement_qty_sum(self):
+        """Sum of placement quantities, or None when this line has no
+        placements (so old, non-electronics BOM lines are unaffected)."""
+        agg = self.placements.aggregate(s=models.Sum("qty"))["s"]
+        return agg
+
+    def placements_match_qty(self):
+        """True when the line has no placements (nothing to reconcile) or the
+        placement quantities add up to the line's total qty. Advisory only -
+        callers use it to warn, never to block."""
+        total = self.placement_qty_sum()
+        if total is None:
+            return True
+        return Decimal(total) == Decimal(self.qty)
+
+
+class BillOfMaterialsLinePlacement(models.Model):
+    """A reference designator / board placement for a BOM line, e.g. R2, Z1,
+    L13, PCB. For PCB/electronics BOMs each designator is normally one unit; the
+    sum of placement quantities should equal the line's total qty. Purely
+    descriptive master data - it never feeds inventory, costing, GL or kit
+    explosion (those use BillOfMaterialsLine.qty)."""
+    bom_line = models.ForeignKey(BillOfMaterialsLine, on_delete=models.CASCADE, related_name="placements")
+    reference = models.CharField(max_length=50)
+    qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1"))
+    notes = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["reference", "id"]
+        unique_together = [("bom_line", "reference")]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(qty__gt=0),
+                name="bom_placement_qty_positive",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} x {self.qty}"
 
 
 class PurchaseOrder(models.Model):
