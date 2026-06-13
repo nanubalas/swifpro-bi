@@ -203,11 +203,36 @@ def reverse_invoice_cogs(inv, user=None):
 
 
 @_posting
-def post_supplier_invoice(inv: SupplierInvoice, user=None) -> JournalEntry:
+def supplier_invoice_match_errors(inv: SupplierInvoice):
+    """3-way (PO <-> GRN <-> invoice) quantity check: return a list of
+    discrepancies where a line is invoiced for more than it was ordered or
+    received. Only lines explicitly linked to a PO line / receipt line are
+    checked, so non-PO bills are unaffected. Empty list = matches / nothing to
+    check. Read-only - it computes nothing financial."""
+    errors = []
+    for line in inv.lines.select_related("product", "po_line", "receipt_line").all():
+        sku = line.product.sku if line.product_id else "?"
+        po_qty = line.po_line.ordered_qty if line.po_line_id else None
+        rec_qty = line.receipt_line.qty_received if line.receipt_line_id else None
+        if rec_qty is not None and line.qty > rec_qty:
+            errors.append(f"{sku}: invoiced qty {line.qty} > received {rec_qty}")
+        if po_qty is not None and line.qty > po_qty:
+            errors.append(f"{sku}: invoiced qty {line.qty} > ordered {po_qty}")
+    return errors
+
+
+def post_supplier_invoice(inv: SupplierInvoice, user=None, allow_over_billing=False) -> JournalEntry:
     if inv.status == "POSTED":
         je = JournalEntry.objects.filter(tenant=inv.tenant, ref_type="AP_INVOICE", ref_id=inv.invoice_number).order_by("-id").first()
         if je:
             return je
+
+    # 3-way match gate: never post a bill for more than was ordered/received.
+    # `allow_over_billing=True` is the explicit, authorised escape hatch.
+    if not allow_over_billing:
+        errors = supplier_invoice_match_errors(inv)
+        if errors:
+            raise ValidationError(errors)
 
     tenant = inv.tenant
 

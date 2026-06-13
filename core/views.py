@@ -4864,10 +4864,17 @@ def invoice_create(request):
                 inv.save()
                 messages.success(request, "Invoice approved.")
             elif action == "post":
-                _run_3way_match(inv, request)
-                inv.status = SupplierInvoice.Status.POSTED
-                inv.save()
-                messages.success(request, "Invoice posted.")
+                # Hard 3-way gate: refuse to post a bill for more than was
+                # ordered / received; keep it DRAFT and explain why.
+                errors = _compute_3way(inv)["discrepancies"]
+                if errors:
+                    inv.status = SupplierInvoice.Status.DRAFT
+                    inv.save()
+                    messages.error(request, "Cannot post - 3-way match failed: " + "; ".join(errors[:5]))
+                else:
+                    inv.status = SupplierInvoice.Status.POSTED
+                    inv.save()
+                    messages.success(request, "Invoice posted.")
             return redirect("invoice_detail", invoice_id=inv.id)
     else:
         form = SupplierInvoiceForm(instance=inv)
@@ -4887,16 +4894,11 @@ def invoice_detail(request, invoice_id):
 
 
 def _compute_3way(inv: SupplierInvoice):
-    # Return discrepancies list for UI
-    discrepancies = []
-    for line in inv.lines.select_related("product","po_line","receipt_line").all():
-        po_qty = line.po_line.ordered_qty if line.po_line else None
-        rec_qty = line.receipt_line.qty_received if line.receipt_line else None
-        if rec_qty is not None and line.qty > rec_qty:
-            discrepancies.append(f"{line.product.sku}: invoiced qty {line.qty} > received {rec_qty}")
-        if po_qty is not None and line.qty > po_qty:
-            discrepancies.append(f"{line.product.sku}: invoiced qty {line.qty} > ordered {po_qty}")
-    return {"ok": len(discrepancies)==0, "discrepancies": discrepancies}
+    # Single source of truth for the 3-way quantity check (shared with the
+    # posting gate in core.services.gl).
+    from core.services.gl import supplier_invoice_match_errors
+    discrepancies = supplier_invoice_match_errors(inv)
+    return {"ok": len(discrepancies) == 0, "discrepancies": discrepancies}
 
 
 def _run_3way_match(inv: SupplierInvoice, request=None):
@@ -6142,7 +6144,12 @@ def invoice_post(request, invoice_id):
     tenant = _get_default_tenant(request)
     inv = get_object_or_404(SupplierInvoice, id=invoice_id, tenant=tenant)
     if request.method == "POST":
-        post_supplier_invoice(inv, user=request.user)
+        try:
+            post_supplier_invoice(inv, user=request.user)
+        except ValidationError as e:
+            messages.error(request, "Cannot post - 3-way match failed: " + "; ".join(e.messages))
+        else:
+            messages.success(request, "Invoice posted.")
         return redirect("invoice_detail", invoice_id=inv.id)
     return render(request, "finance/invoice_post.html", {"tenant": tenant, "inv": inv})
 

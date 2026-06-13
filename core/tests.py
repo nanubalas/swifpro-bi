@@ -9257,6 +9257,91 @@ class LandedCostAccrualTests(TestCase):
         self.assertEqual(_account_balance(other, "2150"), Decimal("0.00"))
 
 
+class ThreeWayMatchGateTests(TestCase):
+    """A supplier invoice cannot be posted for more than the linked PO line was
+    ordered or the GRN line received. The gate lives in post_supplier_invoice so
+    no posting path can bypass it; a non-PO bill is never gated."""
+
+    def setUp(self):
+        from core.models import (PurchaseOrder, PurchaseOrderLine, GoodsReceipt,
+                                  GoodsReceiptLine, Supplier)
+        self.t = Tenant.objects.create(name="ThreeWay Co")   # signal seeds GL
+        self.sup = Supplier.objects.create(tenant=self.t, name="S")
+        self.loc = Location.objects.create(tenant=self.t, name="WH")
+        self.p = Product.objects.create(tenant=self.t, sku="SKU-01-01", name="Widget")
+        self.po = PurchaseOrder.objects.create(tenant=self.t, po_number="PO-3W", supplier=self.sup)
+        self.pol = PurchaseOrderLine.objects.create(
+            po=self.po, product=self.p, ordered_qty=Decimal("20"), unit_cost=Decimal("5.00"))
+        self.grn = GoodsReceipt.objects.create(
+            tenant=self.t, po=self.po, grn_number="GRN-3W",
+            received_to=self.loc, status=GoodsReceipt.Status.POSTED)
+        self.grl = GoodsReceiptLine.objects.create(
+            receipt=self.grn, po_line=self.pol, product=self.p,
+            qty_received=Decimal("20"), unit_cost=Decimal("5.00"))
+
+    def _invoice(self, qty, number=None):
+        from core.models import SupplierInvoice, SupplierInvoiceLine
+        inv = SupplierInvoice.objects.create(
+            tenant=self.t, supplier=self.sup, po=self.po, receipt=self.grn,
+            invoice_number=number or f"SINV-{qty}")
+        SupplierInvoiceLine.objects.create(
+            invoice=inv, product=self.p, po_line=self.pol, receipt_line=self.grl,
+            qty=Decimal(qty), unit_cost=Decimal("5.00"))
+        return inv
+
+    def test_over_invoice_is_blocked(self):
+        from django.core.exceptions import ValidationError
+        from core.services.gl import post_supplier_invoice
+        inv = self._invoice("40")
+        with self.assertRaises(ValidationError) as ctx:
+            post_supplier_invoice(inv)
+        msg = "; ".join(ctx.exception.messages)
+        self.assertIn("> received 20", msg)
+        self.assertIn("> ordered 20", msg)
+        inv.refresh_from_db()
+        self.assertNotEqual(inv.status, "POSTED")   # not posted
+
+    def test_matched_invoice_posts(self):
+        from core.services.gl import post_supplier_invoice
+        inv = self._invoice("20")
+        je = post_supplier_invoice(inv)
+        self.assertIsNotNone(je)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, "POSTED")
+
+    def test_explicit_override_allows_over_billing(self):
+        from core.services.gl import post_supplier_invoice
+        je = post_supplier_invoice(self._invoice("40"), allow_over_billing=True)
+        self.assertIsNotNone(je)
+
+    def test_match_errors_helper(self):
+        from core.services.gl import supplier_invoice_match_errors
+        self.assertEqual(supplier_invoice_match_errors(self._invoice("20", "M-OK")), [])
+        self.assertEqual(len(supplier_invoice_match_errors(self._invoice("40", "M-BAD"))), 2)
+
+    def test_unmatched_line_is_not_gated(self):
+        # A line not linked to a PO line / receipt line isn't quantity-checked.
+        from core.models import SupplierInvoice, SupplierInvoiceLine
+        from core.services.gl import post_supplier_invoice
+        inv = SupplierInvoice.objects.create(
+            tenant=self.t, supplier=self.sup, po=self.po, receipt=self.grn, invoice_number="SINV-FREE")
+        SupplierInvoiceLine.objects.create(
+            invoice=inv, product=self.p, qty=Decimal("999"), unit_cost=Decimal("1.00"))  # no po_line/receipt_line
+        self.assertIsNotNone(post_supplier_invoice(inv))   # posts (nothing to match)
+
+    def test_invoice_post_view_blocks_and_shows_error(self):
+        from core.models import OrgMembership
+        admin = User.objects.create_user("inv3w", password="pw")
+        OrgMembership.objects.create(user=admin, tenant=self.t, role="ADMIN", is_default=True)
+        self.client.login(username="inv3w", password="pw")
+        inv = self._invoice("40")
+        resp = self.client.post(f"/invoices/{inv.id}/post/", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        inv.refresh_from_db()
+        self.assertNotEqual(inv.status, "POSTED")
+        self.assertContains(resp, "3-way match failed")
+
+
 class PerformanceHardeningTests(TestCase):
     """N+1 elimination (available_serials, near-expiry, dashboard low-stock),
     pagination, and index presence - behaviour must be unchanged."""
