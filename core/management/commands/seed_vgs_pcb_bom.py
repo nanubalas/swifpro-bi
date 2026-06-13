@@ -15,9 +15,12 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from django.contrib.auth.models import User
+
 from core.models import (
     Tenant, UnitOfMeasure, ProductCategory, Product,
     BillOfMaterials, BillOfMaterialsLine, BillOfMaterialsLinePlacement,
+    OrgMembership,
 )
 
 TENANT_NAME = "VGS and Technologies Pvt Ltd"
@@ -69,6 +72,14 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args, **options):
         tenant, _ = Tenant.objects.get_or_create(name=options["tenant"])
+        # So the data is actually visible: give every superuser ADMIN access to
+        # this company (it's a separate tenant, otherwise no one can switch to
+        # it). Non-default membership, so it never changes anyone's home company.
+        member_count = 0
+        for su in User.objects.filter(is_superuser=True):
+            _, created = OrgMembership.objects.get_or_create(
+                user=su, tenant=tenant, defaults={"role": "ADMIN", "is_default": False})
+            member_count += int(created)
         ea, _ = UnitOfMeasure.objects.get_or_create(
             tenant=tenant, code="EA", defaults={"name": "Each"})
 
@@ -136,5 +147,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f"VGS PCB BOM seeded into '{tenant.name}': parent {PARENT_SKU} "
             f"(new={p_created}), {len(COMPONENTS)} components (new={comp_created}), "
-            f"{line_count} BOM lines, {placement_count} new placement(s). "
-            f"R1 left open / not fitted (header note only)."))
+            f"{line_count} BOM lines, {placement_count} new placement(s); "
+            f"granted {member_count} superuser(s) access. "
+            f"R1 left open / not fitted (header note only). "
+            f"Switch company to '{tenant.name}' to view it."))
