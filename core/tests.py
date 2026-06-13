@@ -7639,6 +7639,166 @@ class ElectronicsBomTests(TestCase):
         call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
 
 
+class VgsInventoryLifecycleTests(TestCase):
+    """VGS inventory-lifecycle master/support data seed: one site, locations,
+    bins, UOMs, categories, suppliers, products and replenishment policies.
+    Master data only - no postings unless --with-opening-stock, which uses the
+    approved movement service (no GL)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.core.management import call_command
+        call_command("seed_vgs_inventory_lifecycle")   # default: no opening stock
+
+    def setUp(self):
+        from core.models import Tenant
+        self.t = Tenant.objects.get(name="VGS and Technologies Pvt Ltd")
+
+    def test_tenant_exists(self):
+        self.assertTrue(self.t.pk)
+
+    def test_only_main_site_used(self):
+        from core.models import Site
+        sites = list(Site.objects.filter(tenant=self.t).values_list("name", flat=True))
+        self.assertEqual(sites, ["Main Site"])   # exactly one, named Main Site
+
+    def test_locations_created_under_main_site(self):
+        from core.models import Location
+        names = set(Location.objects.filter(tenant=self.t, site__name="Main Site")
+                    .values_list("name", flat=True))
+        for expected in ["Raw Material Stores", "ESD Component Store", "PCB Store",
+                         "Production Floor", "Work In Progress Area", "QC Hold",
+                         "Quarantine", "Finished Goods", "Scrap Location", "In Transit"]:
+            self.assertIn(expected, names)
+        # No location escaped to another site.
+        self.assertEqual(Location.objects.filter(tenant=self.t).exclude(site__name="Main Site").count(), 0)
+
+    def test_bins_created_under_locations(self):
+        from core.models import Bin
+        codes = set(Bin.objects.filter(tenant=self.t).values_list("code", flat=True))
+        for c in ["RMS-RACK-A-01", "ESD-ZENER-A", "PCB-RACK-01", "FG-RACK-01", "QTN-01"]:
+            self.assertIn(c, codes)
+        esd = Bin.objects.get(tenant=self.t, code="ESD-ZENER-A")
+        self.assertEqual(esd.location.name, "ESD Component Store")
+
+    def test_uoms_and_conversions_created(self):
+        from core.models import UnitOfMeasure, UOMConversion
+        codes = set(UnitOfMeasure.objects.filter(tenant=self.t).values_list("code", flat=True))
+        for c in ["EA", "PCS", "PACK", "REEL", "TRAY", "BAG"]:
+            self.assertIn(c, codes)
+        conv = UOMConversion.objects.get(tenant=self.t, from_uom__code="REEL", to_uom__code="EA")
+        self.assertEqual(conv.multiplier, Decimal("5000"))
+
+    def test_categories_created(self):
+        from core.models import ProductCategory
+        names = set(ProductCategory.objects.filter(tenant=self.t).values_list("name", flat=True))
+        for c in ["PCB Assemblies", "Consumables", "Packaging Materials",
+                  "Tools and Fixtures", "Quality Inspection Items", "Scrap and Rework"]:
+            self.assertIn(c, names)
+
+    def test_bom_products_not_duplicated(self):
+        for sku in ["VGS-PCB-ASSY-001", "RES-820K-025W-1-TH", "ZD-2V7-DO41-2",
+                    "ZD-2V4-DO41-2", "PCB-1P6MM-VGS", "LED-5MM-WHITE-NSPW500DS"]:
+            self.assertEqual(Product.objects.filter(tenant=self.t, sku=sku).count(), 1)
+
+    def test_supportive_products_created(self):
+        for sku in ["SOLDER-WIRE-LEADFREE-0P8MM", "FLUX-NOCLEAN-100ML", "IPA-CLEANER-500ML",
+                    "ESD-BAG-PCB-100X150", "CARTON-VGS-PCB-50",
+                    "FIXTURE-VGS-PCB-TEST-001", "QC-CHECKLIST-VGS-PCB"]:
+            self.assertTrue(Product.objects.filter(tenant=self.t, sku=sku).exists(), sku)
+        # Lot/expiry tracking metadata applied where specified.
+        flux = Product.objects.get(tenant=self.t, sku="FLUX-NOCLEAN-100ML")
+        self.assertTrue(flux.track_lots and flux.track_expiry)
+        fixture = Product.objects.get(tenant=self.t, sku="FIXTURE-VGS-PCB-TEST-001")
+        self.assertTrue(fixture.track_serial)
+
+    def test_suppliers_created_and_linked(self):
+        from core.models import Supplier
+        for name in ["Vishay Components Supplier", "LED Components Supplier",
+                     "PCB Fabrication Supplier", "Local Electronics Supplier", "Packaging Supplier"]:
+            self.assertTrue(Supplier.objects.filter(tenant=self.t, name=name).exists(), name)
+        led = Product.objects.get(tenant=self.t, sku="LED-5MM-WHITE-NSPW500DS")
+        self.assertEqual(led.preferred_supplier.name, "LED Components Supplier")
+        self.assertTrue(led.track_lots)   # lot tracking applied to LEDs
+
+    def test_customer_created(self):
+        from core.models import Customer
+        self.assertTrue(Customer.objects.filter(tenant=self.t, name="VGS Demo Customer").exists())
+
+    def test_replenishment_policies_under_main_site(self):
+        from core.models import ReplenishmentPolicy
+        pol = ReplenishmentPolicy.objects.get(
+            tenant=self.t, product__sku="ZD-2V7-DO41-2")
+        self.assertEqual(pol.location.site.name, "Main Site")
+        self.assertEqual(pol.location.name, "ESD Component Store")
+        self.assertEqual(pol.min_stock, Decimal("1000"))
+        self.assertEqual(pol.max_stock, Decimal("6000"))
+        self.assertEqual(pol.reorder_point, Decimal("2000"))
+        self.assertEqual(ReplenishmentPolicy.objects.filter(tenant=self.t).count(), 6)
+
+    def test_bom_intact_with_placements_and_no_r1(self):
+        from core.models import BillOfMaterials, BillOfMaterialsLinePlacement
+        bom = BillOfMaterials.objects.get(tenant=self.t, product__sku="VGS-PCB-ASSY-001")
+        self.assertEqual(bom.lines.count(), 5)
+        self.assertEqual(
+            BillOfMaterialsLinePlacement.objects.filter(bom_line__bom=bom).count(), 28)
+        self.assertFalse(Product.objects.filter(tenant=self.t, sku="R1").exists())
+
+    def test_no_opening_stock_or_postings_by_default(self):
+        from core.models import InventoryMovement, JournalEntry
+        self.assertEqual(
+            InventoryMovement.objects.filter(tenant=self.t, ref_type="OPENING").count(), 0)
+        # No GL was posted by this master-data seed.
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.t).count(), 0)
+
+    def test_admin_gets_access(self):
+        from django.core.management import call_command
+        from core.models import OrgMembership
+        su = User.objects.create_superuser("vgs_su", "vgs@x.com", "pw")
+        call_command("seed_vgs_inventory_lifecycle")   # idempotent re-run grants access
+        self.assertTrue(OrgMembership.objects.filter(user=su, tenant=self.t, role="ADMIN").exists())
+
+    def test_idempotent_rerun(self):
+        from django.core.management import call_command
+        from core.models import Location, Bin, ReplenishmentPolicy, Supplier
+        before = (Location.objects.filter(tenant=self.t).count(),
+                  Bin.objects.filter(tenant=self.t).count(),
+                  ReplenishmentPolicy.objects.filter(tenant=self.t).count(),
+                  Supplier.objects.filter(tenant=self.t).count(),
+                  Product.objects.filter(tenant=self.t).count())
+        call_command("seed_vgs_inventory_lifecycle")
+        after = (Location.objects.filter(tenant=self.t).count(),
+                 Bin.objects.filter(tenant=self.t).count(),
+                 ReplenishmentPolicy.objects.filter(tenant=self.t).count(),
+                 Supplier.objects.filter(tenant=self.t).count(),
+                 Product.objects.filter(tenant=self.t).count())
+        self.assertEqual(before, after)
+
+    def test_opening_stock_flag_uses_movement_service_no_gl(self):
+        from django.core.management import call_command
+        from core.models import InventoryMovement, InventoryBalance, JournalEntry
+        gl_before = JournalEntry.objects.filter(tenant=self.t).count()
+        call_command("seed_vgs_inventory_lifecycle", with_opening_stock=True)
+        opening = InventoryMovement.objects.filter(tenant=self.t, ref_type="OPENING")
+        self.assertTrue(opening.exists())
+        # Stock landed on the subledger...
+        zener = InventoryBalance.objects.filter(
+            tenant=self.t, product__sku="ZD-2V7-DO41-2").first()
+        self.assertIsNotNone(zener)
+        self.assertEqual(zener.on_hand, Decimal("6000"))
+        # ...but no GL was posted by opening stock.
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.t).count(), gl_before)
+        # And it's idempotent.
+        n = opening.count()
+        call_command("seed_vgs_inventory_lifecycle", with_opening_stock=True)
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.t, ref_type="OPENING").count(), n)
+
+    def test_no_migrations_created(self):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command("makemigrations", "--check", "--dry-run", stdout=StringIO(), stderr=StringIO())
+
+
 class GlobalSearchAndNavTests(TestCase):
     """Permission-aware global search + grouped/collapsible hamburger menu, all
     driven from the navigation registry in core.roles."""
