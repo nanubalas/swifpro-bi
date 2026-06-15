@@ -919,6 +919,10 @@ class PurchaseRequisitionLine(models.Model):
     quantity = models.DecimalField(max_digits=12, decimal_places=2)
     estimated_unit_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     notes = models.CharField(max_length=255, blank=True, null=True)
+    # Traceability back to the MRP planned order this line was converted from
+    # (additive; null for hand-entered requisitions).
+    mrp_planned_order = models.ForeignKey("MRPPlannedOrder", on_delete=models.SET_NULL,
+                                          null=True, blank=True, related_name="requisition_lines")
 
     @property
     def estimated_total(self):
@@ -2928,10 +2932,16 @@ class MRPPlannedOrder(models.Model):
     created_transfer_order = models.ForeignKey("InventoryTransfer", on_delete=models.SET_NULL,
                                                null=True, blank=True, related_name="mrp_planned_orders")
     created_work_order_ref = models.CharField(max_length=50, blank=True)
+    created_work_order = models.ForeignKey("WorkOrder", on_delete=models.SET_NULL,
+                                           null=True, blank=True, related_name="mrp_planned_orders")
 
     created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="mrp_planned_orders")
     created_at = models.DateTimeField(default=timezone.now)
+    # Conversion audit (Phase 5)
+    converted_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="mrp_planned_orders_converted")
+    converted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ("tenant", "planned_order_number")
@@ -3042,3 +3052,63 @@ class MRPException(models.Model):
 
     def __str__(self):
         return f"{self.exception_code} ({self.severity})"
+
+
+# ===========================================================================
+# Work Orders - Phase 5 (planning level only).
+#
+# Minimal manufacturing planning document so MAKE planned orders can convert
+# into a real, trackable work order with its material requirements. This phase
+# is planning ONLY: no material issue, reservation, WIP, completion, or GL.
+# Reuses Product / Site / BillOfMaterialsLine / MRPPlannedOrder / MRPDemand.
+# ===========================================================================
+
+
+class WorkOrder(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = "PLANNED", "Planned"
+        FIRM = "FIRM", "Firm"
+        RELEASED = "RELEASED", "Released"
+        CANCELLED = "CANCELLED", "Cancelled"
+        CLOSED = "CLOSED", "Closed"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="work_orders")
+    work_order_number = models.CharField(max_length=40)
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="work_orders")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="work_orders")
+    quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PLANNED)
+    required_date = models.DateField(null=True, blank=True)
+    planned_start_date = models.DateField(null=True, blank=True)
+    planned_end_date = models.DateField(null=True, blank=True)
+    source_mrp_planned_order = models.ForeignKey("MRPPlannedOrder", on_delete=models.SET_NULL,
+                                                 null=True, blank=True, related_name="work_orders")
+    created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = ("tenant", "work_order_number")
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["tenant", "status"])]
+
+    def __str__(self):
+        return f"{self.work_order_number} ({self.product.sku} x {self.quantity})"
+
+
+class WorkOrderMaterial(models.Model):
+    work_order = models.ForeignKey(WorkOrder, on_delete=models.CASCADE, related_name="materials")
+    component = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="work_order_materials")
+    required_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, null=True, blank=True)
+    required_date = models.DateField(null=True, blank=True)
+    bom_line = models.ForeignKey(BillOfMaterialsLine, on_delete=models.SET_NULL, null=True, blank=True)
+    source_mrp_demand = models.ForeignKey(MRPDemand, on_delete=models.SET_NULL, null=True, blank=True,
+                                          related_name="work_order_materials")
+    notes = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.component.sku} x {self.required_quantity}"
