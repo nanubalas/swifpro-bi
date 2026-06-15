@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ run.run_number }} - MRP Run{% endblock %}
+{% block back_url %}{% url 'mrp_run_list' %}{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-cpu me-2"></i>{{ run.run_number }}</h2>
+    <div class="text-muted">{{ run.get_run_type_display }} &middot; {{ run.site_scope.name|default:'All sites' }}</div>
+  </div>
+  <span class="badge text-bg-light align-self-center">{{ run.get_status_display }}</span>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card h-100"><div class="card-body">
+      <h5 class="fw-semibold mb-3">Parameters</h5>
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-muted">Planning window</dt><dd class="col-7">{{ run.planning_start_date }} &rarr; {{ run.planning_end_date|default:'-' }}</dd>
+        <dt class="col-5 text-muted">Forecast version</dt><dd class="col-7">{{ run.forecast_version|default:'-' }}</dd>
+        <dt class="col-5 text-muted">Sales orders</dt><dd class="col-7">{{ run.include_sales_orders|yesno:"Included,Excluded" }}</dd>
+        <dt class="col-5 text-muted">Forecast</dt><dd class="col-7">{{ run.include_forecast|yesno:"Included,Excluded" }}</dd>
+        <dt class="col-5 text-muted">Safety stock</dt><dd class="col-7">{{ run.include_safety_stock|yesno:"Included,Excluded" }}</dd>
+        <dt class="col-5 text-muted">Transfers</dt><dd class="col-7">{{ run.include_transfers|yesno:"Included,Excluded" }}</dd>
+        <dt class="col-5 text-muted">Started by</dt><dd class="col-7">{% if run.started_by %}{{ run.started_by.get_full_name|default:run.started_by.username }}{% else %}-{% endif %}</dd>
+        <dt class="col-5 text-muted">Created</dt><dd class="col-7">{{ run.created_at|date:"d M Y H:i" }}</dd>
+      </dl>
+      {% if run.notes %}<hr><div class="small">{{ run.notes|linebreaksbr }}</div>{% endif %}
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100"><div class="card-body">
+      <h5 class="fw-semibold mb-3">Results</h5>
+      <div class="row text-center g-3">
+        <div class="col-6"><div class="border rounded p-3"><div class="h3 mb-0">{{ counts.demands }}</div><div class="small text-muted">Demand lines</div></div></div>
+        <div class="col-6"><div class="border rounded p-3"><div class="h3 mb-0">{{ counts.supplies }}</div><div class="small text-muted">Supply lines</div></div></div>
+        <div class="col-6"><div class="border rounded p-3"><div class="h3 mb-0">{{ counts.planned_orders }}</div><div class="small text-muted">Planned orders</div></div></div>
+        <div class="col-6"><div class="border rounded p-3"><div class="h3 mb-0">{{ counts.exceptions }}</div><div class="small text-muted">Exceptions</div></div></div>
+      </div>
+      <div class="alert alert-info mt-3 mb-0 small">
+        <i class="bi bi-info-circle me-1"></i> The MRP planning engine (demand/supply collection, net requirements, planned orders, pegging and exceptions) is delivered in a later phase. This run currently holds its parameters only.
+      </div>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}New MRP Run - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'mrp_run_list' %}{% endblock %}
+{% block body %}
+<div class="mb-4">
+  <h2 class="fw-bold mb-1">New MRP Run</h2>
+  <div class="text-muted">Set the planning parameters. The run is created in Draft; the planning engine runs in a later phase.</div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="card mb-3"><div class="card-body p-4">
+    <div class="row g-3">
+      {% for f in form %}{% if f.name in "site_scope,run_type,planning_start_date,planning_end_date" %}
+      <div class="col-md-6">
+        <label class="form-label">{{ f.label }}</label>{{ f }}
+        {% if f.help_text %}<div class="form-text">{{ f.help_text }}</div>{% endif %}
+        {% for e in f.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+      {% endif %}{% endfor %}
+    </div>
+    <div class="row g-3 mt-1">
+      {% for f in form %}{% if f.name in "include_sales_orders,include_forecast,include_safety_stock,include_transfers" %}
+      <div class="col-md-3"><div class="form-check">{{ f }} <label class="form-check-label">{{ f.label }}</label></div></div>
+      {% endif %}{% endfor %}
+    </div>
+    <div class="row g-3 mt-1">
+      <div class="col-12"><label class="form-label">{{ form.notes.label }}</label>{{ form.notes }}</div>
+    </div>
+  </div></div>
+  <div class="d-flex justify-content-end gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'mrp_run_list' %}">Cancel</a>
+    <button class="btn btn-primary" type="submit">Create run</button>
+  </div>
+</form>
+
+<script>
+  document.querySelectorAll("form select").forEach(el => el.classList.add("form-select"));
+  document.querySelectorAll("form input, form textarea").forEach(el => {
+    if (el.type === "checkbox") el.classList.add("form-check-input");
+    else if (el.type !== "hidden") el.classList.add("form-control");
+  });
+</script>
+{% endblock %}

@@ -2638,3 +2638,379 @@ class NotificationPreference(models.Model):
 
     def __str__(self):
         return f"{self.user} {self.category} (app={self.in_app}, email={self.email})"
+
+
+# ===========================================================================
+# MRP (Material Requirements Planning) - Phase 1 foundation.
+#
+# These models are purely additive: they store planning master-data and the
+# results of an MRP run (demand, supply, suggested planned orders, pegging and
+# exceptions). Nothing here touches the inventory ledger, costing, GL, or any
+# existing posting workflow. The engine that populates them arrives in Phase 2+.
+#
+# Reuses existing entities throughout: Product, Site, Supplier, Tenant, User,
+# PurchaseRequisition / PurchaseOrder / InventoryTransfer (conversion targets).
+# ===========================================================================
+
+
+class ItemSitePlanning(models.Model):
+    """Per-item, per-site planning profile - the MRP master-data record that
+    tells the engine how to plan a product at a given site (source, lot sizing,
+    safety stock, lead time, planner/buyer, etc.).
+
+    This is intentionally separate from ReplenishmentPolicy (which is keyed by
+    location and drives the existing replenishment screen). ItemSitePlanning is
+    the MRP source of truth; defaults can be seeded from a ReplenishmentPolicy
+    but the two are not coupled, so existing replenishment behaviour is untouched.
+    """
+    class SourceType(models.TextChoices):
+        BUY = "BUY", "Buy (purchase)"
+        MAKE = "MAKE", "Make (manufacture)"
+        TRANSFER = "TRANSFER", "Transfer (from another site)"
+        SUBCONTRACT = "SUBCONTRACT", "Subcontract"
+        PHANTOM = "PHANTOM", "Phantom (blow-through)"
+
+    class LotSizing(models.TextChoices):
+        LOT_FOR_LOT = "LOT_FOR_LOT", "Lot for lot"
+        FIXED_QTY = "FIXED_QTY", "Fixed quantity"
+        MIN_MAX = "MIN_MAX", "Min / Max"
+        PERIOD_ORDER_QTY = "PERIOD_ORDER_QTY", "Period order quantity"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="item_site_planning")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="planning_profiles")
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name="item_planning")
+
+    source_type = models.CharField(max_length=12, choices=SourceType.choices, default=SourceType.BUY)
+    default_supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True,
+                                         related_name="planning_profiles")
+    default_transfer_from_site = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True,
+                                                   related_name="planning_transfer_source_for")
+    default_manufacturing_site = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True,
+                                                   related_name="planning_manufacturing_for")
+
+    safety_stock_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    min_order_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    max_order_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"),
+                                        help_text="0 = no maximum")
+    order_multiple = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"),
+                                         help_text="Round order up to a multiple of this; 0 = none")
+    fixed_order_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"),
+                                          help_text="Used when lot sizing = Fixed quantity")
+    period_days = models.PositiveSmallIntegerField(default=0,
+                                                   help_text="Bucket size for Period order quantity")
+
+    lead_time_days = models.PositiveSmallIntegerField(default=0)
+    planning_horizon_days = models.PositiveSmallIntegerField(default=90)
+    time_fence_days = models.PositiveSmallIntegerField(default=0,
+                                                       help_text="No automatic reschedule/cancel inside this fence")
+    lot_sizing_method = models.CharField(max_length=20, choices=LotSizing.choices, default=LotSizing.LOT_FOR_LOT)
+    yield_percent = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("100.00"))
+    scrap_percent = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("0.00"))
+
+    planner = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name="mrp_planning_as_planner")
+    buyer = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                              related_name="mrp_planning_as_buyer")
+
+    mrp_enabled = models.BooleanField(default=True)
+    include_sales_orders = models.BooleanField(default=True)
+    include_forecast = models.BooleanField(default=False)
+    include_safety_stock = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("tenant", "product", "site")
+        ordering = ["product__sku", "site__name"]
+        indexes = [models.Index(fields=["tenant", "site", "mrp_enabled"])]
+
+    def __str__(self):
+        return f"{self.product.sku} @ {self.site.name} ({self.source_type})"
+
+
+class MRPRun(models.Model):
+    """A single MRP planning run: its parameters, status and lifecycle. Demand,
+    supply, planned orders, pegging and exceptions all hang off a run."""
+    class RunType(models.TextChoices):
+        FULL = "FULL", "Full regeneration"
+        NET_CHANGE = "NET_CHANGE", "Net change"
+        SIMULATION = "SIMULATION", "Simulation"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        COMPLETED = "COMPLETED", "Completed"
+        COMPLETED_WITH_EXCEPTIONS = "COMPLETED_WITH_EXCEPTIONS", "Completed with exceptions"
+        REVIEWED = "REVIEWED", "Reviewed"
+        APPROVED = "APPROVED", "Approved"
+        CLOSED = "CLOSED", "Closed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="mrp_runs")
+    run_number = models.CharField(max_length=40)
+    site_scope = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="mrp_runs", help_text="Blank = all sites")
+    run_type = models.CharField(max_length=12, choices=RunType.choices, default=RunType.FULL)
+    forecast_version = models.CharField(max_length=60, blank=True)
+
+    planning_start_date = models.DateField(default=timezone.localdate)
+    planning_end_date = models.DateField(null=True, blank=True)
+
+    include_sales_orders = models.BooleanField(default=True)
+    include_forecast = models.BooleanField(default=False)
+    include_safety_stock = models.BooleanField(default=True)
+    include_transfers = models.BooleanField(default=True)
+
+    status = models.CharField(max_length=28, choices=Status.choices, default=Status.DRAFT)
+    started_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="mrp_runs_started")
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ("tenant", "run_number")
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["tenant", "status"])]
+
+    def __str__(self):
+        return f"{self.run_number} ({self.status})"
+
+
+class MRPDemand(models.Model):
+    """One demand line captured by a run: where the need comes from, how much,
+    and when it is required."""
+    class DemandType(models.TextChoices):
+        SALES_ORDER = "SALES_ORDER", "Sales order"
+        FORECAST = "FORECAST", "Forecast"
+        SAFETY_STOCK = "SAFETY_STOCK", "Safety stock"
+        WORK_ORDER_COMPONENT = "WORK_ORDER_COMPONENT", "Work order component"
+        TRANSFER_REQUEST = "TRANSFER_REQUEST", "Transfer request"
+        SERVICE = "SERVICE", "Service / repair"
+
+    mrp_run = models.ForeignKey(MRPRun, on_delete=models.CASCADE, related_name="demands")
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="mrp_demands")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="mrp_demands")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="mrp_demands")
+
+    demand_type = models.CharField(max_length=24, choices=DemandType.choices)
+    source_document_type = models.CharField(max_length=50, blank=True)
+    source_document_id = models.CharField(max_length=100, blank=True)
+    source_line_id = models.CharField(max_length=100, blank=True)
+
+    required_date = models.DateField()
+    quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    consumed_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    open_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    priority = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["product__sku", "required_date"]
+        indexes = [
+            models.Index(fields=["mrp_run", "product", "site"]),
+            models.Index(fields=["mrp_run", "required_date"]),
+        ]
+
+    def __str__(self):
+        return f"{self.product.sku} {self.demand_type} {self.quantity} @ {self.required_date}"
+
+
+class MRPSupply(models.Model):
+    """One supply line considered by a run: on-hand, open POs/PRs, work orders,
+    transfers, in-transit, and previously-generated planned orders."""
+    class SupplyType(models.TextChoices):
+        ON_HAND = "ON_HAND", "On hand"
+        PURCHASE_ORDER = "PURCHASE_ORDER", "Open purchase order"
+        PURCHASE_REQUISITION = "PURCHASE_REQUISITION", "Open purchase requisition"
+        WORK_ORDER = "WORK_ORDER", "Open work order"
+        TRANSFER_ORDER = "TRANSFER_ORDER", "Open transfer order"
+        IN_TRANSIT = "IN_TRANSIT", "In transit"
+        PLANNED_ORDER = "PLANNED_ORDER", "Planned order"
+
+    mrp_run = models.ForeignKey(MRPRun, on_delete=models.CASCADE, related_name="supplies")
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="mrp_supplies")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="mrp_supplies")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="mrp_supplies")
+
+    supply_type = models.CharField(max_length=24, choices=SupplyType.choices)
+    source_document_type = models.CharField(max_length=50, blank=True)
+    source_document_id = models.CharField(max_length=100, blank=True)
+    source_line_id = models.CharField(max_length=100, blank=True)
+
+    receipt_date = models.DateField(null=True, blank=True)
+    quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    available_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    class Meta:
+        ordering = ["product__sku", "receipt_date"]
+        indexes = [
+            models.Index(fields=["mrp_run", "product", "site"]),
+            models.Index(fields=["mrp_run", "receipt_date"]),
+        ]
+
+    def __str__(self):
+        return f"{self.product.sku} {self.supply_type} {self.quantity}"
+
+
+class MRPPlannedOrder(models.Model):
+    """A suggested order the planner can review, firm and convert into a real
+    purchase requisition / purchase order / work order / transfer."""
+    class SourceType(models.TextChoices):
+        BUY = "BUY", "Buy"
+        MAKE = "MAKE", "Make"
+        TRANSFER = "TRANSFER", "Transfer"
+        SUBCONTRACT = "SUBCONTRACT", "Subcontract"
+
+    class Status(models.TextChoices):
+        SUGGESTED = "SUGGESTED", "Suggested"
+        REVIEWED = "REVIEWED", "Reviewed"
+        FIRMED = "FIRMED", "Firmed"
+        CONVERTED = "CONVERTED", "Converted"
+        IGNORED = "IGNORED", "Ignored"
+        CANCELLED = "CANCELLED", "Cancelled"
+        EXPIRED = "EXPIRED", "Expired"
+
+    class ActionType(models.TextChoices):
+        CREATE = "CREATE", "Create"
+        RESCHEDULE_IN = "RESCHEDULE_IN", "Reschedule in"
+        RESCHEDULE_OUT = "RESCHEDULE_OUT", "Reschedule out"
+        CANCEL = "CANCEL", "Cancel"
+        EXPEDITE = "EXPEDITE", "Expedite"
+        DEFER = "DEFER", "Defer"
+
+    class ExceptionLevel(models.TextChoices):
+        NONE = "NONE", "None"
+        INFO = "INFO", "Info"
+        WARNING = "WARNING", "Warning"
+        CRITICAL = "CRITICAL", "Critical"
+
+    mrp_run = models.ForeignKey(MRPRun, on_delete=models.CASCADE, related_name="planned_orders")
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="mrp_planned_orders")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="mrp_planned_orders")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="mrp_planned_orders")
+
+    source_type = models.CharField(max_length=12, choices=SourceType.choices, default=SourceType.BUY)
+    planned_order_number = models.CharField(max_length=40)
+    quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    required_date = models.DateField()
+    planned_receipt_date = models.DateField(null=True, blank=True)
+    planned_release_date = models.DateField(null=True, blank=True)
+
+    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="mrp_planned_orders")
+    transfer_from_site = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True,
+                                           related_name="mrp_planned_transfers_out")
+    parent_planned_order = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True,
+                                             related_name="component_orders")
+
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.SUGGESTED)
+    action_type = models.CharField(max_length=16, choices=ActionType.choices, default=ActionType.CREATE)
+    exception_level = models.CharField(max_length=8, choices=ExceptionLevel.choices, default=ExceptionLevel.NONE)
+
+    # Conversion targets. Work-order FK is deferred to Phase 3 (no WorkOrder model
+    # yet); the ref string lets a converted WO be recorded in the meantime.
+    created_purchase_requisition = models.ForeignKey("PurchaseRequisition", on_delete=models.SET_NULL,
+                                                     null=True, blank=True, related_name="mrp_planned_orders")
+    created_purchase_order = models.ForeignKey("PurchaseOrder", on_delete=models.SET_NULL,
+                                               null=True, blank=True, related_name="mrp_planned_orders")
+    created_transfer_order = models.ForeignKey("InventoryTransfer", on_delete=models.SET_NULL,
+                                               null=True, blank=True, related_name="mrp_planned_orders")
+    created_work_order_ref = models.CharField(max_length=50, blank=True)
+
+    created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="mrp_planned_orders")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ("tenant", "planned_order_number")
+        ordering = ["product__sku", "required_date"]
+        indexes = [
+            models.Index(fields=["mrp_run", "status"]),
+            models.Index(fields=["mrp_run", "source_type"]),
+            models.Index(fields=["tenant", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.planned_order_number} {self.source_type} {self.product.sku} {self.quantity}"
+
+
+class MRPPegging(models.Model):
+    """Links a planned order (supply) to the demand it covers, so planners can
+    trace why each suggestion exists."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="mrp_peggings")
+    planned_order = models.ForeignKey(MRPPlannedOrder, on_delete=models.CASCADE, related_name="peggings")
+    demand = models.ForeignKey(MRPDemand, on_delete=models.CASCADE, related_name="peggings")
+    pegged_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    required_date = models.DateField(null=True, blank=True)
+    supply_date = models.DateField(null=True, blank=True)
+    shortage_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    class Meta:
+        ordering = ["id"]
+        indexes = [models.Index(fields=["planned_order"]), models.Index(fields=["demand"])]
+
+    def __str__(self):
+        return f"peg {self.pegged_quantity} ({self.planned_order_id} -> {self.demand_id})"
+
+
+class MRPException(models.Model):
+    """A planner-facing message raised by a run: shortages, missing master-data,
+    reschedule suggestions, etc."""
+    class Code(models.TextChoices):
+        SHORTAGE = "SHORTAGE", "Shortage"
+        PAST_DUE_DEMAND = "PAST_DUE_DEMAND", "Past-due demand"
+        PAST_DUE_SUPPLY = "PAST_DUE_SUPPLY", "Past-due supply"
+        RESCHEDULE_IN = "RESCHEDULE_IN", "Reschedule in"
+        RESCHEDULE_OUT = "RESCHEDULE_OUT", "Reschedule out"
+        CANCEL_SUPPLY = "CANCEL_SUPPLY", "Cancel supply"
+        EXCESS_SUPPLY = "EXCESS_SUPPLY", "Excess supply"
+        BELOW_SAFETY_STOCK = "BELOW_SAFETY_STOCK", "Below safety stock"
+        MISSING_BOM = "MISSING_BOM", "Missing BOM"
+        MISSING_ROUTING = "MISSING_ROUTING", "Missing routing"
+        MISSING_SUPPLIER = "MISSING_SUPPLIER", "Missing supplier"
+        MISSING_LEAD_TIME = "MISSING_LEAD_TIME", "Missing lead time"
+        MISSING_UOM_CONVERSION = "MISSING_UOM_CONVERSION", "Missing UOM conversion"
+        NON_NETTABLE_STOCK = "NON_NETTABLE_STOCK", "Non-nettable stock"
+        EXPIRED_LOT = "EXPIRED_LOT", "Expired lot"
+        CAPACITY_OVERLOAD = "CAPACITY_OVERLOAD", "Capacity overload"
+
+    class Severity(models.TextChoices):
+        INFO = "INFO", "Info"
+        WARNING = "WARNING", "Warning"
+        CRITICAL = "CRITICAL", "Critical"
+
+    mrp_run = models.ForeignKey(MRPRun, on_delete=models.CASCADE, related_name="exceptions")
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="mrp_exceptions")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, null=True, blank=True,
+                                related_name="mrp_exceptions")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True, blank=True, related_name="mrp_exceptions")
+    planned_order = models.ForeignKey(MRPPlannedOrder, on_delete=models.SET_NULL, null=True, blank=True,
+                                      related_name="exceptions")
+
+    exception_code = models.CharField(max_length=24, choices=Code.choices)
+    severity = models.CharField(max_length=8, choices=Severity.choices, default=Severity.WARNING)
+    message = models.TextField(blank=True)
+    recommended_action = models.CharField(max_length=255, blank=True)
+    source_document_type = models.CharField(max_length=50, blank=True)
+    source_document_id = models.CharField(max_length=100, blank=True)
+
+    is_resolved = models.BooleanField(default=False)
+    resolved_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="mrp_exceptions_resolved")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["severity", "product__sku"]
+        indexes = [
+            models.Index(fields=["mrp_run", "severity"]),
+            models.Index(fields=["mrp_run", "exception_code"]),
+            models.Index(fields=["mrp_run", "is_resolved"]),
+        ]
+
+    def __str__(self):
+        return f"{self.exception_code} ({self.severity})"

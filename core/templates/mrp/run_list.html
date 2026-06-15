@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}MRP Runs - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'dashboard' %}{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-cpu me-2"></i>MRP Runs</h2>
+    <div class="text-muted">Material requirements planning runs and their results.</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'mrp_run_create' %}"><i class="bi bi-plus-lg me-1"></i> New run</a>
+</div>
+
+<div class="card"><div class="card-body p-0">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr>
+      <th>Run</th><th>Type</th><th>Scope</th><th>Horizon</th><th>Status</th><th>Started by</th><th>Created</th>
+    </tr></thead>
+    <tbody>
+      {% for r in runs %}
+      <tr style="cursor:pointer" onclick="window.location='{% url 'mrp_run_detail' r.id %}'">
+        <td class="fw-semibold">{{ r.run_number }}</td>
+        <td class="small">{{ r.get_run_type_display }}</td>
+        <td class="small">{{ r.site_scope.name|default:'All sites' }}</td>
+        <td class="small">{{ r.planning_start_date }} &rarr; {{ r.planning_end_date|default:'-' }}</td>
+        <td><span class="badge text-bg-light">{{ r.get_status_display }}</span></td>
+        <td class="small">{% if r.started_by %}{{ r.started_by.get_full_name|default:r.started_by.username }}{% else %}-{% endif %}</td>
+        <td class="small text-muted">{{ r.created_at|date:"d M Y H:i" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="text-center text-muted py-5">No MRP runs yet. Create one to set up planning parameters.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

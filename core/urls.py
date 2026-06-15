@@ -339,4 +339,12 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("notifications/read-all/", views.notification_mark_all_read, name="notification_mark_all_read"),
     path("notifications/preferences/", views.notification_preferences, name="notification_preferences"),
     path("email-log/", views.email_log, name="email_log"),
+
+    # MRP (Material Requirements Planning) - Phase 1
+    path("mrp/item-planning/", views.item_planning_list, name="item_planning_list"),
+    path("mrp/item-planning/new/", views.item_planning_create, name="item_planning_create"),
+    path("mrp/item-planning/<int:profile_id>/edit/", views.item_planning_edit, name="item_planning_edit"),
+    path("mrp/runs/", views.mrp_run_list, name="mrp_run_list"),
+    path("mrp/runs/new/", views.mrp_run_create, name="mrp_run_create"),
+    path("mrp/runs/<int:run_id>/", views.mrp_run_detail, name="mrp_run_detail"),
 ]
