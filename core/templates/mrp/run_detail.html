@@ -90,7 +90,7 @@
       <div class="mrp-pane" id="mrp-pane-planned" hidden>
         <h5 class="fw-semibold mb-3">Planned Orders</h5>
         <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
-          <th>Order</th><th>Item</th><th>Site</th><th>Source</th><th class="text-end">Qty</th><th>Required</th><th>Release</th><th>Supplier / From</th><th>Status</th><th>Exception</th></tr></thead><tbody>
+          <th>Order</th><th>Item</th><th>Site</th><th>Source</th><th class="text-end">Qty</th><th>Required</th><th>Release</th><th>Supplier / From</th><th>Status</th><th>Exception</th><th>Actions / Document</th></tr></thead><tbody>
           {% for p in planned_orders %}<tr>
             <td class="small">{{ p.planned_order_number }}</td>
             <td class="fw-semibold">{{ p.product.sku }}</td><td class="small">{{ p.site.name }}</td>
@@ -100,7 +100,32 @@
             <td class="small">{% if p.source_type == 'TRANSFER' %}<i class="bi bi-arrow-left-right me-1"></i>from {{ p.transfer_from_site.name|default:'?' }}{% else %}{{ p.supplier.name|default:'-' }}{% endif %}</td>
             <td><span class="badge text-bg-light">{{ p.get_status_display }}</span></td>
             <td class="small {% if p.exception_level != 'NONE' %}mrp-sev-{{ p.exception_level }}{% endif %}">{{ p.get_exception_level_display }}</td>
-          </tr>{% empty %}<tr><td colspan="10" class="text-center text-muted py-4">No planned orders. Run MRP to populate.</td></tr>{% endfor %}
+            <td class="small">
+              {% if p.status == 'CONVERTED' %}
+                {% if p.created_purchase_requisition_id %}<a href="{% url 'requisition_detail' p.created_purchase_requisition_id %}"><i class="bi bi-card-checklist me-1"></i>{{ p.created_purchase_requisition.req_number }}</a>
+                {% elif p.created_purchase_order_id %}<a href="{% url 'po_detail' p.created_purchase_order_id %}"><i class="bi bi-file-earmark-text me-1"></i>{{ p.created_purchase_order.po_number }}</a>
+                {% elif p.created_transfer_order_id %}<a href="{% url 'transfer_detail' p.created_transfer_order_id %}"><i class="bi bi-arrow-left-right me-1"></i>{{ p.created_transfer_order.transfer_number }}</a>
+                {% elif p.created_work_order_id %}<span><i class="bi bi-tools me-1"></i>{{ p.created_work_order.work_order_number }}</span>
+                {% else %}<span class="text-muted">Converted</span>{% endif %}
+              {% elif p.status == 'SUGGESTED' or p.status == 'FIRMED' %}
+                {% if 'manage_mrp' in perms %}
+                <div class="d-flex flex-wrap gap-1">
+                  {% if p.source_type == 'BUY' %}
+                    <form method="post" action="{% url 'mrp_planned_order_convert' p.id %}">{% csrf_token %}<input type="hidden" name="target_type" value="REQUISITION"><button class="btn btn-sm btn-outline-primary" type="submit">→ PR</button></form>
+                    <form method="post" action="{% url 'mrp_planned_order_convert' p.id %}">{% csrf_token %}<input type="hidden" name="target_type" value="PURCHASE_ORDER"><button class="btn btn-sm btn-outline-primary" type="submit">→ PO</button></form>
+                  {% elif p.source_type == 'TRANSFER' %}
+                    <form method="post" action="{% url 'mrp_planned_order_convert' p.id %}">{% csrf_token %}<input type="hidden" name="target_type" value="TRANSFER_ORDER"><button class="btn btn-sm btn-outline-primary" type="submit">→ Transfer</button></form>
+                  {% elif p.source_type == 'MAKE' %}
+                    <form method="post" action="{% url 'mrp_planned_order_convert' p.id %}">{% csrf_token %}<input type="hidden" name="target_type" value="WORK_ORDER"><button class="btn btn-sm btn-outline-primary" type="submit">→ Work Order</button></form>
+                  {% endif %}
+                  {% if p.status == 'SUGGESTED' %}<form method="post" action="{% url 'mrp_planned_order_action' p.id %}">{% csrf_token %}<input type="hidden" name="action" value="firm"><button class="btn btn-sm btn-outline-secondary" type="submit">Firm</button></form>{% endif %}
+                  <form method="post" action="{% url 'mrp_planned_order_action' p.id %}">{% csrf_token %}<input type="hidden" name="action" value="ignore"><button class="btn btn-sm btn-outline-secondary" type="submit">Ignore</button></form>
+                  <form method="post" action="{% url 'mrp_planned_order_action' p.id %}">{% csrf_token %}<input type="hidden" name="action" value="cancel"><button class="btn btn-sm btn-outline-danger" type="submit">Cancel</button></form>
+                </div>
+                {% else %}<span class="text-muted">-</span>{% endif %}
+              {% else %}<span class="text-muted">{{ p.get_status_display }}</span>{% endif %}
+            </td>
+          </tr>{% empty %}<tr><td colspan="11" class="text-center text-muted py-4">No planned orders. Run MRP to populate.</td></tr>{% endfor %}
         </tbody></table>
       </div>
 

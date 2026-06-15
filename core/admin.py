@@ -190,3 +190,23 @@ class MRPExceptionAdmin(admin.ModelAdmin):
 admin.site.register(MRPDemand)
 admin.site.register(MRPSupply)
 admin.site.register(MRPPegging)
+
+
+# --- MRP Phase 5: Work Orders (planning level) ---
+from core.models import WorkOrder, WorkOrderMaterial
+
+
+class WorkOrderMaterialInline(admin.TabularInline):
+    model = WorkOrderMaterial
+    extra = 0
+    raw_id_fields = ("component", "bom_line", "source_mrp_demand")
+
+
+@admin.register(WorkOrder)
+class WorkOrderAdmin(admin.ModelAdmin):
+    list_display = ("work_order_number", "product", "site", "quantity", "status",
+                    "required_date", "created_at")
+    list_filter = ("status",)
+    search_fields = ("work_order_number", "product__sku")
+    raw_id_fields = ("product", "source_mrp_planned_order", "created_by")
+    inlines = [WorkOrderMaterialInline]

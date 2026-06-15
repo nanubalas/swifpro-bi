@@ -348,4 +348,6 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("mrp/runs/new/", views.mrp_run_create, name="mrp_run_create"),
     path("mrp/runs/<int:run_id>/", views.mrp_run_detail, name="mrp_run_detail"),
     path("mrp/runs/<int:run_id>/run/", views.mrp_run_run, name="mrp_run_run"),
+    path("mrp/planned-orders/<int:po_id>/action/", views.mrp_planned_order_action, name="mrp_planned_order_action"),
+    path("mrp/planned-orders/<int:po_id>/convert/", views.mrp_planned_order_convert, name="mrp_planned_order_convert"),
 ]

@@ -7472,7 +7472,10 @@ def mrp_run_detail(request, run_id):
                             id=run_id, tenant=tenant)
     demands = run.demands.select_related("product", "site").order_by("product__sku", "required_date")
     supplies = run.supplies.select_related("product", "site").order_by("product__sku", "receipt_date")
-    planned_orders = (run.planned_orders.select_related("product", "site", "supplier")
+    planned_orders = (run.planned_orders.select_related(
+                          "product", "site", "supplier", "transfer_from_site",
+                          "created_purchase_requisition", "created_purchase_order",
+                          "created_transfer_order", "created_work_order")
                       .order_by("product__sku", "required_date"))
     peggings = (MRPPegging.objects.filter(planned_order__mrp_run=run)
                 .select_related("planned_order", "planned_order__product", "demand")
@@ -7516,3 +7519,51 @@ def mrp_run_run(request, run_id):
     except Exception as e:
         messages.error(request, f"MRP run failed: {e}")
     return redirect("mrp_run_detail", run_id=run.id)
+
+
+# --- MRP planned-order actions + conversion (Phase 5) ---
+
+@login_required
+@role_required(_MRP_WRITE, _MRP_WRITE)
+def mrp_planned_order_action(request, po_id):
+    """Firm / ignore / cancel a planned order (no document created)."""
+    from core.models import MRPPlannedOrder
+    tenant = _get_default_tenant(request)
+    po = get_object_or_404(MRPPlannedOrder, id=po_id, tenant=tenant)
+    action = (request.POST.get("action") or "").lower()
+    if request.method != "POST" or action not in ("firm", "ignore", "cancel"):
+        return redirect("mrp_run_detail", run_id=po.mrp_run_id)
+    if po.status not in ("SUGGESTED", "FIRMED"):
+        messages.info(request, f"Planned order {po.planned_order_number} is {po.get_status_display()} and cannot change.")
+        return redirect("mrp_run_detail", run_id=po.mrp_run_id)
+    new_status = {"firm": "FIRMED", "ignore": "IGNORED", "cancel": "CANCELLED"}[action]
+    po.status = new_status
+    po.save(update_fields=["status"])
+    log_audit(action=f"mrp_planned_order_{action}", request=request, user=request.user, tenant=tenant,
+              detail=po.planned_order_number)
+    messages.success(request, f"Planned order {po.planned_order_number} {new_status.lower()}.")
+    return redirect("mrp_run_detail", run_id=po.mrp_run_id)
+
+
+@login_required
+@role_required(_MRP_WRITE, _MRP_WRITE)
+def mrp_planned_order_convert(request, po_id):
+    """Convert a planned order into a real document (idempotent)."""
+    from core.models import MRPPlannedOrder
+    from core.services.mrp import conversion
+    tenant = _get_default_tenant(request)
+    po = get_object_or_404(MRPPlannedOrder, id=po_id, tenant=tenant)
+    target = (request.POST.get("target_type") or "").upper()
+    if request.method != "POST":
+        return redirect("mrp_run_detail", run_id=po.mrp_run_id)
+    try:
+        doc, created, message = conversion.convert_planned_order(po, target, request.user)
+        if created:
+            log_audit(action="mrp_planned_order_convert", request=request, user=request.user, tenant=tenant,
+                      detail=f"{po.planned_order_number} -> {target}")
+            messages.success(request, message)
+        else:
+            messages.info(request, message)
+    except conversion.ConversionError as e:
+        messages.error(request, str(e))
+    return redirect("mrp_run_detail", run_id=po.mrp_run_id)

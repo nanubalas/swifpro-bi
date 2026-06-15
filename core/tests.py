@@ -11215,3 +11215,276 @@ class MRPPhase4TransferTests(TestCase):
         run_mrp(run, user=self.admin)
         self.assertEqual(run.planned_orders.count(), first_po)
         self.assertEqual(run.demands.count(), first_dem)
+
+
+class MRPPhase5ConversionTests(TestCase):
+    """Phase 5: convert MRP planned orders into PR / PO / Transfer / Work Order."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Customer
+        self.tenant = Tenant.objects.create(name="Conv Co")
+        self.a = Site.objects.create(tenant=self.tenant, name="Leicester")
+        self.b = Site.objects.create(tenant=self.tenant, name="London")
+        self.loc_a = Location.objects.create(tenant=self.tenant, site=self.a, name="A-WH", type="WAREHOUSE")
+        self.loc_b = Location.objects.create(tenant=self.tenant, site=self.b, name="B-WH", type="WAREHOUSE")
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("3.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.admin = User.objects.create_user("convadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.viewer = User.objects.create_user("convsales", password="pw")
+        OrgMembership.objects.create(user=self.viewer, tenant=self.tenant, role="SALES", is_default=True)
+        self.start = datetime.date(2026, 6, 15)
+        self.future = self.start + datetime.timedelta(days=30)
+
+    # --- helpers ---
+    def _profile(self, product, site, source_type="BUY", transfer_from=None, supplier="default", **kw):
+        from core.models import ItemSitePlanning
+        if supplier == "default":
+            supplier = self.supplier if source_type == "BUY" else None
+        defaults = dict(
+            tenant=self.tenant, product=product, site=site, source_type=source_type,
+            default_supplier=supplier, default_transfer_from_site=transfer_from,
+            safety_stock_qty=Decimal("0"), min_order_qty=Decimal("0"), max_order_qty=Decimal("0"),
+            order_multiple=Decimal("0"),
+            lead_time_days={"BUY": 7, "MAKE": 5, "TRANSFER": 2}.get(source_type, 0),
+            lot_sizing_method="LOT_FOR_LOT")
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def _bom(self, parent, component, qty=Decimal("1")):
+        from core.models import BillOfMaterials, BillOfMaterialsLine
+        bom = BillOfMaterials.objects.create(tenant=self.tenant, product=parent, name="Default BOM",
+                                             output_qty=Decimal("1"))
+        BillOfMaterialsLine.objects.create(bom=bom, line_no=10, component=component, qty=qty)
+        return bom
+
+    def _order(self, product, site, qty):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.services.mrp import next_run_number
+        o = CustomerOrder.objects.create(
+            tenant=self.tenant, customer=self.customer, site=site,
+            order_number="SO-" + next_run_number(self.tenant), status="CONFIRMED", order_date=self.future)
+        CustomerOrderLine.objects.create(order=o, product=product, qty=Decimal(qty))
+        return o
+
+    def _run(self):
+        import datetime
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number
+        return MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant), site_scope=None,
+            planning_start_date=self.start, planning_end_date=self.start + datetime.timedelta(days=120))
+
+    def _exec(self):
+        from core.services.mrp import run_mrp
+        return run_mrp(self._run(), user=self.admin)
+
+    def _mk_po(self, source_type="BUY", qty=Decimal("10"), status="SUGGESTED",
+               supplier="default", site=None, transfer_from=None):
+        from core.models import MRPPlannedOrder
+        from core.services.mrp import next_planned_order_number
+        if supplier == "default":
+            supplier = self.supplier if source_type == "BUY" else None
+        run = self._run()
+        return MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.fg, site=site or self.a,
+            source_type=source_type,
+            planned_order_number=next_planned_order_number(self.tenant),
+            quantity=qty, required_date=self.future,
+            planned_receipt_date=self.future, planned_release_date=self.start,
+            supplier=supplier, transfer_from_site=transfer_from, status=status)
+
+    # --- BUY -> PR ---
+    def test_buy_converts_to_requisition(self):
+        from core.models import PurchaseRequisition
+        from core.services.mrp import conversion
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.a, 10)
+        run = self._exec()
+        po = run.planned_orders.get(source_type="BUY")
+        req, created, msg = conversion.convert_buy_to_requisition(po, self.admin)
+        self.assertTrue(created)
+        self.assertEqual(req.status, "DRAFT")
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CONVERTED")
+        self.assertEqual(po.created_purchase_requisition_id, req.id)
+        line = req.lines.first()
+        self.assertEqual(line.mrp_planned_order_id, po.id)   # linked back
+        self.assertEqual(line.quantity, po.quantity)
+
+    def test_buy_requires_supplier(self):
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="BUY", supplier=None)
+        with self.assertRaises(conversion.ConversionError) as cm:
+            conversion.convert_buy_to_requisition(po, self.admin)
+        self.assertEqual(cm.exception.code, conversion.MISSING_SUPPLIER)
+
+    def test_buy_rejects_invalid_quantity(self):
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="BUY", qty=Decimal("0"))
+        with self.assertRaises(conversion.ConversionError) as cm:
+            conversion.convert_buy_to_requisition(po, self.admin)
+        self.assertEqual(cm.exception.code, conversion.INVALID_QUANTITY)
+
+    def test_buy_reconvert_no_duplicate(self):
+        from core.models import PurchaseRequisition
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="BUY")
+        req1, c1, _ = conversion.convert_buy_to_requisition(po, self.admin)
+        po.refresh_from_db()
+        req2, c2, _ = conversion.convert_buy_to_requisition(po, self.admin)
+        self.assertTrue(c1)
+        self.assertFalse(c2)
+        self.assertEqual(req1.id, req2.id)
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_buy_converts_to_purchase_order(self):
+        from core.models import PurchaseOrder
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="BUY")
+        order, created, _ = conversion.convert_buy_to_purchase_order(po, self.admin)
+        self.assertTrue(created)
+        self.assertEqual(order.status, "DRAFT")
+        self.assertEqual(order.lines.first().ordered_qty, po.quantity)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CONVERTED")
+        self.assertEqual(po.created_purchase_order_id, order.id)
+
+    # --- TRANSFER -> Transfer Order ---
+    def test_transfer_converts_to_transfer_order(self):
+        from core.models import InventoryTransfer, InventoryMovement
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="TRANSFER", site=self.b, transfer_from=self.a)
+        t, created, _ = conversion.convert_transfer_to_transfer_order(po, self.admin)
+        self.assertTrue(created)
+        self.assertEqual(t.status, "DRAFT")
+        self.assertEqual(t.from_location.site_id, self.a.id)
+        self.assertEqual(t.to_location.site_id, self.b.id)
+        self.assertEqual(t.lines.first().qty, po.quantity)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CONVERTED")
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.tenant).count(), 0)  # no movement
+
+    def test_transfer_rejects_missing_source(self):
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="TRANSFER", site=self.b, transfer_from=None)
+        with self.assertRaises(conversion.ConversionError) as cm:
+            conversion.convert_transfer_to_transfer_order(po, self.admin)
+        self.assertEqual(cm.exception.code, conversion.MISSING_TRANSFER_SOURCE)
+
+    def test_transfer_rejects_same_site(self):
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="TRANSFER", site=self.b, transfer_from=self.b)
+        with self.assertRaises(conversion.ConversionError) as cm:
+            conversion.convert_transfer_to_transfer_order(po, self.admin)
+        self.assertEqual(cm.exception.code, conversion.INVALID_TRANSFER_SOURCE)
+
+    def test_transfer_reconvert_no_duplicate(self):
+        from core.models import InventoryTransfer
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="TRANSFER", site=self.b, transfer_from=self.a)
+        t1, c1, _ = conversion.convert_transfer_to_transfer_order(po, self.admin)
+        po.refresh_from_db()
+        t2, c2, _ = conversion.convert_transfer_to_transfer_order(po, self.admin)
+        self.assertFalse(c2)
+        self.assertEqual(t1.id, t2.id)
+        self.assertEqual(InventoryTransfer.objects.filter(tenant=self.tenant).count(), 1)
+
+    # --- MAKE -> Work Order ---
+    def test_make_converts_to_work_order(self):
+        from core.models import WorkOrder, InventoryMovement, JournalEntry
+        from core.services.mrp import conversion
+        self._profile(self.fg, self.a, "MAKE")
+        self._profile(self.rm, self.a, "BUY")
+        self._bom(self.fg, self.rm, qty=Decimal("2"))
+        self._order(self.fg, self.a, 10)
+        run = self._exec()
+        po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        wo, created, _ = conversion.convert_make_to_work_order(po, self.admin)
+        self.assertTrue(created)
+        self.assertEqual(wo.status, "PLANNED")
+        self.assertEqual(wo.quantity, po.quantity)
+        # material line from component demand
+        mats = list(wo.materials.all())
+        self.assertEqual(len(mats), 1)
+        self.assertEqual(mats[0].component_id, self.rm.id)
+        self.assertEqual(mats[0].required_quantity, Decimal("20.00"))
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CONVERTED")
+        self.assertEqual(po.created_work_order_id, wo.id)
+        # no execution side-effects
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.tenant).count(), 0)
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.tenant).count(), 0)
+
+    def test_make_reconvert_no_duplicate(self):
+        from core.models import WorkOrder
+        from core.services.mrp import conversion
+        self._profile(self.fg, self.a, "MAKE")
+        self._profile(self.rm, self.a, "BUY")
+        self._bom(self.fg, self.rm)
+        self._order(self.fg, self.a, 10)
+        run = self._exec()
+        po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        wo1, c1, _ = conversion.convert_make_to_work_order(po, self.admin)
+        po.refresh_from_db()
+        wo2, c2, _ = conversion.convert_make_to_work_order(po, self.admin)
+        self.assertFalse(c2)
+        self.assertEqual(wo1.id, wo2.id)
+        self.assertEqual(WorkOrder.objects.filter(tenant=self.tenant).count(), 1)
+
+    # --- status / dispatcher ---
+    def test_non_convertible_status_blocked(self):
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="BUY", status="IGNORED")
+        with self.assertRaises(conversion.ConversionError) as cm:
+            conversion.convert_buy_to_requisition(po, self.admin)
+        self.assertEqual(cm.exception.code, conversion.NOT_CONVERTIBLE)
+
+    def test_dispatcher_routes_target(self):
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="BUY")
+        doc, created, _ = conversion.convert_planned_order(po, conversion.REQUISITION, self.admin)
+        self.assertTrue(created)
+
+    # --- views / permissions / UI ---
+    def test_unauthorised_cannot_convert(self):
+        po = self._mk_po(source_type="BUY")
+        self.client.login(username="convsales", password="pw")
+        resp = self.client.post("/mrp/planned-orders/%d/convert/" % po.id, {"target_type": "REQUISITION"})
+        self.assertEqual(resp.status_code, 403)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "SUGGESTED")
+
+    def test_convert_via_view(self):
+        from core.models import PurchaseRequisition
+        po = self._mk_po(source_type="BUY")
+        self.client.login(username="convadmin", password="pw")
+        resp = self.client.post("/mrp/planned-orders/%d/convert/" % po.id, {"target_type": "REQUISITION"})
+        self.assertEqual(resp.status_code, 302)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CONVERTED")
+        self.assertTrue(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_firm_and_cancel_actions(self):
+        po = self._mk_po(source_type="BUY")
+        self.client.login(username="convadmin", password="pw")
+        self.client.post("/mrp/planned-orders/%d/action/" % po.id, {"action": "firm"})
+        po.refresh_from_db()
+        self.assertEqual(po.status, "FIRMED")
+        # firmed orders are still convertible
+        from core.services.mrp import conversion
+        _, created, _ = conversion.convert_buy_to_requisition(po, self.admin)
+        self.assertTrue(created)
+
+    def test_run_detail_shows_linked_document(self):
+        from core.services.mrp import conversion
+        po = self._mk_po(source_type="BUY")
+        req, _, _ = conversion.convert_buy_to_requisition(po, self.admin)
+        self.client.login(username="convadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/" % po.mrp_run_id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, req.req_number)
