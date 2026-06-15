@@ -10448,3 +10448,233 @@ class MRPPhase1FoundationTests(TestCase):
         sections = [t for t, _ in roles_mod.sidebar_for_role(roles_mod.ADMIN)]
         self.assertIn("Planning", sections)
         self.assertIn(perms_mod.MANAGE_MRP, perms_mod.ROLE_PERMISSIONS[roles_mod.PURCHASING])
+
+
+class MRPEnginePhase2Tests(TestCase):
+    """Phase 2: the BUY-item MRP engine (demand/supply collection, net
+    requirements, lot sizing, lead time, pegging, exceptions, run lifecycle)."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Customer
+        self.tenant = Tenant.objects.create(name="Engine Co")
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.loc = Location.objects.create(tenant=self.tenant, site=self.site, name="WH", type="WAREHOUSE")
+        self.quar = Location.objects.create(tenant=self.tenant, site=self.site, name="QA", type="QUARANTINE")
+        self.product = Product.objects.create(tenant=self.tenant, sku="ENG-1", name="Widget")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.admin = User.objects.create_user("engadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.sales = User.objects.create_user("engsales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+        self.start = datetime.date(2026, 6, 15)
+
+    # --- helpers ---
+    def _profile(self, **kw):
+        from core.models import ItemSitePlanning
+        defaults = dict(
+            tenant=self.tenant, product=self.product, site=self.site,
+            source_type="BUY", default_supplier=self.supplier,
+            safety_stock_qty=Decimal("0"), min_order_qty=Decimal("0"),
+            max_order_qty=Decimal("0"), order_multiple=Decimal("0"),
+            lead_time_days=7, lot_sizing_method="LOT_FOR_LOT",
+        )
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def _run(self, **kw):
+        import datetime
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number
+        defaults = dict(tenant=self.tenant, run_number=next_run_number(self.tenant),
+                        site_scope=self.site, planning_start_date=self.start,
+                        planning_end_date=self.start + datetime.timedelta(days=90))
+        defaults.update(kw)
+        return MRPRun.objects.create(**defaults)
+
+    def _order(self, qty, order_date=None, status="CONFIRMED"):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.services.mrp import next_run_number
+        o = CustomerOrder.objects.create(
+            tenant=self.tenant, customer=self.customer, site=self.site,
+            order_number="SO-" + next_run_number(self.tenant), status=status,
+            order_date=order_date or self.start)
+        CustomerOrderLine.objects.create(order=o, product=self.product, qty=Decimal(qty))
+        return o
+
+    def _po(self, qty, expected_date=None, status="SUBMITTED"):
+        from core.models import PurchaseOrder, PurchaseOrderLine
+        from core.services.mrp import next_run_number
+        po = PurchaseOrder.objects.create(
+            tenant=self.tenant, po_number="PO-" + next_run_number(self.tenant),
+            supplier=self.supplier, site=self.site, status=status, expected_date=expected_date)
+        PurchaseOrderLine.objects.create(po=po, product=self.product, ordered_qty=Decimal(qty),
+                                         unit_cost=Decimal("1.00"))
+        return po
+
+    def _balance(self, qty, location=None):
+        from core.models import InventoryBalance
+        return InventoryBalance.objects.create(
+            tenant=self.tenant, site=self.site, product=self.product,
+            location=location or self.loc, on_hand=Decimal(qty))
+
+    def _exec(self, run=None, **profile_kw):
+        from core.services.mrp import run_mrp
+        if profile_kw:
+            self._profile(**profile_kw)
+        run = run or self._run()
+        return run_mrp(run, user=self.admin)
+
+    def _codes(self, run):
+        return set(run.exceptions.values_list("exception_code", flat=True))
+
+    def _planned(self, run):
+        return list(run.planned_orders.all())
+
+    # --- tests ---
+    def test_run_executes_clean_completed(self):
+        run = self._exec(safety_stock_qty=Decimal("0"))
+        self.assertEqual(run.status, "COMPLETED")
+        self.assertEqual(run.planned_orders.count(), 0)
+        self.assertEqual(run.exceptions.count(), 0)
+        self.assertIsNotNone(run.started_at)
+        self.assertIsNotNone(run.completed_at)
+
+    def test_sales_order_creates_demand(self):
+        self._profile()
+        self._order(20)
+        run = self._exec(run=self._run())
+        d = run.demands.filter(demand_type="SALES_ORDER").first()
+        self.assertIsNotNone(d)
+        self.assertEqual(d.open_quantity, Decimal("20.00"))
+
+    def test_safety_stock_creates_planned_order(self):
+        run = self._exec(safety_stock_qty=Decimal("10"))
+        orders = self._planned(run)
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].quantity, Decimal("10.00"))
+        self.assertEqual(orders[0].source_type, "BUY")
+
+    def test_onhand_reduces_requirement(self):
+        self._balance(10)
+        run = self._exec(safety_stock_qty=Decimal("10"))
+        self.assertEqual(run.planned_orders.count(), 0)
+
+    def test_quarantine_stock_excluded(self):
+        self._balance(10, location=self.quar)
+        run = self._exec(safety_stock_qty=Decimal("10"))
+        self.assertEqual(run.planned_orders.count(), 1)
+        self.assertIn("NON_NETTABLE_STOCK", self._codes(run))
+
+    def test_open_po_reduces_requirement(self):
+        import datetime
+        self._profile(safety_stock_qty=Decimal("0"))
+        self._order(10, order_date=self.start + datetime.timedelta(days=30))
+        self._po(10, expected_date=self.start + datetime.timedelta(days=10))
+        run = self._exec(run=self._run())
+        self.assertEqual(run.planned_orders.count(), 0)
+        self.assertTrue(run.supplies.filter(supply_type="PURCHASE_ORDER").exists())
+
+    def test_moq_applied(self):
+        self._profile(safety_stock_qty=Decimal("0"), min_order_qty=Decimal("20"))
+        self._order(5)
+        run = self._exec(run=self._run())
+        self.assertEqual(self._planned(run)[0].quantity, Decimal("20.00"))
+
+    def test_order_multiple_applied(self):
+        self._profile(safety_stock_qty=Decimal("0"), order_multiple=Decimal("10"))
+        self._order(12)
+        run = self._exec(run=self._run())
+        self.assertEqual(self._planned(run)[0].quantity, Decimal("20.00"))
+
+    def test_lead_time_sets_release_date(self):
+        import datetime
+        self._profile(safety_stock_qty=Decimal("0"), lead_time_days=7)
+        d = self.start + datetime.timedelta(days=30)
+        self._order(10, order_date=d)
+        run = self._exec(run=self._run())
+        po = self._planned(run)[0]
+        self.assertEqual(po.required_date, d)
+        self.assertEqual(po.planned_release_date, d - datetime.timedelta(days=7))
+
+    def test_missing_supplier_creates_exception(self):
+        run = self._exec(safety_stock_qty=Decimal("10"), default_supplier=None)
+        self.assertIn("MISSING_SUPPLIER", self._codes(run))
+        self.assertEqual(run.planned_orders.count(), 1)
+
+    def test_missing_lead_time_creates_exception(self):
+        run = self._exec(safety_stock_qty=Decimal("10"), lead_time_days=0)
+        self.assertIn("MISSING_LEAD_TIME", self._codes(run))
+
+    def test_sales_order_missing_required_date_warning_and_fallback(self):
+        self._profile(safety_stock_qty=Decimal("0"))
+        o = self._order(10)
+        run = self._exec(run=self._run())
+        self.assertIn("SALES_ORDER_REQUIRED_DATE_MISSING", self._codes(run))
+        d = run.demands.get(demand_type="SALES_ORDER")
+        self.assertEqual(d.required_date, o.order_date)
+
+    def test_po_missing_due_date_warning_and_fallback(self):
+        self._profile(safety_stock_qty=Decimal("0"))
+        self._po(5, expected_date=None)
+        run = self._exec(run=self._run())
+        self.assertIn("PURCHASE_ORDER_DUE_DATE_MISSING", self._codes(run))
+        s = run.supplies.get(supply_type="PURCHASE_ORDER")
+        self.assertEqual(s.receipt_date, self.start)
+
+    def test_pegging_links_planned_order_to_demand(self):
+        from core.models import MRPPegging
+        self._profile(safety_stock_qty=Decimal("0"))
+        self._order(10)
+        run = self._exec(run=self._run())
+        po = self._planned(run)[0]
+        peg = MRPPegging.objects.filter(planned_order=po).first()
+        self.assertIsNotNone(peg)
+        self.assertEqual(peg.demand.demand_type, "SALES_ORDER")
+        self.assertEqual(peg.pegged_quantity, Decimal("10.00"))
+
+    def test_unsupported_lot_sizing_falls_back(self):
+        run = self._exec(safety_stock_qty=Decimal("10"), lot_sizing_method="MIN_MAX")
+        self.assertIn("UNSUPPORTED_LOT_SIZING_METHOD", self._codes(run))
+        self.assertEqual(self._planned(run)[0].quantity, Decimal("10.00"))
+
+    def test_completed_with_exceptions_status(self):
+        run = self._exec(safety_stock_qty=Decimal("10"), default_supplier=None)
+        self.assertEqual(run.status, "COMPLETED_WITH_EXCEPTIONS")
+
+    def test_idempotent_rerun(self):
+        from core.services.mrp import run_mrp
+        self._profile(safety_stock_qty=Decimal("10"))
+        run = self._run()
+        run_mrp(run, user=self.admin)
+        first = run.planned_orders.count()
+        run_mrp(run, user=self.admin)
+        self.assertEqual(run.planned_orders.count(), first)
+
+    def test_make_profile_not_planned(self):
+        self._profile(source_type="MAKE", safety_stock_qty=Decimal("10"))
+        run = self._exec(run=self._run())
+        self.assertEqual(run.planned_orders.count(), 0)
+
+    def test_run_via_view_and_permissions(self):
+        self._profile(safety_stock_qty=Decimal("10"))
+        run = self._run()
+        self.client.login(username="engsales", password="pw")
+        self.assertEqual(self.client.post("/mrp/runs/%d/run/" % run.id).status_code, 403)
+        run.refresh_from_db()
+        self.assertEqual(run.status, "DRAFT")
+        self.client.login(username="engadmin", password="pw")
+        resp = self.client.post("/mrp/runs/%d/run/" % run.id)
+        self.assertEqual(resp.status_code, 302)
+        run.refresh_from_db()
+        self.assertIn(run.status, ("COMPLETED", "COMPLETED_WITH_EXCEPTIONS"))
+        self.assertEqual(run.planned_orders.count(), 1)
+
+    def test_management_command_runs(self):
+        from django.core.management import call_command
+        self._profile(safety_stock_qty=Decimal("10"))
+        run = self._run()
+        call_command("run_mrp", "--run-id", str(run.id))
+        run.refresh_from_db()
+        self.assertIn(run.status, ("COMPLETED", "COMPLETED_WITH_EXCEPTIONS"))

@@ -2,44 +2,149 @@
 {% block title %}{{ run.run_number }} - MRP Run{% endblock %}
 {% block back_url %}{% url 'mrp_run_list' %}{% endblock %}
 {% block body %}
+<style>
+  .mrp-left .list-group-item { cursor: pointer; border: 0; border-radius: 8px; }
+  .mrp-left .mrp-nav.active { background: var(--skn-brand-soft); color: var(--skn-brand); font-weight: 650; }
+  @media (min-width: 992px) {
+    .mrp-left { position: sticky; top: 84px; }
+    .mrp-right { max-height: calc(100vh - 200px); overflow: auto; }
+  }
+  .mrp-sev-CRITICAL { color: #b02a37; font-weight: 600; }
+  .mrp-sev-WARNING { color: #997404; font-weight: 600; }
+  .mrp-sev-INFO { color: #0a58ca; }
+</style>
+
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
   <div>
     <h2 class="fw-bold mb-1"><i class="bi bi-cpu me-2"></i>{{ run.run_number }}</h2>
     <div class="text-muted">{{ run.get_run_type_display }} &middot; {{ run.site_scope.name|default:'All sites' }}</div>
   </div>
-  <span class="badge text-bg-light align-self-center">{{ run.get_status_display }}</span>
+  <div class="d-flex gap-2 align-self-center">
+    <span class="badge text-bg-light align-self-center">{{ run.get_status_display }}</span>
+    {% if 'manage_mrp' in perms and can_run %}
+    <form method="post" action="{% url 'mrp_run_run' run.id %}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerHTML='Running...';">
+      {% csrf_token %}
+      <button class="btn btn-primary" type="submit"><i class="bi bi-play-fill me-1"></i> Run MRP</button>
+    </form>
+    {% endif %}
+  </div>
 </div>
 
 <div class="row g-3">
-  <div class="col-lg-6">
-    <div class="card h-100"><div class="card-body">
-      <h5 class="fw-semibold mb-3">Parameters</h5>
-      <dl class="row mb-0 small">
-        <dt class="col-5 text-muted">Planning window</dt><dd class="col-7">{{ run.planning_start_date }} &rarr; {{ run.planning_end_date|default:'-' }}</dd>
-        <dt class="col-5 text-muted">Forecast version</dt><dd class="col-7">{{ run.forecast_version|default:'-' }}</dd>
-        <dt class="col-5 text-muted">Sales orders</dt><dd class="col-7">{{ run.include_sales_orders|yesno:"Included,Excluded" }}</dd>
-        <dt class="col-5 text-muted">Forecast</dt><dd class="col-7">{{ run.include_forecast|yesno:"Included,Excluded" }}</dd>
-        <dt class="col-5 text-muted">Safety stock</dt><dd class="col-7">{{ run.include_safety_stock|yesno:"Included,Excluded" }}</dd>
-        <dt class="col-5 text-muted">Transfers</dt><dd class="col-7">{{ run.include_transfers|yesno:"Included,Excluded" }}</dd>
-        <dt class="col-5 text-muted">Started by</dt><dd class="col-7">{% if run.started_by %}{{ run.started_by.get_full_name|default:run.started_by.username }}{% else %}-{% endif %}</dd>
-        <dt class="col-5 text-muted">Created</dt><dd class="col-7">{{ run.created_at|date:"d M Y H:i" }}</dd>
-      </dl>
-      {% if run.notes %}<hr><div class="small">{{ run.notes|linebreaksbr }}</div>{% endif %}
+  <div class="col-lg-3">
+    <div class="card mrp-left"><div class="list-group list-group-flush p-2">
+      <button type="button" class="mrp-nav list-group-item list-group-item-action active" data-pane="header"><i class="bi bi-card-heading me-2"></i>Header</button>
+      <button type="button" class="mrp-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="demand"><span><i class="bi bi-graph-down-arrow me-2"></i>Demand</span><span class="badge text-bg-light">{{ counts.demands }}</span></button>
+      <button type="button" class="mrp-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="supply"><span><i class="bi bi-box-arrow-in-down me-2"></i>Supply</span><span class="badge text-bg-light">{{ counts.supplies }}</span></button>
+      <button type="button" class="mrp-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="planned"><span><i class="bi bi-clipboard-plus me-2"></i>Planned Orders</span><span class="badge text-bg-light">{{ counts.planned_orders }}</span></button>
+      <button type="button" class="mrp-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="pegging"><span><i class="bi bi-link-45deg me-2"></i>Pegging</span><span class="badge text-bg-light">{{ counts.peggings }}</span></button>
+      <button type="button" class="mrp-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="exceptions"><span><i class="bi bi-exclamation-triangle me-2"></i>Exceptions</span><span class="badge {% if counts.exceptions %}text-bg-warning{% else %}text-bg-light{% endif %}">{{ counts.exceptions }}</span></button>
     </div></div>
   </div>
-  <div class="col-lg-6">
-    <div class="card h-100"><div class="card-body">
-      <h5 class="fw-semibold mb-3">Results</h5>
-      <div class="row text-center g-3">
-        <div class="col-6"><div class="border rounded p-3"><div class="h3 mb-0">{{ counts.demands }}</div><div class="small text-muted">Demand lines</div></div></div>
-        <div class="col-6"><div class="border rounded p-3"><div class="h3 mb-0">{{ counts.supplies }}</div><div class="small text-muted">Supply lines</div></div></div>
-        <div class="col-6"><div class="border rounded p-3"><div class="h3 mb-0">{{ counts.planned_orders }}</div><div class="small text-muted">Planned orders</div></div></div>
-        <div class="col-6"><div class="border rounded p-3"><div class="h3 mb-0">{{ counts.exceptions }}</div><div class="small text-muted">Exceptions</div></div></div>
+
+  <div class="col-lg-9">
+    <div class="card mrp-right"><div class="card-body">
+
+      <div class="mrp-pane" id="mrp-pane-header">
+        <h5 class="fw-semibold mb-3">Header</h5>
+        <dl class="row mb-0 small">
+          <dt class="col-sm-4 text-muted">Status</dt><dd class="col-sm-8">{{ run.get_status_display }}</dd>
+          <dt class="col-sm-4 text-muted">Planning window</dt><dd class="col-sm-8">{{ run.planning_start_date }} &rarr; {{ run.planning_end_date|default:'-' }}</dd>
+          <dt class="col-sm-4 text-muted">Scope</dt><dd class="col-sm-8">{{ run.site_scope.name|default:'All sites' }}</dd>
+          <dt class="col-sm-4 text-muted">Sales orders</dt><dd class="col-sm-8">{{ run.include_sales_orders|yesno:"Included,Excluded" }}</dd>
+          <dt class="col-sm-4 text-muted">Safety stock</dt><dd class="col-sm-8">{{ run.include_safety_stock|yesno:"Included,Excluded" }}</dd>
+          <dt class="col-sm-4 text-muted">Started by</dt><dd class="col-sm-8">{% if run.started_by %}{{ run.started_by.get_full_name|default:run.started_by.username }}{% else %}-{% endif %}</dd>
+          <dt class="col-sm-4 text-muted">Started</dt><dd class="col-sm-8">{{ run.started_at|date:"d M Y H:i"|default:'-' }}</dd>
+          <dt class="col-sm-4 text-muted">Completed</dt><dd class="col-sm-8">{{ run.completed_at|date:"d M Y H:i"|default:'-' }}</dd>
+        </dl>
+        {% if run.notes %}<hr><div class="small">{{ run.notes|linebreaksbr }}</div>{% endif %}
+        <div class="alert alert-info mt-3 mb-0 small"><i class="bi bi-info-circle me-1"></i> Phase 2 plans BUY items only. MAKE/BOM explosion, transfer planning and conversion to real documents arrive in later phases.</div>
       </div>
-      <div class="alert alert-info mt-3 mb-0 small">
-        <i class="bi bi-info-circle me-1"></i> The MRP planning engine (demand/supply collection, net requirements, planned orders, pegging and exceptions) is delivered in a later phase. This run currently holds its parameters only.
+
+      <div class="mrp-pane" id="mrp-pane-demand" hidden>
+        <h5 class="fw-semibold mb-3">Demand</h5>
+        <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+          <th>Item</th><th>Site</th><th>Type</th><th>Source</th><th>Required</th><th class="text-end">Qty</th></tr></thead><tbody>
+          {% for d in demands %}<tr>
+            <td class="fw-semibold">{{ d.product.sku }}</td><td class="small">{{ d.site.name }}</td>
+            <td><span class="badge text-bg-light">{{ d.get_demand_type_display }}</span></td>
+            <td class="small">{{ d.source_document_id|default:'-' }}</td>
+            <td class="small">{{ d.required_date }}</td><td class="text-end">{{ d.open_quantity }}</td>
+          </tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No demand. Run MRP to populate.</td></tr>{% endfor %}
+        </tbody></table>
       </div>
+
+      <div class="mrp-pane" id="mrp-pane-supply" hidden>
+        <h5 class="fw-semibold mb-3">Supply</h5>
+        <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+          <th>Item</th><th>Site</th><th>Type</th><th>Source</th><th>Receipt</th><th class="text-end">Qty</th></tr></thead><tbody>
+          {% for s in supplies %}<tr>
+            <td class="fw-semibold">{{ s.product.sku }}</td><td class="small">{{ s.site.name }}</td>
+            <td><span class="badge text-bg-light">{{ s.get_supply_type_display }}</span></td>
+            <td class="small">{{ s.source_document_id|default:'-' }}</td>
+            <td class="small">{{ s.receipt_date|default:'-' }}</td><td class="text-end">{{ s.available_quantity }}</td>
+          </tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No supply. Run MRP to populate.</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+
+      <div class="mrp-pane" id="mrp-pane-planned" hidden>
+        <h5 class="fw-semibold mb-3">Planned Orders</h5>
+        <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+          <th>Order</th><th>Item</th><th>Site</th><th>Source</th><th class="text-end">Qty</th><th>Required</th><th>Release</th><th>Supplier</th><th>Status</th><th>Exception</th></tr></thead><tbody>
+          {% for p in planned_orders %}<tr>
+            <td class="small">{{ p.planned_order_number }}</td>
+            <td class="fw-semibold">{{ p.product.sku }}</td><td class="small">{{ p.site.name }}</td>
+            <td><span class="badge text-bg-light">{{ p.get_source_type_display }}</span></td>
+            <td class="text-end">{{ p.quantity }}</td>
+            <td class="small">{{ p.required_date }}</td><td class="small">{{ p.planned_release_date|default:'-' }}</td>
+            <td class="small">{{ p.supplier.name|default:'-' }}</td>
+            <td><span class="badge text-bg-light">{{ p.get_status_display }}</span></td>
+            <td class="small {% if p.exception_level != 'NONE' %}mrp-sev-{{ p.exception_level }}{% endif %}">{{ p.get_exception_level_display }}</td>
+          </tr>{% empty %}<tr><td colspan="10" class="text-center text-muted py-4">No planned orders. Run MRP to populate.</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+
+      <div class="mrp-pane" id="mrp-pane-pegging" hidden>
+        <h5 class="fw-semibold mb-3">Pegging</h5>
+        <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+          <th>Planned order</th><th>Item</th><th>Demand</th><th>Required</th><th>Supply date</th><th class="text-end">Pegged</th></tr></thead><tbody>
+          {% for g in peggings %}<tr>
+            <td class="small">{{ g.planned_order.planned_order_number }}</td>
+            <td class="fw-semibold">{{ g.planned_order.product.sku }}</td>
+            <td class="small">{{ g.demand.get_demand_type_display }} {{ g.demand.source_document_id }}</td>
+            <td class="small">{{ g.required_date|default:'-' }}</td><td class="small">{{ g.supply_date|default:'-' }}</td>
+            <td class="text-end">{{ g.pegged_quantity }}</td>
+          </tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No pegging links yet.</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+
+      <div class="mrp-pane" id="mrp-pane-exceptions" hidden>
+        <h5 class="fw-semibold mb-3">Exceptions</h5>
+        <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+          <th>Severity</th><th>Code</th><th>Item</th><th>Message</th><th>Recommended action</th></tr></thead><tbody>
+          {% for e in exceptions %}<tr>
+            <td class="small mrp-sev-{{ e.severity }}">{{ e.get_severity_display }}</td>
+            <td class="small">{{ e.get_exception_code_display }}</td>
+            <td class="small">{{ e.product.sku|default:'-' }}</td>
+            <td class="small">{{ e.message }}</td>
+            <td class="small text-muted">{{ e.recommended_action }}</td>
+          </tr>{% empty %}<tr><td colspan="5" class="text-center text-muted py-4">No exceptions.</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+
     </div></div>
   </div>
 </div>
+
+<script>
+  (function () {
+    var navs = document.querySelectorAll(".mrp-nav");
+    function show(key) {
+      document.querySelectorAll(".mrp-pane").forEach(function (p) { p.hidden = (p.id !== "mrp-pane-" + key); });
+      navs.forEach(function (n) { n.classList.toggle("active", n.getAttribute("data-pane") === key); });
+      var r = document.querySelector(".mrp-right"); if (r) r.scrollTop = 0;
+    }
+    navs.forEach(function (n) { n.addEventListener("click", function () { show(n.getAttribute("data-pane")); }); });
+  })();
+</script>
 {% endblock %}

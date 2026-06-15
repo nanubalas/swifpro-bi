@@ -7458,7 +7458,7 @@ def mrp_run_create(request):
         run.save()
         log_audit(action="mrp_run_create", request=request, user=request.user, tenant=tenant,
                   detail=f"{run.run_number}")
-        messages.success(request, f"MRP run {run.run_number} created (Draft). The planning engine arrives in a later phase.")
+        messages.success(request, f"MRP run {run.run_number} created (Draft). Open it and choose Run MRP to plan.")
         return redirect("mrp_run_detail", run_id=run.id)
     return render(request, "mrp/run_form.html", {"tenant": tenant, "form": form})
 
@@ -7466,14 +7466,53 @@ def mrp_run_create(request):
 @login_required
 @role_required(_MRP_READ)
 def mrp_run_detail(request, run_id):
-    from core.models import MRPRun
+    from core.models import MRPRun, MRPPegging
     tenant = _get_default_tenant(request)
     run = get_object_or_404(MRPRun.objects.select_related("site_scope", "started_by"),
                             id=run_id, tenant=tenant)
+    demands = run.demands.select_related("product", "site").order_by("product__sku", "required_date")
+    supplies = run.supplies.select_related("product", "site").order_by("product__sku", "receipt_date")
+    planned_orders = (run.planned_orders.select_related("product", "site", "supplier")
+                      .order_by("product__sku", "required_date"))
+    peggings = (MRPPegging.objects.filter(planned_order__mrp_run=run)
+                .select_related("planned_order", "planned_order__product", "demand")
+                .order_by("planned_order__product__sku"))
+    exceptions = run.exceptions.select_related("product", "site", "planned_order").order_by("severity")
     counts = {
-        "demands": run.demands.count(),
-        "supplies": run.supplies.count(),
-        "planned_orders": run.planned_orders.count(),
-        "exceptions": run.exceptions.count(),
+        "demands": demands.count(),
+        "supplies": supplies.count(),
+        "planned_orders": planned_orders.count(),
+        "peggings": peggings.count(),
+        "exceptions": exceptions.count(),
     }
-    return render(request, "mrp/run_detail.html", {"tenant": tenant, "run": run, "counts": counts})
+    can_run = run.status not in ("RUNNING", "QUEUED")
+    return render(request, "mrp/run_detail.html", {
+        "tenant": tenant, "run": run, "counts": counts,
+        "demands": demands, "supplies": supplies, "planned_orders": planned_orders,
+        "peggings": peggings, "exceptions": exceptions, "can_run": can_run,
+    })
+
+
+@login_required
+@role_required(_MRP_WRITE, _MRP_WRITE)
+def mrp_run_run(request, run_id):
+    from core.models import MRPRun
+    from core.services.mrp import run_mrp
+    tenant = _get_default_tenant(request)
+    run = get_object_or_404(MRPRun, id=run_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("mrp_run_detail", run_id=run.id)
+    if run.status in ("RUNNING", "QUEUED"):
+        messages.info(request, "This run is already in progress.")
+        return redirect("mrp_run_detail", run_id=run.id)
+    try:
+        run_mrp(run, user=request.user)
+        log_audit(action="mrp_run_execute", request=request, user=request.user, tenant=tenant,
+                  detail=run.run_number)
+        if run.status == "COMPLETED_WITH_EXCEPTIONS":
+            messages.warning(request, f"MRP run {run.run_number} completed with exceptions.")
+        else:
+            messages.success(request, f"MRP run {run.run_number} completed.")
+    except Exception as e:
+        messages.error(request, f"MRP run failed: {e}")
+    return redirect("mrp_run_detail", run_id=run.id)

@@ -347,4 +347,5 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("mrp/runs/", views.mrp_run_list, name="mrp_run_list"),
     path("mrp/runs/new/", views.mrp_run_create, name="mrp_run_create"),
     path("mrp/runs/<int:run_id>/", views.mrp_run_detail, name="mrp_run_detail"),
+    path("mrp/runs/<int:run_id>/run/", views.mrp_run_run, name="mrp_run_run"),
 ]

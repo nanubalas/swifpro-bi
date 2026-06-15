@@ -2974,9 +2974,14 @@ class MRPException(models.Model):
         MISSING_SUPPLIER = "MISSING_SUPPLIER", "Missing supplier"
         MISSING_LEAD_TIME = "MISSING_LEAD_TIME", "Missing lead time"
         MISSING_UOM_CONVERSION = "MISSING_UOM_CONVERSION", "Missing UOM conversion"
-        NON_NETTABLE_STOCK = "NON_NETTABLE_STOCK", "Non-nettable stock"
+        NON_NETTABLE_STOCK = "NON_NETTABLE_STOCK", "Non-nettable stock excluded"
         EXPIRED_LOT = "EXPIRED_LOT", "Expired lot"
         CAPACITY_OVERLOAD = "CAPACITY_OVERLOAD", "Capacity overload"
+        # Phase 2 additions
+        SALES_ORDER_REQUIRED_DATE_MISSING = "SALES_ORDER_REQUIRED_DATE_MISSING", "Sales order required date inferred"
+        PURCHASE_ORDER_DUE_DATE_MISSING = "PURCHASE_ORDER_DUE_DATE_MISSING", "Purchase order due date inferred"
+        PAST_DUE_RELEASE = "PAST_DUE_RELEASE", "Planned release date is in the past"
+        UNSUPPORTED_LOT_SIZING_METHOD = "UNSUPPORTED_LOT_SIZING_METHOD", "Unsupported lot sizing method"
 
     class Severity(models.TextChoices):
         INFO = "INFO", "Info"
@@ -2991,7 +2996,7 @@ class MRPException(models.Model):
     planned_order = models.ForeignKey(MRPPlannedOrder, on_delete=models.SET_NULL, null=True, blank=True,
                                       related_name="exceptions")
 
-    exception_code = models.CharField(max_length=24, choices=Code.choices)
+    exception_code = models.CharField(max_length=40, choices=Code.choices)
     severity = models.CharField(max_length=8, choices=Severity.choices, default=Severity.WARNING)
     message = models.TextField(blank=True)
     recommended_action = models.CharField(max_length=255, blank=True)
