@@ -6,10 +6,14 @@ guarded against the (extremely unlikely) clash so callers can rely on the
 returned value being free within the tenant.
 """
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 
 
 def _stamp():
-    return timezone.now().strftime("%Y%m%d-%H%M%S-%f")
+    # Timestamp plus a short random suffix so numbers stay unique even when many
+    # are minted within the same microsecond (e.g. an MRP run creating a batch
+    # of planned orders), without relying on the clock advancing.
+    return timezone.now().strftime("%Y%m%d-%H%M%S-%f") + "-" + get_random_string(4).upper()
 
 
 def next_run_number(tenant):
