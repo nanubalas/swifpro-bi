@@ -40,6 +40,10 @@ def _posting(fn):
 DEFAULT_ACCOUNT_CODES = {
     "inventory": "1000",
     "inventory_in_transit": "1010",
+    "raw_material_inventory": "1020",
+    "wip": "1030",
+    "finished_goods_inventory": "1040",
+    "manufacturing_variance": "5300",
     "bank": "1050",
     "ar": "1100",
     "ap": "2000",

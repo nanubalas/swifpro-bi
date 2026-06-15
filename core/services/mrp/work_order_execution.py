@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from core.services.inventory import apply_movement
 from core.services.mrp.inventory_snapshot import NON_NETTABLE_LOCATION_TYPES
+from core.services.mrp import work_order_posting as wop
 
 ZERO = Decimal("0.00")
 COST_DP = Decimal("0.01")
@@ -43,6 +44,17 @@ class WorkOrderError(Exception):
     def __init__(self, code, message):
         self.code = code
         super().__init__(message)
+
+
+def _try_post(wo, post_callable):
+    """Run a GL posting step. A missing-account configuration is swallowed so the
+    inventory movement still stands (GL skipped, planner warned in the UI); any
+    other failure propagates and rolls back the surrounding transaction."""
+    try:
+        return post_callable()
+    except wop.MissingManufacturingAccount as e:
+        wo._gl_warning = str(e)
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -148,6 +160,9 @@ def close_work_order(wo, user):
     wo.closed_by = user
     wo.closed_at = timezone.now()
     wo.save(update_fields=["status", "closed_by", "closed_at"])
+
+    # GL: clear remaining WIP to Manufacturing Variance (Phase 7; skipped if not configured).
+    _try_post(wo, lambda: wop.post_work_order_close_variance(wo, user))
     return wo
 
 
@@ -206,6 +221,9 @@ def issue_material(wom, quantity, user, location=None, bin=None,
 
     wo.wip_material_cost = (wo.wip_material_cost or ZERO) + issued_cost
     wo.save(update_fields=["wip_material_cost"])
+
+    # GL: DR WIP / CR Raw Material Inventory (Phase 7; skipped if not configured).
+    _try_post(wo, lambda: wop.post_work_order_material_issue(wom, movement, user))
     return movement
 
 
@@ -282,4 +300,7 @@ def complete_work_order(wo, quantity, user, location=None, bin=None,
         wo.status = "PARTIALLY_COMPLETED"
     wo.save(update_fields=["quantity_completed", "finished_goods_cost", "actual_end_date",
                            "status", "completed_at"])
+
+    # GL: DR Finished Goods / CR WIP (Phase 7; skipped if not configured).
+    _try_post(wo, lambda: wop.post_work_order_completion(wo, movement, user))
     return movement, warning

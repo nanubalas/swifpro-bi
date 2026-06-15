@@ -25,6 +25,7 @@
       <button type="button" class="wo-nav list-group-item list-group-item-action active" data-pane="header"><i class="bi bi-card-heading me-2"></i>Header</button>
       <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="materials"><span><i class="bi bi-box-seam me-2"></i>Materials</span><span class="badge text-bg-light">{{ materials|length }}</span></button>
       <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="movements"><span><i class="bi bi-list-columns-reverse me-2"></i>Movements</span><span class="badge text-bg-light">{{ movements|length }}</span></button>
+      <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="costing"><span><i class="bi bi-cash-coin me-2"></i>Costing / GL</span><span class="badge text-bg-light">{{ journals|length }}</span></button>
       <button type="button" class="wo-nav list-group-item list-group-item-action" data-pane="actions"><i class="bi bi-lightning me-2"></i>Actions</button>
     </div></div>
   </div>
@@ -84,7 +85,7 @@
       <div class="wo-pane" id="wo-pane-movements" hidden>
         <h5 class="fw-semibold mb-3">Inventory Movements</h5>
         <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
-          <th>When</th><th>Type</th><th>Item</th><th>Location</th><th class="text-end">Qty</th><th class="text-end">Value</th></tr></thead><tbody>
+          <th>When</th><th>Type</th><th>Item</th><th>Location</th><th class="text-end">Qty</th><th class="text-end">Value</th><th>Journal</th></tr></thead><tbody>
           {% for mv in movements %}<tr>
             <td class="small">{{ mv.created_at|date:"d M Y H:i" }}</td>
             <td class="small">{{ mv.get_movement_type_display }}</td>
@@ -92,7 +93,31 @@
             <td class="small">{{ mv.location.name }}</td>
             <td class="text-end">{{ mv.qty_delta }}</td>
             <td class="text-end">{{ mv.value }}</td>
-          </tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No movements yet.</td></tr>{% endfor %}
+            <td class="small">{% if mv.journal_entry_id %}<i class="bi bi-journal-text me-1"></i>JE {{ mv.journal_entry_id }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
+          </tr>{% empty %}<tr><td colspan="7" class="text-center text-muted py-4">No movements yet.</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+
+      <div class="wo-pane" id="wo-pane-costing" hidden>
+        <h5 class="fw-semibold mb-3">Costing &amp; GL</h5>
+        {% if not gl_configured %}
+        <div class="alert alert-warning small"><i class="bi bi-exclamation-triangle me-1"></i> Manufacturing GL is not configured for this site, so no WIP journals are posted. An admin can set up a Manufacturing Accounting Profile (accounts for raw material, WIP, finished goods and variance).</div>
+        {% endif %}
+        <dl class="row mb-3 small">
+          <dt class="col-sm-4 text-muted">WIP material cost</dt><dd class="col-sm-8">{{ wo.wip_material_cost }}</dd>
+          <dt class="col-sm-4 text-muted">Finished goods cost</dt><dd class="col-sm-8">{{ wo.finished_goods_cost }}</dd>
+          <dt class="col-sm-4 text-muted">Remaining WIP</dt><dd class="col-sm-8">{{ remaining_wip }}</dd>
+          <dt class="col-sm-4 text-muted">Variance journal</dt><dd class="col-sm-8">{% if wo.variance_journal_id %}JE {{ wo.variance_journal_id }}{% else %}<span class="text-muted">-</span>{% endif %}</dd>
+        </dl>
+        <table class="table table-sm align-middle"><thead class="table-light"><tr>
+          <th>Journal</th><th>Type</th><th>Account</th><th class="text-end">Debit</th><th class="text-end">Credit</th></tr></thead><tbody>
+          {% for je in journals %}{% for ln in je.lines.all %}<tr>
+            <td class="small">{% if forloop.first %}JE {{ je.id }}{% endif %}</td>
+            <td class="small">{% if forloop.first %}{{ je.ref_type }}{% endif %}</td>
+            <td class="small">{{ ln.account.code }} {{ ln.account.name }}</td>
+            <td class="text-end">{% if ln.debit %}{{ ln.debit }}{% endif %}</td>
+            <td class="text-end">{% if ln.credit %}{{ ln.credit }}{% endif %}</td>
+          </tr>{% endfor %}{% empty %}<tr><td colspan="5" class="text-center text-muted py-4">No journals posted.</td></tr>{% endfor %}
         </tbody></table>
       </div>
 
