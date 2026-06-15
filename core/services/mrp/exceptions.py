@@ -23,6 +23,15 @@ _REGISTRY = {
     "PURCHASE_ORDER_DUE_DATE_MISSING": ("WARNING", "PO has no expected date; planning start date was used."),
     "UNSUPPORTED_LOT_SIZING_METHOD": ("INFO", "Lot sizing method not supported yet; lot-for-lot used."),
     "EXPIRED_LOT": ("INFO", "Expired lot quantity was excluded from availability."),
+    # Phase 3 (BOM / MAKE)
+    "MISSING_BOM": ("WARNING", "Create an active BOM for this make item."),
+    "INVALID_BOM": ("WARNING", "BOM has no usable lines or invalid data."),
+    "BOM_NOT_APPROVED": ("WARNING", "Approve the BOM before planning."),
+    "BOM_NOT_EFFECTIVE": ("WARNING", "BOM is not effective for the required date."),
+    "CIRCULAR_BOM": ("CRITICAL", "Break the circular BOM reference."),
+    "BOM_MAX_DEPTH_EXCEEDED": ("CRITICAL", "BOM nesting is too deep; review the structure."),
+    "MISSING_COMPONENT_PLANNING": ("WARNING", "Create an item planning profile for this component."),
+    "PHANTOM_BOM_MISSING": ("WARNING", "Phantom item has no BOM to explode."),
 }
 
 

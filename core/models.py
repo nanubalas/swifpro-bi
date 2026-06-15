@@ -671,6 +671,14 @@ class BillOfMaterialsLine(models.Model):
     qty = models.DecimalField(max_digits=12, decimal_places=2)
     uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, blank=True, null=True)
     notes = models.CharField(max_length=255, blank=True, default="")
+    # Optional MRP planning fields (additive; ignored by the existing kit
+    # explosion in core.services.bom). fixed_qty is a per-assembly setup/scrap
+    # add-on; scrap_percent inflates the requirement to cover process loss;
+    # is_phantom marks a blow-through line so MRP explodes the component's own
+    # BOM without planning the phantom itself.
+    fixed_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    scrap_percent = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("0.00"))
+    is_phantom = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["line_no", "id"]
@@ -2982,6 +2990,14 @@ class MRPException(models.Model):
         PURCHASE_ORDER_DUE_DATE_MISSING = "PURCHASE_ORDER_DUE_DATE_MISSING", "Purchase order due date inferred"
         PAST_DUE_RELEASE = "PAST_DUE_RELEASE", "Planned release date is in the past"
         UNSUPPORTED_LOT_SIZING_METHOD = "UNSUPPORTED_LOT_SIZING_METHOD", "Unsupported lot sizing method"
+        # Phase 3 additions (BOM / MAKE planning)
+        INVALID_BOM = "INVALID_BOM", "Invalid BOM"
+        BOM_NOT_APPROVED = "BOM_NOT_APPROVED", "BOM not approved"
+        BOM_NOT_EFFECTIVE = "BOM_NOT_EFFECTIVE", "BOM not effective"
+        CIRCULAR_BOM = "CIRCULAR_BOM", "Circular BOM"
+        BOM_MAX_DEPTH_EXCEEDED = "BOM_MAX_DEPTH_EXCEEDED", "BOM max depth exceeded"
+        MISSING_COMPONENT_PLANNING = "MISSING_COMPONENT_PLANNING", "Missing component planning profile"
+        PHANTOM_BOM_MISSING = "PHANTOM_BOM_MISSING", "Phantom item has no BOM"
 
     class Severity(models.TextChoices):
         INFO = "INFO", "Info"

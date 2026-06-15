@@ -58,7 +58,7 @@
           <dt class="col-sm-4 text-muted">Completed</dt><dd class="col-sm-8">{{ run.completed_at|date:"d M Y H:i"|default:'-' }}</dd>
         </dl>
         {% if run.notes %}<hr><div class="small">{{ run.notes|linebreaksbr }}</div>{% endif %}
-        <div class="alert alert-info mt-3 mb-0 small"><i class="bi bi-info-circle me-1"></i> Phase 2 plans BUY items only. MAKE/BOM explosion, transfer planning and conversion to real documents arrive in later phases.</div>
+        <div class="alert alert-info mt-3 mb-0 small"><i class="bi bi-info-circle me-1"></i> Plans BUY and MAKE items (MAKE explodes its BOM into component demand and planned orders). Transfer planning and conversion to real documents arrive in later phases.</div>
       </div>
 
       <div class="mrp-pane" id="mrp-pane-demand" hidden>
