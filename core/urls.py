@@ -350,4 +350,12 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("mrp/runs/<int:run_id>/run/", views.mrp_run_run, name="mrp_run_run"),
     path("mrp/planned-orders/<int:po_id>/action/", views.mrp_planned_order_action, name="mrp_planned_order_action"),
     path("mrp/planned-orders/<int:po_id>/convert/", views.mrp_planned_order_convert, name="mrp_planned_order_convert"),
+
+    # Work orders (Phase 6)
+    path("work-orders/", views.work_order_list, name="work_order_list"),
+    path("work-orders/<int:wo_id>/", views.work_order_detail, name="work_order_detail"),
+    path("work-orders/<int:wo_id>/action/", views.work_order_action, name="work_order_action"),
+    path("work-orders/<int:wo_id>/release/", views.work_order_release, name="work_order_release"),
+    path("work-orders/<int:wo_id>/issue/", views.work_order_issue, name="work_order_issue"),
+    path("work-orders/<int:wo_id>/complete/", views.work_order_complete, name="work_order_complete"),
 ]

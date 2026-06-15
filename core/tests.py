@@ -11488,3 +11488,239 @@ class MRPPhase5ConversionTests(TestCase):
         resp = self.client.get("/mrp/runs/%d/" % po.mrp_run_id)
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, req.req_number)
+
+
+class MRPPhase6WorkOrderExecutionTests(TestCase):
+    """Phase 6: work order execution - firm/release/issue/complete/close,
+    inventory ledger updates, basic WIP costing, permissions, no GL."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="WO Co")
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.loc = Location.objects.filter(tenant=self.tenant, site=self.site).order_by("id").first()
+        self.quar = Location.objects.create(tenant=self.tenant, site=self.site, name="QA", type="QUARANTINE")
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material",
+                                         standard_cost=Decimal("2.00"))
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.admin = User.objects.create_user("woadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.wh = User.objects.create_user("wowh", password="pw")
+        OrgMembership.objects.create(user=self.wh, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.sales = User.objects.create_user("wosales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+        self._seq = 0
+        # seed RM stock 100 @ cost 2 in the nettable location
+        apply_movement(tenant=self.tenant, product=self.rm, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("100"), ref_type="SEED", ref_id="1",
+                       unit_cost=Decimal("2.00"))
+
+    # --- helpers ---
+    def _wo(self, status="PLANNED", qty=Decimal("10"), req=Decimal("20"), material=True):
+        from core.models import WorkOrder, WorkOrderMaterial
+        self._seq += 1
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-%d" % self._seq, site=self.site,
+            product=self.fg, quantity=qty, status=status)
+        if material:
+            WorkOrderMaterial.objects.create(work_order=wo, component=self.rm, required_quantity=req)
+        return wo
+
+    def _on_hand(self, product, location):
+        from core.models import InventoryBalance
+        b = InventoryBalance.objects.filter(tenant=self.tenant, product=product, location=location).first()
+        return b.on_hand if b else Decimal("0.00")
+
+    # --- list / detail / link ---
+    def test_list_and_detail_load(self):
+        wo = self._wo()
+        self.client.login(username="woadmin", password="pw")
+        self.assertEqual(self.client.get("/work-orders/").status_code, 200)
+        self.assertEqual(self.client.get("/work-orders/%d/" % wo.id).status_code, 200)
+
+    def test_converted_make_links_to_work_order(self):
+        from core.models import ItemSitePlanning, MRPRun, CustomerOrder, CustomerOrderLine, BillOfMaterials, BillOfMaterialsLine
+        from core.services.mrp import run_mrp, conversion, next_run_number
+        import datetime
+        ItemSitePlanning.objects.create(tenant=self.tenant, product=self.fg, site=self.site,
+                                        source_type="MAKE", lead_time_days=5)
+        ItemSitePlanning.objects.create(tenant=self.tenant, product=self.rm, site=self.site,
+                                        source_type="BUY", default_supplier=self.supplier, lead_time_days=7)
+        bom = BillOfMaterials.objects.create(tenant=self.tenant, product=self.fg, name="Default BOM")
+        BillOfMaterialsLine.objects.create(bom=bom, line_no=10, component=self.rm, qty=Decimal("2"))
+        from core.models import Customer
+        cust = Customer.objects.create(tenant=self.tenant, name="C")
+        co = CustomerOrder.objects.create(tenant=self.tenant, customer=cust, site=self.site,
+                                          order_number="SO-1", status="CONFIRMED",
+                                          order_date=datetime.date(2026, 7, 15))
+        CustomerOrderLine.objects.create(order=co, product=self.fg, qty=Decimal("10"))
+        run = MRPRun.objects.create(tenant=self.tenant, run_number=next_run_number(self.tenant),
+                                    site_scope=None, planning_start_date=datetime.date(2026, 6, 15))
+        run_mrp(run, user=self.admin)
+        po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        wo, created, _ = conversion.convert_make_to_work_order(po, self.admin)
+        self.assertEqual(wo.source_mrp_planned_order_id, po.id)
+        self.client.login(username="woadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/" % run.id)
+        self.assertContains(resp, wo.work_order_number)
+
+    # --- transitions ---
+    def test_firm_then_release(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo()
+        wox.firm_work_order(wo, self.admin)
+        self.assertEqual(wo.status, "FIRM")
+        wox.release_work_order(wo, self.admin)
+        self.assertEqual(wo.status, "RELEASED")
+        self.assertIsNotNone(wo.released_at)
+
+    def test_cannot_issue_before_release(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="FIRM")
+        with self.assertRaises(wox.WorkOrderError) as cm:
+            wox.issue_material(wo.materials.first(), Decimal("5"), self.admin)
+        self.assertEqual(cm.exception.code, wox.NOT_RELEASED)
+
+    # --- issue ---
+    def test_issue_reduces_inventory_and_records(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        self.assertEqual(self._on_hand(self.rm, self.loc), Decimal("80.00"))
+        mv = InventoryMovement.objects.filter(tenant=self.tenant, movement_type="WORK_ORDER_ISSUE").first()
+        self.assertIsNotNone(mv)
+        self.assertEqual(mv.qty_delta, Decimal("-20.00"))
+        wom = wo.materials.first()
+        self.assertEqual(wom.issued_quantity, Decimal("20.00"))
+        self.assertEqual(wom.status, "ISSUED")
+
+    def test_issue_blocks_insufficient_stock(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED", req=Decimal("200"))
+        with self.assertRaises(wox.WorkOrderError) as cm:
+            wox.issue_material(wo.materials.first(), Decimal("150"), self.admin)  # only 100 in stock
+        self.assertEqual(cm.exception.code, wox.INSUFFICIENT_STOCK)
+
+    def test_quarantine_location_cannot_be_issued(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        with self.assertRaises(wox.WorkOrderError) as cm:
+            wox.issue_material(wo.materials.first(), Decimal("5"), self.admin, location=self.quar)
+        self.assertEqual(cm.exception.code, wox.NON_NETTABLE_LOCATION)
+
+    # --- completion ---
+    def test_complete_increases_fg_and_records(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        wox.complete_work_order(wo, Decimal("10"), self.admin)
+        self.assertEqual(self._on_hand(self.fg, self.loc), Decimal("10.00"))
+        self.assertTrue(InventoryMovement.objects.filter(tenant=self.tenant, movement_type="WORK_ORDER_COMPLETION").exists())
+        self.assertEqual(wo.quantity_completed, Decimal("10.00"))
+        self.assertEqual(wo.status, "COMPLETED")
+
+    def test_cannot_complete_more_than_planned(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        with self.assertRaises(wox.WorkOrderError) as cm:
+            wox.complete_work_order(wo, Decimal("15"), self.admin)
+        self.assertEqual(cm.exception.code, wox.OVER_COMPLETION)
+
+    def test_partial_then_full_completion(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        wox.complete_work_order(wo, Decimal("4"), self.admin)
+        self.assertEqual(wo.status, "PARTIALLY_COMPLETED")
+        wox.complete_work_order(wo, Decimal("6"), self.admin)
+        self.assertEqual(wo.status, "COMPLETED")
+        self.assertEqual(wo.quantity_completed, Decimal("10.00"))
+
+    def test_completion_cost_uses_material_cost(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)  # 20 * 2 = 40 WIP
+        wox.complete_work_order(wo, Decimal("10"), self.admin)
+        wo.refresh_from_db()
+        self.fg.refresh_from_db()
+        self.assertEqual(wo.wip_material_cost, Decimal("40.00"))
+        self.assertEqual(wo.finished_goods_cost, Decimal("40.00"))  # 40/10 * 10
+        self.assertEqual(self.fg.average_cost, Decimal("4.0000"))
+
+    def test_complete_without_material_warns(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")  # material exists but none issued
+        movement, warning = wox.complete_work_order(wo, Decimal("10"), self.admin)
+        self.assertEqual(warning, wox.MATERIALS_NOT_ISSUED)
+        self.assertEqual(wo.finished_goods_cost, Decimal("50.00"))  # standard cost 5 * 10
+
+    # --- close / cancel ---
+    def test_close_only_after_completion(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        with self.assertRaises(wox.WorkOrderError) as cm:
+            wox.close_work_order(wo, self.admin)
+        self.assertEqual(cm.exception.code, wox.CANNOT_CLOSE)
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        wox.complete_work_order(wo, Decimal("10"), self.admin)
+        wox.close_work_order(wo, self.admin)
+        self.assertEqual(wo.status, "CLOSED")
+        # idempotent
+        wox.close_work_order(wo, self.admin)
+        self.assertEqual(wo.status, "CLOSED")
+
+    def test_cancel_blocked_after_issue(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("5"), self.admin)
+        with self.assertRaises(wox.WorkOrderError) as cm:
+            wox.cancel_work_order(wo, self.admin)
+        self.assertEqual(cm.exception.code, wox.CANNOT_CANCEL)
+
+    # --- GL deferred ---
+    def test_no_gl_posted(self):
+        from core.models import JournalEntry
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        wox.complete_work_order(wo, Decimal("10"), self.admin)
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.tenant).count(), 0)
+
+    # --- permissions / views ---
+    def test_permissions_block_unauthorised(self):
+        wo = self._wo(status="RELEASED")
+        wom = wo.materials.first()
+        # Sales has no work-order permissions.
+        self.client.login(username="wosales", password="pw")
+        self.assertEqual(self.client.get("/work-orders/%d/" % wo.id).status_code, 403)
+        self.assertEqual(self.client.post("/work-orders/%d/issue/" % wo.id,
+                                          {"material_id": wom.id, "quantity": "5"}).status_code, 403)
+        # Warehouse can execute (issue) but not manage (firm).
+        self.client.login(username="wowh", password="pw")
+        self.assertEqual(self.client.post("/work-orders/%d/issue/" % wo.id,
+                                          {"material_id": wom.id, "quantity": "5"}).status_code, 302)
+        self.assertEqual(self.client.post("/work-orders/%d/action/" % wo.id, {"action": "firm"}).status_code, 403)
+
+    def test_execute_full_flow_via_views(self):
+        from core.models import WorkOrder
+        wo = self._wo(status="PLANNED")
+        wom = wo.materials.first()
+        self.client.login(username="woadmin", password="pw")
+        self.client.post("/work-orders/%d/action/" % wo.id, {"action": "firm"})
+        self.client.post("/work-orders/%d/release/" % wo.id)
+        self.client.post("/work-orders/%d/issue/" % wo.id, {"material_id": wom.id, "quantity": "20"})
+        self.client.post("/work-orders/%d/complete/" % wo.id, {"quantity": "10"})
+        wo.refresh_from_db()
+        self.assertEqual(wo.status, "COMPLETED")
+        self.assertEqual(wo.quantity_completed, Decimal("10.00"))
+        self.assertEqual(self._on_hand(self.rm, self.loc), Decimal("80.00"))
+        self.assertEqual(self._on_hand(self.fg, self.loc), Decimal("10.00"))
+        self.client.post("/work-orders/%d/action/" % wo.id, {"action": "close"})
+        wo.refresh_from_db()
+        self.assertEqual(wo.status, "CLOSED")

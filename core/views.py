@@ -7567,3 +7567,139 @@ def mrp_planned_order_convert(request, po_id):
     except conversion.ConversionError as e:
         messages.error(request, str(e))
     return redirect("mrp_run_detail", run_id=po.mrp_run_id)
+
+
+# ===========================================================================
+# Work Order execution (Phase 6)
+# ===========================================================================
+
+@login_required
+@permission_required(permissions_mod.VIEW_WORK_ORDER)
+def work_order_list(request):
+    from core.models import WorkOrder
+    tenant = _get_default_tenant(request)
+    wos = (WorkOrder.objects.filter(tenant=tenant)
+           .select_related("product", "site", "source_mrp_planned_order")
+           .order_by("-created_at"))
+    site = active_site_id(request)
+    if site:
+        wos = wos.filter(site_id=site)
+    return render(request, "work_orders/list.html", {"tenant": tenant, "work_orders": wos})
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_WORK_ORDER)
+def work_order_detail(request, wo_id):
+    from core.models import WorkOrder, InventoryMovement
+    tenant = _get_default_tenant(request)
+    wo = get_object_or_404(
+        WorkOrder.objects.select_related("product", "site", "source_mrp_planned_order",
+                                         "released_by", "closed_by"),
+        id=wo_id, tenant=tenant)
+    materials = wo.materials.select_related("component", "source_location", "bom_line").all()
+    movements = (InventoryMovement.objects
+                 .filter(tenant=tenant, ref_type="WORK_ORDER", ref_id=wo.work_order_number)
+                 .select_related("product", "location").order_by("created_at"))
+    return render(request, "work_orders/detail.html", {
+        "tenant": tenant, "wo": wo, "materials": materials, "movements": movements,
+    })
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_WORK_ORDER)
+def work_order_action(request, wo_id):
+    """Firm / cancel / close (management actions)."""
+    from core.models import WorkOrder
+    from core.services.mrp import work_order_execution as wox
+    tenant = _get_default_tenant(request)
+    wo = get_object_or_404(WorkOrder, id=wo_id, tenant=tenant)
+    action = (request.POST.get("action") or "").lower()
+    if request.method != "POST" or action not in ("firm", "cancel", "close"):
+        return redirect("work_order_detail", wo_id=wo.id)
+    fn = {"firm": wox.firm_work_order, "cancel": wox.cancel_work_order, "close": wox.close_work_order}[action]
+    try:
+        fn(wo, request.user)
+        log_audit(action=f"work_order_{action}", request=request, user=request.user, tenant=tenant,
+                  detail=wo.work_order_number)
+        messages.success(request, f"Work order {wo.work_order_number} {action}.")
+    except wox.WorkOrderError as e:
+        messages.error(request, str(e))
+    return redirect("work_order_detail", wo_id=wo.id)
+
+
+@login_required
+@permission_required(permissions_mod.EXECUTE_WORK_ORDER)
+def work_order_release(request, wo_id):
+    from core.models import WorkOrder
+    from core.services.mrp import work_order_execution as wox
+    tenant = _get_default_tenant(request)
+    wo = get_object_or_404(WorkOrder, id=wo_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("work_order_detail", wo_id=wo.id)
+    try:
+        wox.release_work_order(wo, request.user)
+        log_audit(action="work_order_release", request=request, user=request.user, tenant=tenant,
+                  detail=wo.work_order_number)
+        messages.success(request, f"Work order {wo.work_order_number} released.")
+    except wox.WorkOrderError as e:
+        messages.error(request, str(e))
+    return redirect("work_order_detail", wo_id=wo.id)
+
+
+@login_required
+@permission_required(permissions_mod.EXECUTE_WORK_ORDER)
+def work_order_issue(request, wo_id):
+    """Issue one material line, or issue all available."""
+    from core.models import WorkOrder, WorkOrderMaterial, Location
+    from core.services.mrp import work_order_execution as wox
+    tenant = _get_default_tenant(request)
+    wo = get_object_or_404(WorkOrder, id=wo_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("work_order_detail", wo_id=wo.id)
+    try:
+        if request.POST.get("action") == "issue_all":
+            results = wox.issue_all_available_materials(wo, request.user)
+            messages.success(request, f"Issued {len(results)} material line(s).")
+        else:
+            wom = get_object_or_404(WorkOrderMaterial, id=request.POST.get("material_id"), work_order=wo)
+            qty = Decimal(request.POST.get("quantity") or "0")
+            loc = None
+            if request.POST.get("location_id"):
+                loc = Location.objects.filter(tenant=tenant, id=request.POST.get("location_id")).first()
+            wox.issue_material(wom, qty, request.user, location=loc)
+            messages.success(request, f"Issued {qty} of {wom.component.sku}.")
+        log_audit(action="work_order_issue", request=request, user=request.user, tenant=tenant,
+                  detail=wo.work_order_number)
+    except wox.WorkOrderError as e:
+        messages.error(request, str(e))
+    except (InvalidOperation, ValueError):
+        messages.error(request, "Enter a valid quantity.")
+    return redirect("work_order_detail", wo_id=wo.id)
+
+
+@login_required
+@permission_required(permissions_mod.EXECUTE_WORK_ORDER)
+def work_order_complete(request, wo_id):
+    from core.models import WorkOrder, Location
+    from core.services.mrp import work_order_execution as wox
+    tenant = _get_default_tenant(request)
+    wo = get_object_or_404(WorkOrder, id=wo_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("work_order_detail", wo_id=wo.id)
+    try:
+        qty = Decimal(request.POST.get("quantity") or "0")
+        loc = None
+        if request.POST.get("location_id"):
+            loc = Location.objects.filter(tenant=tenant, id=request.POST.get("location_id")).first()
+        movement, warning = wox.complete_work_order(wo, qty, request.user, location=loc)
+        log_audit(action="work_order_complete", request=request, user=request.user, tenant=tenant,
+                  detail=f"{wo.work_order_number} x {qty}")
+        if warning:
+            messages.warning(request, f"Completed {qty} of {wo.product.sku} (note: no material had been issued).")
+        else:
+            messages.success(request, f"Completed {qty} of {wo.product.sku}.")
+    except wox.WorkOrderError as e:
+        messages.error(request, str(e))
+    except (InvalidOperation, ValueError):
+        messages.error(request, "Enter a valid quantity.")
+    return redirect("work_order_detail", wo_id=wo.id)

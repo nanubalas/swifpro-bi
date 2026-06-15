@@ -1124,6 +1124,8 @@ class InventoryMovement(models.Model):
         WRITE_OFF = "WRITE_OFF", "Write-off"
         RESERVATION = "RESERVATION", "Reservation"
         RELEASE = "RELEASE", "Release"
+        WORK_ORDER_ISSUE = "WORK_ORDER_ISSUE", "Work order material issue"
+        WORK_ORDER_COMPLETION = "WORK_ORDER_COMPLETION", "Work order completion"
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
 
@@ -1131,7 +1133,7 @@ class InventoryMovement(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
     bin = models.ForeignKey("Bin", on_delete=models.SET_NULL, null=True, blank=True, related_name="movements")
-    movement_type = models.CharField(max_length=20, choices=MovementType.choices)
+    movement_type = models.CharField(max_length=24, choices=MovementType.choices)
     # Who triggered the movement (null for system/automatic postings).
     user = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     qty_delta = models.DecimalField(max_digits=12, decimal_places=2)
@@ -3069,6 +3071,8 @@ class WorkOrder(models.Model):
         PLANNED = "PLANNED", "Planned"
         FIRM = "FIRM", "Firm"
         RELEASED = "RELEASED", "Released"
+        PARTIALLY_COMPLETED = "PARTIALLY_COMPLETED", "Partially completed"
+        COMPLETED = "COMPLETED", "Completed"
         CANCELLED = "CANCELLED", "Cancelled"
         CLOSED = "CLOSED", "Closed"
 
@@ -3077,14 +3081,29 @@ class WorkOrder(models.Model):
     site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="work_orders")
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="work_orders")
     quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
-    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PLANNED)
+    quantity_completed = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    quantity_scrapped = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED)
     required_date = models.DateField(null=True, blank=True)
     planned_start_date = models.DateField(null=True, blank=True)
     planned_end_date = models.DateField(null=True, blank=True)
+    actual_start_date = models.DateField(null=True, blank=True)
+    actual_end_date = models.DateField(null=True, blank=True)
+    # Basic WIP costing (Phase 6): material cost issued into WIP, and the value of
+    # finished goods received out of WIP. GL/WIP journal posting is deferred.
+    wip_material_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    finished_goods_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
     source_mrp_planned_order = models.ForeignKey("MRPPlannedOrder", on_delete=models.SET_NULL,
                                                  null=True, blank=True, related_name="work_orders")
     created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
+    released_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="work_orders_released")
+    released_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="work_orders_closed")
+    closed_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
 
     class Meta:
@@ -3095,13 +3114,31 @@ class WorkOrder(models.Model):
     def __str__(self):
         return f"{self.work_order_number} ({self.product.sku} x {self.quantity})"
 
+    @property
+    def quantity_remaining(self):
+        return (self.quantity or Decimal("0.00")) - (self.quantity_completed or Decimal("0.00"))
+
 
 class WorkOrderMaterial(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        PARTIALLY_ISSUED = "PARTIALLY_ISSUED", "Partially issued"
+        ISSUED = "ISSUED", "Issued"
+        SHORT = "SHORT", "Short"
+        CANCELLED = "CANCELLED", "Cancelled"
+
     work_order = models.ForeignKey(WorkOrder, on_delete=models.CASCADE, related_name="materials")
     component = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="work_order_materials")
     required_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    issued_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    issued_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    status = models.CharField(max_length=18, choices=Status.choices, default=Status.OPEN)
     uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, null=True, blank=True)
     required_date = models.DateField(null=True, blank=True)
+    source_location = models.ForeignKey("Location", on_delete=models.SET_NULL, null=True, blank=True,
+                                        related_name="work_order_materials")
+    source_bin = models.ForeignKey("Bin", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="work_order_materials")
     bom_line = models.ForeignKey(BillOfMaterialsLine, on_delete=models.SET_NULL, null=True, blank=True)
     source_mrp_demand = models.ForeignKey(MRPDemand, on_delete=models.SET_NULL, null=True, blank=True,
                                           related_name="work_order_materials")
@@ -3112,3 +3149,7 @@ class WorkOrderMaterial(models.Model):
 
     def __str__(self):
         return f"{self.component.sku} x {self.required_quantity}"
+
+    @property
+    def remaining_quantity(self):
+        return (self.required_quantity or Decimal("0.00")) - (self.issued_quantity or Decimal("0.00"))
