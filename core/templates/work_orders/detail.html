@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}{{ wo.work_order_number }} - Work Order{% endblock %}
+{% block back_url %}{% url 'work_order_list' %}{% endblock %}
+{% block body %}
+<style>
+  .wo-left .list-group-item { cursor: pointer; border: 0; border-radius: 8px; }
+  .wo-left .wo-nav.active { background: var(--skn-brand-soft); color: var(--skn-brand); font-weight: 650; }
+  @media (min-width: 992px) {
+    .wo-left { position: sticky; top: 84px; }
+    .wo-right { max-height: calc(100vh - 200px); overflow: auto; }
+  }
+</style>
+
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-tools me-2"></i>{{ wo.work_order_number }}</h2>
+    <div class="text-muted">{{ wo.product.sku }} - {{ wo.product.name }} &middot; {{ wo.site.name }}</div>
+  </div>
+  <span class="badge text-bg-light align-self-center">{{ wo.get_status_display }}</span>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-3">
+    <div class="card wo-left"><div class="list-group list-group-flush p-2">
+      <button type="button" class="wo-nav list-group-item list-group-item-action active" data-pane="header"><i class="bi bi-card-heading me-2"></i>Header</button>
+      <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="materials"><span><i class="bi bi-box-seam me-2"></i>Materials</span><span class="badge text-bg-light">{{ materials|length }}</span></button>
+      <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="movements"><span><i class="bi bi-list-columns-reverse me-2"></i>Movements</span><span class="badge text-bg-light">{{ movements|length }}</span></button>
+      <button type="button" class="wo-nav list-group-item list-group-item-action" data-pane="actions"><i class="bi bi-lightning me-2"></i>Actions</button>
+    </div></div>
+  </div>
+
+  <div class="col-lg-9">
+    <div class="card wo-right"><div class="card-body">
+
+      <div class="wo-pane" id="wo-pane-header">
+        <h5 class="fw-semibold mb-3">Header</h5>
+        <dl class="row mb-0 small">
+          <dt class="col-sm-4 text-muted">Status</dt><dd class="col-sm-8">{{ wo.get_status_display }}</dd>
+          <dt class="col-sm-4 text-muted">Product</dt><dd class="col-sm-8">{{ wo.product.sku }} - {{ wo.product.name }}</dd>
+          <dt class="col-sm-4 text-muted">Site</dt><dd class="col-sm-8">{{ wo.site.name }}</dd>
+          <dt class="col-sm-4 text-muted">Quantity planned</dt><dd class="col-sm-8">{{ wo.quantity }}</dd>
+          <dt class="col-sm-4 text-muted">Quantity completed</dt><dd class="col-sm-8">{{ wo.quantity_completed }}</dd>
+          <dt class="col-sm-4 text-muted">Quantity remaining</dt><dd class="col-sm-8">{{ wo.quantity_remaining }}</dd>
+          <dt class="col-sm-4 text-muted">Required date</dt><dd class="col-sm-8">{{ wo.required_date|default:'-' }}</dd>
+          <dt class="col-sm-4 text-muted">Planned start / end</dt><dd class="col-sm-8">{{ wo.planned_start_date|default:'-' }} / {{ wo.planned_end_date|default:'-' }}</dd>
+          <dt class="col-sm-4 text-muted">WIP material cost</dt><dd class="col-sm-8">{{ wo.wip_material_cost }}</dd>
+          <dt class="col-sm-4 text-muted">Finished goods cost</dt><dd class="col-sm-8">{{ wo.finished_goods_cost }}</dd>
+          <dt class="col-sm-4 text-muted">Source MRP order</dt><dd class="col-sm-8">{% if wo.source_mrp_planned_order %}{{ wo.source_mrp_planned_order.planned_order_number }}{% else %}-{% endif %}</dd>
+        </dl>
+        {% if wo.notes %}<hr><div class="small">{{ wo.notes|linebreaksbr }}</div>{% endif %}
+        <div class="alert alert-info mt-3 mb-0 small"><i class="bi bi-info-circle me-1"></i> Basic execution: material issue and finished-goods completion update the inventory ledger. WIP costs are tracked here; GL/WIP journal posting is deferred to a later phase.</div>
+      </div>
+
+      <div class="wo-pane" id="wo-pane-materials" hidden>
+        <h5 class="fw-semibold mb-3">Materials</h5>
+        <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+          <th>Component</th><th class="text-end">Required</th><th class="text-end">Issued</th><th class="text-end">Remaining</th><th>Status</th>
+          {% if 'execute_work_order' in perms %}<th>Issue</th>{% endif %}
+        </tr></thead><tbody>
+          {% for m in materials %}<tr>
+            <td class="fw-semibold">{{ m.component.sku }}<div class="small text-muted">{{ m.component.name }}</div></td>
+            <td class="text-end">{{ m.required_quantity }}</td>
+            <td class="text-end">{{ m.issued_quantity }}</td>
+            <td class="text-end">{{ m.remaining_quantity }}</td>
+            <td><span class="badge text-bg-light">{{ m.get_status_display }}</span></td>
+            {% if 'execute_work_order' in perms %}
+            <td>
+              {% if wo.status == 'RELEASED' or wo.status == 'PARTIALLY_COMPLETED' %}{% if m.remaining_quantity > 0 %}
+              <form method="post" action="{% url 'work_order_issue' wo.id %}" class="d-flex gap-1">{% csrf_token %}
+                <input type="hidden" name="material_id" value="{{ m.id }}">
+                <input type="number" step="0.01" min="0" name="quantity" value="{{ m.remaining_quantity }}" class="form-control form-control-sm" style="width:6rem">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Issue</button>
+              </form>
+              {% endif %}{% else %}<span class="text-muted small">Release first</span>{% endif %}
+            </td>
+            {% endif %}
+          </tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No material lines.</td></tr>{% endfor %}
+        </tbody></table>
+        {% if 'execute_work_order' in perms and wo.status == 'RELEASED' %}
+        <form method="post" action="{% url 'work_order_issue' wo.id %}">{% csrf_token %}<input type="hidden" name="action" value="issue_all"><button class="btn btn-outline-primary btn-sm"><i class="bi bi-box-arrow-in-down me-1"></i> Issue all available</button></form>
+        {% endif %}
+      </div>
+
+      <div class="wo-pane" id="wo-pane-movements" hidden>
+        <h5 class="fw-semibold mb-3">Inventory Movements</h5>
+        <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+          <th>When</th><th>Type</th><th>Item</th><th>Location</th><th class="text-end">Qty</th><th class="text-end">Value</th></tr></thead><tbody>
+          {% for mv in movements %}<tr>
+            <td class="small">{{ mv.created_at|date:"d M Y H:i" }}</td>
+            <td class="small">{{ mv.get_movement_type_display }}</td>
+            <td class="small">{{ mv.product.sku }}</td>
+            <td class="small">{{ mv.location.name }}</td>
+            <td class="text-end">{{ mv.qty_delta }}</td>
+            <td class="text-end">{{ mv.value }}</td>
+          </tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No movements yet.</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+
+      <div class="wo-pane" id="wo-pane-actions" hidden>
+        <h5 class="fw-semibold mb-3">Actions</h5>
+        <div class="d-flex flex-wrap gap-2">
+          {% if 'manage_work_order' in perms and wo.status == 'PLANNED' %}
+            <form method="post" action="{% url 'work_order_action' wo.id %}">{% csrf_token %}<input type="hidden" name="action" value="firm"><button class="btn btn-outline-secondary" type="submit">Firm</button></form>
+          {% endif %}
+          {% if 'execute_work_order' in perms and wo.status == 'PLANNED' or 'execute_work_order' in perms and wo.status == 'FIRM' %}
+            <form method="post" action="{% url 'work_order_release' wo.id %}">{% csrf_token %}<button class="btn btn-primary" type="submit"><i class="bi bi-play-fill me-1"></i> Release</button></form>
+          {% endif %}
+          {% if 'manage_work_order' in perms and wo.status != 'CLOSED' and wo.status != 'CANCELLED' and wo.quantity_completed == 0 %}
+            <form method="post" action="{% url 'work_order_action' wo.id %}" onsubmit="return confirm('Cancel this work order?');">{% csrf_token %}<input type="hidden" name="action" value="cancel"><button class="btn btn-outline-danger" type="submit">Cancel</button></form>
+          {% endif %}
+          {% if 'manage_work_order' in perms and wo.status == 'COMPLETED' %}
+            <form method="post" action="{% url 'work_order_action' wo.id %}">{% csrf_token %}<input type="hidden" name="action" value="close"><button class="btn btn-outline-secondary" type="submit">Close</button></form>
+          {% endif %}
+        </div>
+
+        {% if 'execute_work_order' in perms %}{% if wo.status == 'RELEASED' or wo.status == 'PARTIALLY_COMPLETED' %}
+        <hr>
+        <h6 class="fw-semibold">Complete finished goods</h6>
+        <form method="post" action="{% url 'work_order_complete' wo.id %}" class="d-flex gap-2 align-items-end" style="max-width:24rem">{% csrf_token %}
+          <div><label class="form-label small mb-1">Quantity (remaining {{ wo.quantity_remaining }})</label>
+          <input type="number" step="0.01" min="0" name="quantity" value="{{ wo.quantity_remaining }}" class="form-control form-control-sm"></div>
+          <button class="btn btn-success btn-sm" type="submit"><i class="bi bi-check-lg me-1"></i> Complete</button>
+        </form>
+        {% endif %}{% endif %}
+      </div>
+
+    </div></div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var navs = document.querySelectorAll(".wo-nav");
+    function show(key) {
+      document.querySelectorAll(".wo-pane").forEach(function (p) { p.hidden = (p.id !== "wo-pane-" + key); });
+      navs.forEach(function (n) { n.classList.toggle("active", n.getAttribute("data-pane") === key); });
+      var r = document.querySelector(".wo-right"); if (r) r.scrollTop = 0;
+    }
+    navs.forEach(function (n) { n.addEventListener("click", function () { show(n.getAttribute("data-pane")); }); });
+  })();
+</script>
+{% endblock %}

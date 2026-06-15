@@ -105,7 +105,7 @@
                 {% if p.created_purchase_requisition_id %}<a href="{% url 'requisition_detail' p.created_purchase_requisition_id %}"><i class="bi bi-card-checklist me-1"></i>{{ p.created_purchase_requisition.req_number }}</a>
                 {% elif p.created_purchase_order_id %}<a href="{% url 'po_detail' p.created_purchase_order_id %}"><i class="bi bi-file-earmark-text me-1"></i>{{ p.created_purchase_order.po_number }}</a>
                 {% elif p.created_transfer_order_id %}<a href="{% url 'transfer_detail' p.created_transfer_order_id %}"><i class="bi bi-arrow-left-right me-1"></i>{{ p.created_transfer_order.transfer_number }}</a>
-                {% elif p.created_work_order_id %}<span><i class="bi bi-tools me-1"></i>{{ p.created_work_order.work_order_number }}</span>
+                {% elif p.created_work_order_id %}<a href="{% url 'work_order_detail' p.created_work_order_id %}"><i class="bi bi-tools me-1"></i>{{ p.created_work_order.work_order_number }}</a>
                 {% else %}<span class="text-muted">Converted</span>{% endif %}
               {% elif p.status == 'SUGGESTED' or p.status == 'FIRMED' %}
                 {% if 'manage_mrp' in perms %}
