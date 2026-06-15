@@ -2998,6 +2998,13 @@ class MRPException(models.Model):
         BOM_MAX_DEPTH_EXCEEDED = "BOM_MAX_DEPTH_EXCEEDED", "BOM max depth exceeded"
         MISSING_COMPONENT_PLANNING = "MISSING_COMPONENT_PLANNING", "Missing component planning profile"
         PHANTOM_BOM_MISSING = "PHANTOM_BOM_MISSING", "Phantom item has no BOM"
+        # Phase 4 additions (transfer planning)
+        MISSING_TRANSFER_SOURCE_SITE = "MISSING_TRANSFER_SOURCE_SITE", "Missing transfer source site"
+        INVALID_TRANSFER_SOURCE_SITE = "INVALID_TRANSFER_SOURCE_SITE", "Invalid transfer source site"
+        SOURCE_SITE_SHORTAGE = "SOURCE_SITE_SHORTAGE", "Source site shortage"
+        TRANSFER_LOOP_DETECTED = "TRANSFER_LOOP_DETECTED", "Transfer loop detected"
+        TRANSFER_MAX_DEPTH_EXCEEDED = "TRANSFER_MAX_DEPTH_EXCEEDED", "Transfer max depth exceeded"
+        INBOUND_TRANSFER_DUE_DATE_MISSING = "INBOUND_TRANSFER_DUE_DATE_MISSING", "Inbound transfer due date inferred"
 
     class Severity(models.TextChoices):
         INFO = "INFO", "Info"

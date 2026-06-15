@@ -10943,3 +10943,275 @@ class MRPPhase3BomTests(TestCase):
         run = self._exec()
         self.assertFalse(run.planned_orders.filter(product=self.fg).exists())
         self.assertFalse(run.demands.filter(demand_type="WORK_ORDER_COMPONENT").exists())
+
+
+class MRPPhase4TransferTests(TestCase):
+    """Phase 4: transfer (inter-site) planning - transfer planned orders,
+    source-site demand and planning, inbound/in-transit supply, recursion guards."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Customer
+        self.tenant = Tenant.objects.create(name="Xfer Co")
+        self.a = Site.objects.create(tenant=self.tenant, name="Leicester")
+        self.b = Site.objects.create(tenant=self.tenant, name="London")
+        self.loc_a = Location.objects.create(tenant=self.tenant, site=self.a, name="A-WH", type="WAREHOUSE")
+        self.loc_b = Location.objects.create(tenant=self.tenant, site=self.b, name="B-WH", type="WAREHOUSE")
+        self.qa_a = Location.objects.create(tenant=self.tenant, site=self.a, name="A-QA", type="QUARANTINE")
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.admin = User.objects.create_user("xadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.start = datetime.date(2026, 6, 15)
+        self.future = self.start + datetime.timedelta(days=30)
+
+    # --- helpers ---
+    def _product(self, sku):
+        return Product.objects.create(tenant=self.tenant, sku=sku, name=sku)
+
+    def _profile(self, product, site, source_type="BUY", transfer_from=None, lead=None, **kw):
+        from core.models import ItemSitePlanning
+        if lead is None:
+            lead = {"BUY": 7, "MAKE": 5, "TRANSFER": 2}.get(source_type, 0)
+        defaults = dict(
+            tenant=self.tenant, product=product, site=site, source_type=source_type,
+            default_supplier=(self.supplier if source_type == "BUY" else None),
+            default_transfer_from_site=transfer_from,
+            safety_stock_qty=Decimal("0"), min_order_qty=Decimal("0"),
+            max_order_qty=Decimal("0"), order_multiple=Decimal("0"),
+            lead_time_days=lead, lot_sizing_method="LOT_FOR_LOT")
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def _bom(self, parent, comps):
+        from core.models import BillOfMaterials, BillOfMaterialsLine
+        bom = BillOfMaterials.objects.create(tenant=self.tenant, product=parent, name="Default BOM",
+                                             output_qty=Decimal("1"))
+        n = 10
+        for c in comps:
+            BillOfMaterialsLine.objects.create(bom=bom, line_no=n, component=c["component"],
+                                               qty=c.get("qty", Decimal("1")))
+            n += 10
+        return bom
+
+    def _order(self, product, site, qty, order_date=None):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.services.mrp import next_run_number
+        o = CustomerOrder.objects.create(
+            tenant=self.tenant, customer=self.customer, site=site,
+            order_number="SO-" + next_run_number(self.tenant), status="CONFIRMED",
+            order_date=order_date or self.future)
+        CustomerOrderLine.objects.create(order=o, product=product, qty=Decimal(qty))
+        return o
+
+    def _balance(self, product, location, qty):
+        from core.models import InventoryBalance
+        return InventoryBalance.objects.create(
+            tenant=self.tenant, site=location.site, product=product, location=location, on_hand=Decimal(qty))
+
+    def _transfer(self, product, from_loc, to_loc, qty, status="DRAFT", dispatched=0, received=0):
+        from core.models import InventoryTransfer, InventoryTransferLine
+        from core.services.mrp import next_run_number
+        t = InventoryTransfer.objects.create(
+            tenant=self.tenant, transfer_number="TR-" + next_run_number(self.tenant),
+            from_location=from_loc, to_location=to_loc, status=status)
+        InventoryTransferLine.objects.create(
+            transfer=t, product=product, qty=Decimal(qty),
+            dispatched_qty=Decimal(dispatched), received_qty=Decimal(received))
+        return t
+
+    def _run(self):
+        import datetime
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number
+        return MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant), site_scope=None,
+            planning_start_date=self.start, planning_end_date=self.start + datetime.timedelta(days=120))
+
+    def _exec(self):
+        from core.services.mrp import run_mrp
+        return run_mrp(self._run(), user=self.admin)
+
+    def _codes(self, run):
+        return set(run.exceptions.values_list("exception_code", flat=True))
+
+    def _po(self, run, **kw):
+        return run.planned_orders.filter(**kw).first()
+
+    # --- tests ---
+    def test_transfer_shortage_creates_transfer_order(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        t_po = self._po(run, source_type="TRANSFER", product=self.fg, site=self.b)
+        self.assertIsNotNone(t_po)
+        self.assertEqual(t_po.quantity, Decimal("50.00"))
+
+    def test_transfer_uses_default_source_site(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        t_po = self._po(run, source_type="TRANSFER", product=self.fg, site=self.b)
+        self.assertEqual(t_po.transfer_from_site_id, self.a.id)
+
+    def test_missing_source_site_exception(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=None)
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIn("MISSING_TRANSFER_SOURCE_SITE", self._codes(run))
+        self.assertIsNotNone(self._po(run, source_type="TRANSFER", site=self.b))
+
+    def test_source_same_as_destination_exception(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.b)
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIn("INVALID_TRANSFER_SOURCE_SITE", self._codes(run))
+
+    def test_transfer_lead_time_release_date(self):
+        import datetime
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a, lead=2)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50, order_date=self.future)
+        run = self._exec()
+        t_po = self._po(run, source_type="TRANSFER", product=self.fg, site=self.b)
+        self.assertEqual(t_po.required_date, self.future)
+        self.assertEqual(t_po.planned_release_date, self.future - datetime.timedelta(days=2))
+
+    def test_missing_transfer_lead_time_exception(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a, lead=0)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIn("MISSING_LEAD_TIME", self._codes(run))
+
+    def test_open_inbound_transfer_counts_as_supply(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        self._transfer(self.fg, self.loc_a, self.loc_b, 20, status="DRAFT")
+        run = self._exec()
+        t_po = self._po(run, source_type="TRANSFER", product=self.fg, site=self.b)
+        self.assertEqual(t_po.quantity, Decimal("30.00"))  # 50 - 20 inbound
+        self.assertTrue(run.supplies.filter(supply_type="TRANSFER_ORDER", site=self.b).exists())
+
+    def test_in_transit_counts_as_supply(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        self._transfer(self.fg, self.loc_a, self.loc_b, 20, status="DISPATCHED", dispatched=20, received=0)
+        run = self._exec()
+        t_po = self._po(run, source_type="TRANSFER", product=self.fg, site=self.b)
+        self.assertEqual(t_po.quantity, Decimal("30.00"))
+        self.assertTrue(run.supplies.filter(supply_type="IN_TRANSIT", site=self.b).exists())
+
+    def test_received_and_cancelled_transfers_excluded(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        self._transfer(self.fg, self.loc_a, self.loc_b, 20, status="RECEIVED", dispatched=20, received=20)
+        self._transfer(self.fg, self.loc_a, self.loc_b, 15, status="CANCELLED")
+        run = self._exec()
+        t_po = self._po(run, source_type="TRANSFER", product=self.fg, site=self.b)
+        self.assertEqual(t_po.quantity, Decimal("50.00"))  # neither counts
+        self.assertFalse(run.supplies.filter(supply_type__in=["TRANSFER_ORDER", "IN_TRANSIT"], site=self.b).exists())
+
+    def test_source_available_nettable_only(self):
+        # Source A has enough nettable stock -> no source shortage, no BUY order.
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._balance(self.fg, self.loc_a, 50)
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIsNotNone(self._po(run, source_type="TRANSFER", site=self.b))
+        self.assertIsNone(self._po(run, source_type="BUY", product=self.fg, site=self.a))
+        self.assertNotIn("SOURCE_SITE_SHORTAGE", self._codes(run))
+
+    def test_quarantine_source_stock_excluded(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._balance(self.fg, self.qa_a, 50)  # quarantine -> not nettable
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIn("SOURCE_SITE_SHORTAGE", self._codes(run))
+        self.assertIsNotNone(self._po(run, source_type="BUY", product=self.fg, site=self.a))
+
+    def test_source_shortage_exception_and_demand(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIn("SOURCE_SITE_SHORTAGE", self._codes(run))
+        d = run.demands.filter(demand_type="TRANSFER_REQUEST", product=self.fg, site=self.a).first()
+        self.assertIsNotNone(d)
+        self.assertEqual(d.open_quantity, Decimal("50.00"))
+
+    def test_source_buy_planning_creates_buy_order(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        buy = self._po(run, source_type="BUY", product=self.fg, site=self.a)
+        self.assertIsNotNone(buy)
+        self.assertEqual(buy.quantity, Decimal("50.00"))
+
+    def test_source_make_planning_explodes_bom(self):
+        rm = self._product("RM-001")
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "MAKE")
+        self._profile(rm, self.a, "BUY")
+        self._bom(self.fg, [{"component": rm, "qty": Decimal("1")}])
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIsNotNone(self._po(run, source_type="MAKE", product=self.fg, site=self.a))
+        self.assertIsNotNone(self._po(run, source_type="BUY", product=rm, site=self.a))
+
+    def test_transfer_pegging_chain(self):
+        from core.models import MRPPegging
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        t_po = self._po(run, source_type="TRANSFER", product=self.fg, site=self.b)
+        buy = self._po(run, source_type="BUY", product=self.fg, site=self.a)
+        so_demand = run.demands.get(demand_type="SALES_ORDER", site=self.b)
+        src_demand = run.demands.get(demand_type="TRANSFER_REQUEST", site=self.a)
+        self.assertTrue(MRPPegging.objects.filter(planned_order=t_po, demand=so_demand).exists())
+        self.assertTrue(MRPPegging.objects.filter(planned_order=t_po, demand=src_demand).exists())
+        self.assertTrue(MRPPegging.objects.filter(planned_order=buy, demand=src_demand).exists())
+
+    def test_transfer_loop_detected(self):
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "TRANSFER", transfer_from=self.b)
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIn("TRANSFER_LOOP_DETECTED", self._codes(run))
+        self.assertEqual(run.status, "COMPLETED_WITH_EXCEPTIONS")
+
+    def test_transfer_max_depth_exceeded(self):
+        from core.models import Site
+        from core.services.mrp import transfer_planning
+        original = transfer_planning.MAX_TRANSFER_DEPTH
+        transfer_planning.MAX_TRANSFER_DEPTH = 1
+        self.addCleanup(setattr, transfer_planning, "MAX_TRANSFER_DEPTH", original)
+        c = Site.objects.create(tenant=self.tenant, name="Coventry")
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "TRANSFER", transfer_from=c)
+        self._order(self.fg, self.b, 50)
+        run = self._exec()
+        self.assertIn("TRANSFER_MAX_DEPTH_EXCEEDED", self._codes(run))
+
+    def test_idempotent_rerun(self):
+        from core.services.mrp import run_mrp
+        self._profile(self.fg, self.b, "TRANSFER", transfer_from=self.a)
+        self._profile(self.fg, self.a, "BUY")
+        self._order(self.fg, self.b, 50)
+        run = self._run()
+        run_mrp(run, user=self.admin)
+        first_po = run.planned_orders.count()
+        first_dem = run.demands.count()
+        run_mrp(run, user=self.admin)
+        self.assertEqual(run.planned_orders.count(), first_po)
+        self.assertEqual(run.demands.count(), first_dem)
