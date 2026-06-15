@@ -10678,3 +10678,268 @@ class MRPEnginePhase2Tests(TestCase):
         call_command("run_mrp", "--run-id", str(run.id))
         run.refresh_from_db()
         self.assertIn(run.status, ("COMPLETED", "COMPLETED_WITH_EXCEPTIONS"))
+
+
+class MRPPhase3BomTests(TestCase):
+    """Phase 3: BOM explosion + MAKE planned orders (dependent demand,
+    recursion, phantoms, and BOM exceptions)."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Customer
+        self.tenant = Tenant.objects.create(name="BOM Co")
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.loc = Location.objects.create(tenant=self.tenant, site=self.site, name="WH", type="WAREHOUSE")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good")
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material")
+        self.admin = User.objects.create_user("bomadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.start = datetime.date(2026, 6, 15)
+        self.future = self.start + datetime.timedelta(days=30)
+
+    # --- helpers ---
+    def _product(self, sku, name=None, base_uom=None):
+        return Product.objects.create(tenant=self.tenant, sku=sku, name=name or sku, base_uom=base_uom)
+
+    def _profile(self, product, source_type="BUY", **kw):
+        from core.models import ItemSitePlanning
+        defaults = dict(
+            tenant=self.tenant, product=product, site=self.site, source_type=source_type,
+            default_supplier=(self.supplier if source_type == "BUY" else None),
+            safety_stock_qty=Decimal("0"), min_order_qty=Decimal("0"),
+            max_order_qty=Decimal("0"), order_multiple=Decimal("0"),
+            lead_time_days=(7 if source_type == "BUY" else 5),
+            lot_sizing_method="LOT_FOR_LOT")
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def _bom(self, parent, comps, output_qty=Decimal("1")):
+        from core.models import BillOfMaterials, BillOfMaterialsLine
+        bom = BillOfMaterials.objects.create(
+            tenant=self.tenant, product=parent, name="Default BOM", output_qty=output_qty)
+        n = 10
+        for c in comps:
+            BillOfMaterialsLine.objects.create(
+                bom=bom, line_no=c.get("line_no", n), component=c["component"],
+                qty=c.get("qty", Decimal("1")), uom=c.get("uom"),
+                fixed_qty=c.get("fixed_qty", Decimal("0")),
+                scrap_percent=c.get("scrap", Decimal("0")),
+                is_phantom=c.get("is_phantom", False))
+            n += 10
+        return bom
+
+    def _order(self, product, qty, order_date=None):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.services.mrp import next_run_number
+        o = CustomerOrder.objects.create(
+            tenant=self.tenant, customer=self.customer, site=self.site,
+            order_number="SO-" + next_run_number(self.tenant), status="CONFIRMED",
+            order_date=order_date or self.future)
+        CustomerOrderLine.objects.create(order=o, product=product, qty=Decimal(qty))
+        return o
+
+    def _run(self, **kw):
+        import datetime
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number
+        defaults = dict(tenant=self.tenant, run_number=next_run_number(self.tenant),
+                        site_scope=self.site, planning_start_date=self.start,
+                        planning_end_date=self.start + datetime.timedelta(days=120))
+        defaults.update(kw)
+        return MRPRun.objects.create(**defaults)
+
+    def _exec(self):
+        from core.services.mrp import run_mrp
+        return run_mrp(self._run(), user=self.admin)
+
+    def _codes(self, run):
+        return set(run.exceptions.values_list("exception_code", flat=True))
+
+    # --- tests ---
+    def test_make_shortage_creates_make_planned_order(self):
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("2")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        fg_po = run.planned_orders.filter(source_type="MAKE", product=self.fg).first()
+        self.assertIsNotNone(fg_po)
+        self.assertEqual(fg_po.quantity, Decimal("10.00"))
+
+    def test_make_with_bom_creates_component_demand(self):
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("2")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        d = run.demands.filter(demand_type="WORK_ORDER_COMPONENT", product=self.rm).first()
+        self.assertIsNotNone(d)
+        self.assertEqual(d.open_quantity, Decimal("20.00"))  # 10 * 2
+
+    def test_component_buy_creates_buy_planned_order(self):
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("2")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        rm_po = run.planned_orders.filter(source_type="BUY", product=self.rm).first()
+        self.assertIsNotNone(rm_po)
+        self.assertEqual(rm_po.quantity, Decimal("20.00"))
+
+    def test_component_demand_uses_parent_release_date(self):
+        self._profile(self.fg, "MAKE", lead_time_days=5)
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("1")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        fg_po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        rm_demand = run.demands.get(demand_type="WORK_ORDER_COMPONENT", product=self.rm)
+        self.assertEqual(rm_demand.required_date, fg_po.planned_release_date)
+
+    def test_pegging_chain(self):
+        from core.models import MRPPegging
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("1")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        fg_po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        rm_po = run.planned_orders.get(source_type="BUY", product=self.rm)
+        sales = run.demands.get(demand_type="SALES_ORDER", product=self.fg)
+        comp = run.demands.get(demand_type="WORK_ORDER_COMPONENT", product=self.rm)
+        self.assertTrue(MRPPegging.objects.filter(planned_order=fg_po, demand=sales).exists())
+        self.assertTrue(MRPPegging.objects.filter(planned_order=fg_po, demand=comp).exists())
+        self.assertTrue(MRPPegging.objects.filter(planned_order=rm_po, demand=comp).exists())
+
+    def test_missing_bom_exception(self):
+        self._profile(self.fg, "MAKE")  # no BOM defined
+        self._order(self.fg, 10)
+        run = self._exec()
+        self.assertIn("MISSING_BOM", self._codes(run))
+        self.assertEqual(run.planned_orders.filter(source_type="MAKE", product=self.fg).count(), 1)
+
+    def test_missing_component_planning_exception(self):
+        self._profile(self.fg, "MAKE")  # rm has no profile
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("1")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        self.assertIn("MISSING_COMPONENT_PLANNING", self._codes(run))
+        self.assertTrue(run.demands.filter(demand_type="WORK_ORDER_COMPONENT", product=self.rm).exists())
+        self.assertFalse(run.planned_orders.filter(product=self.rm).exists())
+
+    def test_component_qty_uses_quantity_per(self):
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("3")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        self.assertEqual(run.demands.get(demand_type="WORK_ORDER_COMPONENT", product=self.rm).open_quantity,
+                         Decimal("30.00"))  # 10 * 3
+
+    def test_scrap_percent_increases_requirement(self):
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("2"), "scrap": Decimal("50")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        # 10 * 2 = 20; with 50% scrap -> 20 / 0.5 = 40
+        self.assertEqual(run.demands.get(demand_type="WORK_ORDER_COMPONENT", product=self.rm).open_quantity,
+                         Decimal("40.00"))
+
+    def test_fixed_qty_included(self):
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("2"), "fixed_qty": Decimal("5")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        # 10 * 2 + 5 = 25
+        self.assertEqual(run.demands.get(demand_type="WORK_ORDER_COMPONENT", product=self.rm).open_quantity,
+                         Decimal("25.00"))
+
+    def test_multi_level_make_recurses(self):
+        sub = self._product("SUB-001", "Sub-assembly")
+        self._profile(self.fg, "MAKE")
+        self._profile(sub, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": sub, "qty": Decimal("1")}])
+        self._bom(sub, [{"component": self.rm, "qty": Decimal("1")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        self.assertTrue(run.planned_orders.filter(source_type="MAKE", product=sub).exists())
+        self.assertTrue(run.planned_orders.filter(source_type="BUY", product=self.rm).exists())
+
+    def test_phantom_explodes_through(self):
+        ph = self._product("PH-001", "Phantom")
+        self._profile(self.fg, "MAKE")
+        self._profile(ph, "PHANTOM")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": ph, "qty": Decimal("1")}])
+        self._bom(ph, [{"component": self.rm, "qty": Decimal("1")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        self.assertFalse(run.planned_orders.filter(product=ph).exists())  # no phantom order
+        self.assertTrue(run.planned_orders.filter(source_type="BUY", product=self.rm).exists())
+
+    def test_circular_bom_exception_no_crash(self):
+        a = self._product("A-001", "A")
+        b = self._product("B-001", "B")
+        self._profile(a, "MAKE")
+        self._profile(b, "MAKE")
+        self._bom(a, [{"component": b, "qty": Decimal("1")}])
+        self._bom(b, [{"component": a, "qty": Decimal("1")}])
+        self._order(a, 5)
+        run = self._exec()
+        self.assertIn("CIRCULAR_BOM", self._codes(run))
+        self.assertEqual(run.status, "COMPLETED_WITH_EXCEPTIONS")
+
+    def test_max_bom_depth_exception(self):
+        from core.services.mrp import bom_explosion
+        original = bom_explosion.MAX_BOM_DEPTH
+        bom_explosion.MAX_BOM_DEPTH = 1
+        self.addCleanup(setattr, bom_explosion, "MAX_BOM_DEPTH", original)
+        sub = self._product("SUB-002", "Sub")
+        self._profile(self.fg, "MAKE")
+        self._profile(sub, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": sub, "qty": Decimal("1")}])
+        self._bom(sub, [{"component": self.rm, "qty": Decimal("1")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        self.assertIn("BOM_MAX_DEPTH_EXCEEDED", self._codes(run))
+
+    def test_missing_uom_conversion_exception(self):
+        from core.models import UnitOfMeasure
+        each = UnitOfMeasure.objects.create(tenant=self.tenant, code="EA")
+        case = UnitOfMeasure.objects.create(tenant=self.tenant, code="CASE")
+        rm = self._product("RM-UOM", "RM uom", base_uom=each)
+        self._profile(self.fg, "MAKE")
+        self._profile(rm, "BUY")
+        self._bom(self.fg, [{"component": rm, "qty": Decimal("2"), "uom": case}])  # no conversion CASE->EA
+        self._order(self.fg, 10)
+        run = self._exec()
+        self.assertIn("MISSING_UOM_CONVERSION", self._codes(run))
+
+    def test_idempotent_rerun(self):
+        from core.services.mrp import run_mrp
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("2")}])
+        self._order(self.fg, 10)
+        run = self._run()
+        run_mrp(run, user=self.admin)
+        first_po = run.planned_orders.count()
+        first_dem = run.demands.count()
+        run_mrp(run, user=self.admin)
+        self.assertEqual(run.planned_orders.count(), first_po)
+        self.assertEqual(run.demands.count(), first_dem)
+
+    def test_make_skipped_when_not_enabled(self):
+        self._profile(self.fg, "MAKE", mrp_enabled=False)
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, [{"component": self.rm, "qty": Decimal("2")}])
+        self._order(self.fg, 10)
+        run = self._exec()
+        self.assertFalse(run.planned_orders.filter(product=self.fg).exists())
+        self.assertFalse(run.demands.filter(demand_type="WORK_ORDER_COMPONENT").exists())

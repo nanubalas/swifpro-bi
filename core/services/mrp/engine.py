@@ -1,15 +1,17 @@
-"""MRP engine (Phase 2): time-phased net-requirement planning for BUY items.
+"""MRP engine (Phase 2 + 3): time-phased net-requirement planning.
 
-For each MRP-enabled, BUY ItemSitePlanning profile in scope, the engine:
+For each MRP-enabled BUY or MAKE ItemSitePlanning profile in scope, the engine:
 1. collects demand (sales orders + safety-stock floor) and supply (nettable
    on-hand, open POs, open PRs);
 2. walks the demand/supply event dates building projected available balance
    (Projected = Previous + Scheduled Supply - Gross Demand);
-3. wherever projected dips below safety stock, sizes a planned BUY order
+3. wherever projected dips below safety stock, sizes a planned order
    (lot sizing -> MOQ -> order multiple -> max cap), offsets the release date
    by lead time, and lifts projected back up;
-4. pegs planned orders to the demand they cover; and
-5. records exceptions for missing/inferred data and remaining shortages.
+4. for MAKE planned orders, explodes the parent BOM into dependent component
+   demand and recursively plans each component (Phase 3, see bom_explosion);
+5. pegs planned orders to the demand they cover; and
+6. records exceptions for missing/inferred/invalid data and shortages.
 
 It is idempotent: re-running a run clears that run's prior results first. It
 never crashes on bad data - problems become exceptions and planning continues.
@@ -28,6 +30,7 @@ from core.services.mrp.numbering import next_planned_order_number
 
 ZERO = Decimal("0.00")
 _MAX_ORDERS_PER_BUCKET = 200  # guard against runaway loops when max cap is tiny
+_PLANNABLE_SOURCE_TYPES = ["BUY", "MAKE"]  # PHANTOM is only planned as a component
 
 
 def run_mrp(run, user=None):
@@ -51,9 +54,12 @@ def run_mrp(run, user=None):
         MRPSupply.objects.filter(mrp_run=run).delete()
         MRPDemand.objects.filter(mrp_run=run).delete()
     run._mrp_exc_seen = set()
+    run._supply_cache = {}      # (product_id, site_id) -> [MRPSupply]; collect once per run
+    run._comp_consumed = {}     # (product_id, site_id) -> Decimal consumed by dependent demand
 
     profiles = (ItemSitePlanning.objects
-                .filter(tenant=run.tenant, is_active=True, mrp_enabled=True, source_type="BUY")
+                .filter(tenant=run.tenant, is_active=True, mrp_enabled=True,
+                        source_type__in=_PLANNABLE_SOURCE_TYPES)
                 .select_related("product", "site", "default_supplier"))
     if run.site_scope_id:
         profiles = profiles.filter(site_id=run.site_scope_id)
@@ -83,12 +89,14 @@ def run_mrp(run, user=None):
 
 
 def _plan_profile(run, profile):
+    from core.services.mrp import bom_explosion
+
     product = profile.product
     site = profile.site
     start = run.planning_start_date
 
     demands = demand_collector.collect(run, profile)
-    supplies = supply_collector.collect(run, profile)
+    supplies = ensure_supply(run, profile)
 
     safety = profile.safety_stock_qty or ZERO
     if not (run.include_safety_stock and profile.include_safety_stock):
@@ -132,13 +140,18 @@ def _plan_profile(run, profile):
             qty, capped, notes = lot_sizing.size_order(profile, net_req)
             if qty <= ZERO:
                 break
-            po = _create_planned_order(run, profile, qty, d, lead)
+            po = create_planned_order(run, profile, qty, d, lead, profile.source_type)
             planned_orders.append(po)
             for code, msg in notes:
                 mrp_exc.raise_exception(run, code, msg, product=product, site=site, planned_order=po,
                                         dedupe_key=(code, profile.id))
                 mrp_exc.bump_level(po, "INFO")
-            _order_exceptions(run, profile, po, start)
+            order_exceptions(run, profile, po, start)
+            # MAKE orders drive dependent component demand (Phase 3).
+            if profile.source_type == "MAKE":
+                bom_explosion.explode_and_plan(
+                    run, product, site, po.quantity, po.planned_release_date, po,
+                    depth=0, ancestors=frozenset({product.id}))
             projected += qty
             guard += 1
             if guard >= _MAX_ORDERS_PER_BUCKET:
@@ -161,26 +174,30 @@ def _plan_profile(run, profile):
     return planned_orders
 
 
-def _create_planned_order(run, profile, qty, required_date, lead):
+def create_planned_order(run, profile, qty, required_date, lead, source_type, parent_po=None):
+    """Create a planned order. A supplier is attached only for BUY orders;
+    MAKE orders carry the parent linkage instead."""
     from core.models import MRPPlannedOrder
     receipt = required_date
     release = lead_time.release_date(receipt, lead)
     return MRPPlannedOrder.objects.create(
         mrp_run=run, tenant=run.tenant, product=profile.product, site=profile.site,
-        source_type="BUY",
+        source_type=source_type,
         planned_order_number=next_planned_order_number(run.tenant),
         quantity=qty, required_date=required_date,
         planned_receipt_date=receipt, planned_release_date=release,
-        supplier=profile.default_supplier,
+        supplier=(profile.default_supplier if source_type == "BUY" else None),
+        parent_planned_order=parent_po,
         status="SUGGESTED", action_type="CREATE", exception_level="NONE",
         created_by=run.started_by,
     )
 
 
-def _order_exceptions(run, profile, po, start):
+def order_exceptions(run, profile, po, start):
     product, site = profile.product, profile.site
 
-    if profile.default_supplier_id is None:
+    # A supplier is only relevant for BUY orders.
+    if po.source_type == "BUY" and profile.default_supplier_id is None:
         mrp_exc.raise_exception(
             run, "MISSING_SUPPLIER",
             f"No default supplier for {product.sku} at {site.name}; planner must choose one.",
@@ -200,3 +217,33 @@ def _order_exceptions(run, profile, po, start):
             f"Planned release {po.planned_release_date} for {product.sku} is already past; expedite.",
             product=product, site=site, planned_order=po)
         mrp_exc.bump_level(po, "WARNING")
+
+
+def ensure_supply(run, profile):
+    """Collect supply for an item-site once per run (cached), so the same item
+    reached both as a top-level profile and as a component never produces
+    duplicate MRPSupply rows."""
+    key = (profile.product_id, profile.site_id)
+    cache = getattr(run, "_supply_cache", None)
+    if cache is None:
+        cache = {}
+        run._supply_cache = cache
+    if key not in cache:
+        cache[key] = supply_collector.collect(run, profile)
+    return cache[key]
+
+
+def take_component_availability(run, profile, needed):
+    """Consume from an item's available supply (on-hand + open POs/PRs) to net a
+    dependent-demand requirement. Tracks consumption per item-site so multiple
+    dependent demands on the same component share the available stock."""
+    key = (profile.product_id, profile.site_id)
+    supplies = ensure_supply(run, profile)
+    total = sum((s.available_quantity or ZERO for s in supplies), ZERO)
+    consumed = getattr(run, "_comp_consumed", {}).get(key, ZERO)
+    avail = total - consumed
+    if avail <= ZERO:
+        return ZERO
+    take = min(avail, needed)
+    run._comp_consumed[key] = consumed + take
+    return take
