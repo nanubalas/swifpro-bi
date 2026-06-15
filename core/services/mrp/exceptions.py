@@ -32,6 +32,13 @@ _REGISTRY = {
     "BOM_MAX_DEPTH_EXCEEDED": ("CRITICAL", "BOM nesting is too deep; review the structure."),
     "MISSING_COMPONENT_PLANNING": ("WARNING", "Create an item planning profile for this component."),
     "PHANTOM_BOM_MISSING": ("WARNING", "Phantom item has no BOM to explode."),
+    # Phase 4 (transfer planning)
+    "MISSING_TRANSFER_SOURCE_SITE": ("WARNING", "Set a default transfer-from site on the planning profile."),
+    "INVALID_TRANSFER_SOURCE_SITE": ("WARNING", "Choose a valid, active source site different from the destination."),
+    "SOURCE_SITE_SHORTAGE": ("WARNING", "Source site cannot fully cover the transfer; it is being planned."),
+    "TRANSFER_LOOP_DETECTED": ("CRITICAL", "Break the circular transfer sourcing between sites."),
+    "TRANSFER_MAX_DEPTH_EXCEEDED": ("CRITICAL", "Transfer sourcing chain is too deep; review the network."),
+    "INBOUND_TRANSFER_DUE_DATE_MISSING": ("INFO", "Transfer has no due date; planning start date was used."),
 }
 
 

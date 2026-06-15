@@ -30,7 +30,7 @@ from core.services.mrp.numbering import next_planned_order_number
 
 ZERO = Decimal("0.00")
 _MAX_ORDERS_PER_BUCKET = 200  # guard against runaway loops when max cap is tiny
-_PLANNABLE_SOURCE_TYPES = ["BUY", "MAKE"]  # PHANTOM is only planned as a component
+_PLANNABLE_SOURCE_TYPES = ["BUY", "MAKE", "TRANSFER"]  # PHANTOM is only planned as a component
 
 
 def run_mrp(run, user=None):
@@ -56,6 +56,7 @@ def run_mrp(run, user=None):
     run._mrp_exc_seen = set()
     run._supply_cache = {}      # (product_id, site_id) -> [MRPSupply]; collect once per run
     run._comp_consumed = {}     # (product_id, site_id) -> Decimal consumed by dependent demand
+    run._transfer_src_avail = {}  # (product_id, source_site_id) -> Decimal remaining source stock
 
     profiles = (ItemSitePlanning.objects
                 .filter(tenant=run.tenant, is_active=True, mrp_enabled=True,
@@ -89,7 +90,7 @@ def run_mrp(run, user=None):
 
 
 def _plan_profile(run, profile):
-    from core.services.mrp import bom_explosion
+    from core.services.mrp import bom_explosion, transfer_planning
 
     product = profile.product
     site = profile.site
@@ -140,7 +141,10 @@ def _plan_profile(run, profile):
             qty, capped, notes = lot_sizing.size_order(profile, net_req)
             if qty <= ZERO:
                 break
-            po = create_planned_order(run, profile, qty, d, lead, profile.source_type)
+            po = create_planned_order(
+                run, profile, qty, d, lead, profile.source_type,
+                transfer_from_site=(profile.default_transfer_from_site
+                                    if profile.source_type == "TRANSFER" else None))
             planned_orders.append(po)
             for code, msg in notes:
                 mrp_exc.raise_exception(run, code, msg, product=product, site=site, planned_order=po,
@@ -152,6 +156,10 @@ def _plan_profile(run, profile):
                 bom_explosion.explode_and_plan(
                     run, product, site, po.quantity, po.planned_release_date, po,
                     depth=0, ancestors=frozenset({product.id}))
+            # TRANSFER orders drive source-site demand and planning (Phase 4).
+            elif profile.source_type == "TRANSFER":
+                transfer_planning.plan_transfer(
+                    run, profile, po, depth=0, ancestors_sites=frozenset({site.id}))
             projected += qty
             guard += 1
             if guard >= _MAX_ORDERS_PER_BUCKET:
@@ -174,9 +182,11 @@ def _plan_profile(run, profile):
     return planned_orders
 
 
-def create_planned_order(run, profile, qty, required_date, lead, source_type, parent_po=None):
+def create_planned_order(run, profile, qty, required_date, lead, source_type,
+                         parent_po=None, transfer_from_site=None):
     """Create a planned order. A supplier is attached only for BUY orders;
-    MAKE orders carry the parent linkage instead."""
+    TRANSFER orders carry the source site; both MAKE and TRANSFER carry the
+    parent linkage."""
     from core.models import MRPPlannedOrder
     receipt = required_date
     release = lead_time.release_date(receipt, lead)
@@ -187,6 +197,7 @@ def create_planned_order(run, profile, qty, required_date, lead, source_type, pa
         quantity=qty, required_date=required_date,
         planned_receipt_date=receipt, planned_release_date=release,
         supplier=(profile.default_supplier if source_type == "BUY" else None),
+        transfer_from_site=transfer_from_site,
         parent_planned_order=parent_po,
         status="SUGGESTED", action_type="CREATE", exception_level="NONE",
         created_by=run.started_by,

@@ -134,4 +134,56 @@ def collect(run, profile):
                 receipt_date=receipt, quantity=qty, available_quantity=qty,
             ))
 
+    # --- Inbound transfers to this site (open + in-transit) as destination supply ---
+    if run.include_transfers:
+        created.extend(_inbound_transfer_supply(run, product, site, start))
+
     return created
+
+
+# Open transfer statuses: not yet finished (RECEIVED/POSTED already hit on-hand;
+# CANCELLED is dead).
+OPEN_TRANSFER_STATUSES = {"DRAFT", "DISPATCHED"}
+
+
+def _inbound_transfer_supply(run, product, site, start):
+    """MRPSupply rows for open transfers heading INTO ``site``. The not-yet-shipped
+    portion (qty - dispatched) is TRANSFER_ORDER; the shipped-not-received portion
+    (dispatched - received) is IN_TRANSIT - split this way so the two never
+    double-count. Transfers carry no due date, so receipt is the planning start
+    with an informational exception."""
+    from core.models import InventoryTransferLine, MRPSupply
+
+    tenant = run.tenant
+    rows = []
+    lines = (InventoryTransferLine.objects
+             .filter(transfer__tenant=tenant, transfer__to_location__site=site,
+                     transfer__status__in=OPEN_TRANSFER_STATUSES, product=product)
+             .select_related("transfer"))
+    for line in lines:
+        t = line.transfer
+        on_order = (line.qty or ZERO) - (line.dispatched_qty or ZERO)
+        in_transit = (line.dispatched_qty or ZERO) - (line.received_qty or ZERO)
+        if on_order <= ZERO and in_transit <= ZERO:
+            continue
+        mrp_exc.raise_exception(
+            run, "INBOUND_TRANSFER_DUE_DATE_MISSING",
+            f"Transfer {t.transfer_number} into {site.name} has no due date; used planning start {start}.",
+            product=product, site=site,
+            source_document_type="InventoryTransfer", source_document_id=t.transfer_number,
+            dedupe_key=("xfer_date", t.id))
+        if on_order > ZERO:
+            rows.append(MRPSupply.objects.create(
+                mrp_run=run, tenant=tenant, product=product, site=site,
+                supply_type="TRANSFER_ORDER",
+                source_document_type="InventoryTransfer", source_document_id=t.transfer_number,
+                source_line_id=str(line.id),
+                receipt_date=start, quantity=on_order, available_quantity=on_order))
+        if in_transit > ZERO:
+            rows.append(MRPSupply.objects.create(
+                mrp_run=run, tenant=tenant, product=product, site=site,
+                supply_type="IN_TRANSIT",
+                source_document_type="InventoryTransfer", source_document_id=t.transfer_number,
+                source_line_id=str(line.id),
+                receipt_date=start, quantity=in_transit, available_quantity=in_transit))
+    return rows
