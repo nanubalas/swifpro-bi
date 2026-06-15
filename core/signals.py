@@ -17,6 +17,9 @@ DEFAULT_TAX_CODES = [
 DEFAULT_ACCOUNTS = [
     ("1000", "Inventory", "ASSET"),
     ("1010", "Inventory In Transit", "ASSET"),
+    ("1020", "Raw Material Inventory", "ASSET"),
+    ("1030", "Work In Progress (WIP)", "ASSET"),
+    ("1040", "Finished Goods Inventory", "ASSET"),
     ("1050", "Bank", "ASSET"),
     ("1100", "Accounts Receivable", "ASSET"),
     ("2000", "Accounts Payable", "LIABILITY"),
@@ -28,6 +31,7 @@ DEFAULT_ACCOUNTS = [
     ("5000", "Cost of Goods Sold", "COGS"),
     ("5100", "Purchase Price Variance", "EXPENSE"),
     ("5200", "Inventory Adjustments / Shrinkage", "EXPENSE"),
+    ("5300", "Manufacturing Variance", "EXPENSE"),
     # Operating expense accounts (used by the Expenses module).
     ("6000", "General Expenses", "EXPENSE"),
     ("6100", "Rent & Rates", "EXPENSE"),

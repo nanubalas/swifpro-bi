@@ -7597,11 +7597,21 @@ def work_order_detail(request, wo_id):
                                          "released_by", "closed_by"),
         id=wo_id, tenant=tenant)
     materials = wo.materials.select_related("component", "source_location", "bom_line").all()
-    movements = (InventoryMovement.objects
-                 .filter(tenant=tenant, ref_type="WORK_ORDER", ref_id=wo.work_order_number)
-                 .select_related("product", "location").order_by("created_at"))
+    movements = list(InventoryMovement.objects
+                     .filter(tenant=tenant, ref_type="WORK_ORDER", ref_id=wo.work_order_number)
+                     .select_related("product", "location", "journal_entry").order_by("created_at"))
+    from core.models import JournalEntry
+    from core.services.mrp import work_order_posting as wop
+    je_ids = [m.journal_entry_id for m in movements if m.journal_entry_id]
+    if wo.variance_journal_id:
+        je_ids.append(wo.variance_journal_id)
+    journals = (JournalEntry.objects.filter(id__in=je_ids)
+                .prefetch_related("lines__account").order_by("id"))
+    remaining_wip = (wo.wip_material_cost or Decimal("0.00")) - (wo.finished_goods_cost or Decimal("0.00"))
+    gl_configured = wop.get_profile(tenant, wo.site) is not None
     return render(request, "work_orders/detail.html", {
         "tenant": tenant, "wo": wo, "materials": materials, "movements": movements,
+        "journals": journals, "remaining_wip": remaining_wip, "gl_configured": gl_configured,
     })
 
 

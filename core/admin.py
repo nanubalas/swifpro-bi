@@ -210,3 +210,17 @@ class WorkOrderAdmin(admin.ModelAdmin):
     search_fields = ("work_order_number", "product__sku")
     raw_id_fields = ("product", "source_mrp_planned_order", "created_by")
     inlines = [WorkOrderMaterialInline]
+
+
+# --- MRP Phase 7: Manufacturing accounting profile ---
+from core.models import ManufacturingAccountingProfile
+
+
+@admin.register(ManufacturingAccountingProfile)
+class ManufacturingAccountingProfileAdmin(admin.ModelAdmin):
+    list_display = ("tenant", "site", "is_default", "is_active",
+                    "raw_material_inventory_account", "wip_account",
+                    "finished_goods_inventory_account", "manufacturing_variance_account")
+    list_filter = ("is_default", "is_active")
+    raw_id_fields = ("raw_material_inventory_account", "wip_account",
+                     "finished_goods_inventory_account", "manufacturing_variance_account")

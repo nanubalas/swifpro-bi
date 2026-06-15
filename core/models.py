@@ -1143,6 +1143,10 @@ class InventoryMovement(models.Model):
     value = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     ref_type = models.CharField(max_length=50)  # "PO", "ORDER", "MANUAL"
     ref_id = models.CharField(max_length=100)   # po_number or order_id
+    # Optional link to the GL journal this movement was posted to (Phase 7:
+    # work-order issue/completion). Null for movements with no GL posting.
+    journal_entry = models.ForeignKey("JournalEntry", on_delete=models.SET_NULL, null=True, blank=True,
+                                      related_name="+")
     notes = models.CharField(max_length=255, blank=True, null=True)
     lot_code = models.CharField(max_length=50, blank=True, null=True)
     serial_number = models.CharField(max_length=100, blank=True, null=True)
@@ -2287,6 +2291,38 @@ class JournalLine(models.Model):
     credit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
 
+class ManufacturingAccountingProfile(models.Model):
+    """GL account set used to post work-order WIP movements (Phase 7).
+
+    Resolution: a profile matching the work order's site, else the tenant's
+    default profile. When no active profile exists, work-order GL posting is
+    skipped (inventory still moves) - keeping the Phase 6 behaviour for tenants
+    that have not configured manufacturing accounting yet.
+    """
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="manufacturing_profiles")
+    site = models.ForeignKey("Site", on_delete=models.CASCADE, null=True, blank=True,
+                             related_name="manufacturing_profiles")
+    raw_material_inventory_account = models.ForeignKey(GLAccount, on_delete=models.PROTECT,
+                                                       null=True, blank=True, related_name="+")
+    wip_account = models.ForeignKey(GLAccount, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    finished_goods_inventory_account = models.ForeignKey(GLAccount, on_delete=models.PROTECT,
+                                                         null=True, blank=True, related_name="+")
+    manufacturing_variance_account = models.ForeignKey(GLAccount, on_delete=models.PROTECT,
+                                                       null=True, blank=True, related_name="+")
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("tenant", "site")
+        ordering = ["-is_default", "id"]
+
+    def __str__(self):
+        scope = self.site.name if self.site_id else "default"
+        return f"Manufacturing GL ({scope})"
+
+
 # ============================
 # Payments (AR receipts / AP payments) + bank reconciliation
 # ============================
@@ -3093,6 +3129,10 @@ class WorkOrder(models.Model):
     # finished goods received out of WIP. GL/WIP journal posting is deferred.
     wip_material_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
     finished_goods_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    # Phase 7: WIP variance cleared to the GL on close.
+    variance_journal = models.ForeignKey("JournalEntry", on_delete=models.SET_NULL, null=True, blank=True,
+                                         related_name="+")
+    variance_posted_at = models.DateTimeField(null=True, blank=True)
     source_mrp_planned_order = models.ForeignKey("MRPPlannedOrder", on_delete=models.SET_NULL,
                                                  null=True, blank=True, related_name="work_orders")
     created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)

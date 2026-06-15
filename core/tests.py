@@ -10652,8 +10652,10 @@ class MRPEnginePhase2Tests(TestCase):
         run_mrp(run, user=self.admin)
         self.assertEqual(run.planned_orders.count(), first)
 
-    def test_make_profile_not_planned(self):
-        self._profile(source_type="MAKE", safety_stock_qty=Decimal("10"))
+    def test_make_profile_not_planned_when_disabled(self):
+        # A disabled (mrp_enabled=False) profile is skipped entirely. MAKE-source
+        # planning itself arrived in Phase 3 and is covered by MRPPhase3BomTests.
+        self._profile(source_type="MAKE", safety_stock_qty=Decimal("10"), mrp_enabled=False)
         run = self._exec(run=self._run())
         self.assertEqual(run.planned_orders.count(), 0)
 
@@ -11724,3 +11726,249 @@ class MRPPhase6WorkOrderExecutionTests(TestCase):
         self.client.post("/work-orders/%d/action/" % wo.id, {"action": "close"})
         wo.refresh_from_db()
         self.assertEqual(wo.status, "CLOSED")
+
+
+class MRPPhase7WorkOrderGLTests(TestCase):
+    """Phase 7: manufacturing GL / WIP posting for work orders."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site, GLAccount
+        from core.services.inventory import apply_movement
+        from django.core.management import call_command
+        self.tenant = Tenant.objects.create(name="GL Co")
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.loc = Location.objects.filter(tenant=self.tenant, site=self.site).order_by("id").first()
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material",
+                                         standard_cost=Decimal("2.00"))
+        self.admin = User.objects.create_user("gladmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.sales = User.objects.create_user("glsales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+        self._seq = 0
+        apply_movement(tenant=self.tenant, product=self.rm, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("100"), ref_type="SEED", ref_id="1",
+                       unit_cost=Decimal("2.00"))
+        # configure manufacturing GL (accounts + default profile)
+        call_command("setup_manufacturing_gl", "--tenant", self.tenant.name)
+
+    # --- helpers ---
+    def _wo(self, status="PLANNED", qty=Decimal("10"), req=Decimal("20"), material=True,
+            wip=Decimal("0.00"), fg=Decimal("0.00"), completed=Decimal("0.00")):
+        from core.models import WorkOrder, WorkOrderMaterial
+        self._seq += 1
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-%d" % self._seq, site=self.site,
+            product=self.fg, quantity=qty, status=status,
+            wip_material_cost=wip, finished_goods_cost=fg, quantity_completed=completed)
+        if material:
+            WorkOrderMaterial.objects.create(work_order=wo, component=self.rm, required_quantity=req)
+        return wo
+
+    def _acc(self, code):
+        from core.models import GLAccount
+        return GLAccount.objects.get(tenant=self.tenant, code=code)
+
+    def _je(self, ref_type):
+        from core.models import JournalEntry
+        return JournalEntry.objects.filter(tenant=self.tenant, ref_type=ref_type)
+
+    def _line(self, je, code):
+        return je.lines.filter(account=self._acc(code)).first()
+
+    def _on_hand(self, product, location):
+        from core.models import InventoryBalance
+        b = InventoryBalance.objects.filter(tenant=self.tenant, product=product, location=location).first()
+        return b.on_hand if b else Decimal("0.00")
+
+    # --- material issue posting ---
+    def test_issue_posts_wip_journal(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        je = self._je("WORK_ORDER_ISSUE").first()
+        self.assertIsNotNone(je)
+        self.assertEqual(self._line(je, "1030").debit, Decimal("40.00"))   # DR WIP
+        self.assertEqual(self._line(je, "1020").credit, Decimal("40.00"))  # CR Raw material
+        self.assertEqual(je.total_debit, je.total_credit)
+
+    def test_issue_journal_links_movement(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        mv = InventoryMovement.objects.get(tenant=self.tenant, movement_type="WORK_ORDER_ISSUE")
+        je = self._je("WORK_ORDER_ISSUE").first()
+        self.assertEqual(mv.journal_entry_id, je.id)
+
+    def test_issue_posting_idempotent(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp import work_order_posting as wop
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        mv = InventoryMovement.objects.get(tenant=self.tenant, movement_type="WORK_ORDER_ISSUE")
+        wop.post_work_order_material_issue(wo.materials.first(), mv, self.admin)  # re-post
+        self.assertEqual(self._je("WORK_ORDER_ISSUE").count(), 1)
+
+    # --- completion posting ---
+    def test_completion_posts_journal(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        wox.complete_work_order(wo, Decimal("10"), self.admin)
+        je = self._je("WORK_ORDER_COMPLETION").first()
+        self.assertIsNotNone(je)
+        self.assertEqual(self._line(je, "1040").debit, Decimal("40.00"))   # DR Finished goods
+        self.assertEqual(self._line(je, "1030").credit, Decimal("40.00"))  # CR WIP
+        self.assertEqual(je.total_debit, je.total_credit)
+
+    def test_completion_posting_idempotent(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp import work_order_posting as wop
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        wox.complete_work_order(wo, Decimal("10"), self.admin)
+        mv = InventoryMovement.objects.get(tenant=self.tenant, movement_type="WORK_ORDER_COMPLETION")
+        wop.post_work_order_completion(wo, mv, self.admin)
+        self.assertEqual(self._je("WORK_ORDER_COMPLETION").count(), 1)
+
+    # --- close variance ---
+    def test_close_no_variance_when_wip_cleared(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        wox.complete_work_order(wo, Decimal("10"), self.admin)  # wip 40, fg 40 -> remaining 0
+        wox.close_work_order(wo, self.admin)
+        self.assertEqual(self._je("WORK_ORDER_VARIANCE").count(), 0)
+        wo.refresh_from_db()
+        self.assertIsNotNone(wo.variance_posted_at)
+
+    def test_close_posts_variance_when_wip_remains(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="COMPLETED", material=False, wip=Decimal("40.00"),
+                      fg=Decimal("30.00"), completed=Decimal("10.00"))
+        wox.close_work_order(wo, self.admin)
+        je = self._je("WORK_ORDER_VARIANCE").first()
+        self.assertIsNotNone(je)
+        self.assertEqual(self._line(je, "5300").debit, Decimal("10.00"))   # DR variance
+        self.assertEqual(self._line(je, "1030").credit, Decimal("10.00"))  # CR WIP
+        self.assertEqual(je.total_debit, je.total_credit)
+
+    def test_close_variance_idempotent(self):
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp import work_order_posting as wop
+        wo = self._wo(status="COMPLETED", material=False, wip=Decimal("40.00"),
+                      fg=Decimal("30.00"), completed=Decimal("10.00"))
+        wox.close_work_order(wo, self.admin)
+        wop.post_work_order_close_variance(wo, self.admin)  # re-post
+        self.assertEqual(self._je("WORK_ORDER_VARIANCE").count(), 1)
+
+    # --- missing accounts ---
+    def test_missing_wip_account_raises(self):
+        from core.models import InventoryMovement, ManufacturingAccountingProfile
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp import work_order_posting as wop
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)  # posts fine first
+        mv = InventoryMovement.objects.filter(tenant=self.tenant, movement_type="WORK_ORDER_ISSUE").first()
+        p = ManufacturingAccountingProfile.objects.get(tenant=self.tenant)
+        p.wip_account = None
+        p.save()
+        # a fresh movement-id reference would now hit the missing account
+        mv.journal_entry = None
+        mv.id = None  # force a new "movement" reference for idempotency miss
+        mv.save()
+        with self.assertRaises(wop.MissingManufacturingAccount) as cm:
+            wop.post_work_order_material_issue(wo.materials.first(), mv, self.admin)
+        self.assertEqual(cm.exception.account_key, "wip")
+
+    def test_missing_finished_goods_account_raises(self):
+        from core.models import InventoryMovement, ManufacturingAccountingProfile
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp import work_order_posting as wop
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        p = ManufacturingAccountingProfile.objects.get(tenant=self.tenant)
+        p.finished_goods_inventory_account = None
+        p.save()
+        # build a completion movement by completing, then re-post against a fresh ref
+        wox.complete_work_order(wo, Decimal("10"), self.admin)  # completion posting now skipped via warning
+        mv = InventoryMovement.objects.filter(tenant=self.tenant, movement_type="WORK_ORDER_COMPLETION").first()
+        mv.journal_entry = None
+        mv.id = None
+        mv.save()
+        with self.assertRaises(wop.MissingManufacturingAccount) as cm:
+            wop.post_work_order_completion(wo, mv, self.admin)
+        self.assertEqual(cm.exception.account_key, "finished_goods_inventory")
+
+    # --- graceful when unconfigured ---
+    def test_issue_succeeds_without_gl_config(self):
+        from core.models import ManufacturingAccountingProfile, JournalEntry
+        from core.services.mrp import work_order_execution as wox
+        ManufacturingAccountingProfile.objects.filter(tenant=self.tenant).delete()
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        self.assertEqual(self._on_hand(self.rm, self.loc), Decimal("80.00"))
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.tenant, ref_type="WORK_ORDER_ISSUE").count(), 0)
+
+    # --- transactional safety ---
+    def test_issue_atomic_on_posting_failure(self):
+        from unittest import mock
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        with mock.patch.object(wox.wop, "post_work_order_material_issue", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        self.assertEqual(self._on_hand(self.rm, self.loc), Decimal("100.00"))  # rolled back
+        from core.models import InventoryMovement
+        self.assertFalse(InventoryMovement.objects.filter(tenant=self.tenant, movement_type="WORK_ORDER_ISSUE").exists())
+
+    def test_completion_atomic_on_posting_failure(self):
+        from unittest import mock
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        with mock.patch.object(wox.wop, "post_work_order_completion", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                wox.complete_work_order(wo, Decimal("10"), self.admin)
+        wo.refresh_from_db()
+        self.assertEqual(wo.quantity_completed, Decimal("0.00"))  # rolled back
+        self.assertEqual(self._on_hand(self.fg, self.loc), Decimal("0.00"))
+
+    # --- UI / permissions ---
+    def test_detail_shows_costing_and_journal(self):
+        from core.services.mrp import work_order_execution as wox
+        wo = self._wo(status="RELEASED")
+        wox.issue_material(wo.materials.first(), Decimal("20"), self.admin)
+        self.client.login(username="gladmin", password="pw")
+        resp = self.client.get("/work-orders/%d/" % wo.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Costing")
+        self.assertContains(resp, "Work In Progress")
+
+    def test_permissions_block_unauthorised(self):
+        wo = self._wo(status="RELEASED")
+        wom = wo.materials.first()
+        self.client.login(username="glsales", password="pw")
+        self.assertEqual(self.client.post("/work-orders/%d/issue/" % wo.id,
+                                          {"material_id": wom.id, "quantity": "5"}).status_code, 403)
+
+    def test_full_flow_via_views_balanced(self):
+        from core.models import JournalEntry
+        wo = self._wo(status="PLANNED")
+        wom = wo.materials.first()
+        self.client.login(username="gladmin", password="pw")
+        self.client.post("/work-orders/%d/action/" % wo.id, {"action": "firm"})
+        self.client.post("/work-orders/%d/release/" % wo.id)
+        self.client.post("/work-orders/%d/issue/" % wo.id, {"material_id": wom.id, "quantity": "20"})
+        self.client.post("/work-orders/%d/complete/" % wo.id, {"quantity": "10"})
+        self.client.post("/work-orders/%d/action/" % wo.id, {"action": "close"})
+        wo.refresh_from_db()
+        self.assertEqual(wo.status, "CLOSED")
+        jes = JournalEntry.objects.filter(tenant=self.tenant, ref_type__startswith="WORK_ORDER_")
+        self.assertTrue(jes.exists())
+        for je in jes:
+            self.assertEqual(je.total_debit, je.total_credit)
