@@ -133,6 +133,10 @@ NAV = [
         ("Units of Measure", "/uoms/", "rulers", {ADMIN}),
         ("UOM Conversions", "/uom-conversions/", "shuffle", {ADMIN}),
     ]),
+    ("Planning", [
+        ("MRP Runs", "/mrp/runs/", "cpu", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
+        ("Item Planning", "/mrp/item-planning/", "sliders2", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
+    ]),
     ("Finance", [
         ("Payments", "/payments/", "cash-stack", {ADMIN, ACCOUNTANT, FINANCE}),
         ("Expenses", "/expenses/", "wallet2", {ADMIN, ACCOUNTANT, FINANCE, MANAGER, SALES, WAREHOUSE, PURCHASING}),
@@ -189,6 +193,7 @@ NAV_SECTION_META = {
     "Sales":          {"desc": "Quotes, orders, customers, invoicing and returns.", "icon": "cart-check"},
     "Procurement":    {"desc": "Requisitions, purchase orders, suppliers and receiving.", "icon": "bag"},
     "Inventory":      {"desc": "Stock, products, transfers, counts and replenishment.", "icon": "boxes"},
+    "Planning":       {"desc": "Material requirements planning, runs and planned orders.", "icon": "cpu"},
     "Finance":        {"desc": "Payments, banking, VAT and the general ledger.", "icon": "cash-stack"},
     "Reports":        {"desc": "Financial and operational reporting.", "icon": "bar-chart-line"},
     "Administration": {"desc": "Company setup, users, roles and audit.", "icon": "gear"},
@@ -300,6 +305,8 @@ NAV_META = {
     "/inventory/replenishment/": {"desc": "Reorder planning: projected availability, suggestions and ABC.", "keywords": ["replenishment", "reorder planning", "purchase suggestions", "min max stock", "safety stock", "eoq", "abc analysis", "reorder point"]},
     "/inventory/worklist/": {"desc": "Stock stuck in transit or in hold/quarantine needing action.", "keywords": ["inventory worklist", "stale transfers", "quarantine", "hold stock", "in transit", "unresolved returns", "stuck stock"]},
     "/transfers/": {"desc": "Move stock between locations (incl. in-transit).", "keywords": ["transfer", "in-transit", "in transit", "move stock"]},
+    "/mrp/runs/": {"desc": "Material requirements planning runs and results.", "keywords": ["mrp", "material requirements planning", "planning run", "net requirement", "planned order"]},
+    "/mrp/item-planning/": {"desc": "Per-item, per-site MRP planning parameters.", "keywords": ["item planning", "planning profile", "safety stock", "lead time", "moq", "lot sizing", "source type", "make buy transfer"]},
     "/cycle-counts/": {"desc": "Targeted spot stock counts.", "keywords": ["cycle count", "spot count"]},
     "/stock-takes/": {"desc": "Full physical count of a location or whole site.", "keywords": ["stock take", "stocktake", "physical count", "stock-take"]},
     "/sites/": {"desc": "Operating sites / branches.", "keywords": ["site", "branch", "division"]},

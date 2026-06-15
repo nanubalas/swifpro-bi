@@ -142,3 +142,51 @@ class EmailLogAdmin(admin.ModelAdmin):
 class NotificationPreferenceAdmin(admin.ModelAdmin):
     list_display = ("user", "tenant", "category", "in_app", "email")
     list_filter = ("category", "in_app", "email")
+
+
+# --- MRP (Material Requirements Planning) ---
+from core.models import (
+    ItemSitePlanning, MRPRun, MRPDemand, MRPSupply,
+    MRPPlannedOrder, MRPPegging, MRPException,
+)
+
+
+@admin.register(ItemSitePlanning)
+class ItemSitePlanningAdmin(admin.ModelAdmin):
+    list_display = ("product", "site", "source_type", "default_supplier",
+                    "safety_stock_qty", "min_order_qty", "lead_time_days",
+                    "lot_sizing_method", "mrp_enabled", "is_active")
+    list_filter = ("source_type", "lot_sizing_method", "mrp_enabled", "is_active", "site")
+    search_fields = ("product__sku", "product__name", "site__name")
+    raw_id_fields = ("product", "default_supplier")
+
+
+@admin.register(MRPRun)
+class MRPRunAdmin(admin.ModelAdmin):
+    list_display = ("run_number", "run_type", "site_scope", "status",
+                    "planning_start_date", "planning_end_date", "started_by", "created_at")
+    list_filter = ("status", "run_type")
+    search_fields = ("run_number",)
+    date_hierarchy = "created_at"
+
+
+@admin.register(MRPPlannedOrder)
+class MRPPlannedOrderAdmin(admin.ModelAdmin):
+    list_display = ("planned_order_number", "mrp_run", "product", "site", "source_type",
+                    "quantity", "required_date", "status", "exception_level")
+    list_filter = ("source_type", "status", "exception_level")
+    search_fields = ("planned_order_number", "product__sku")
+    raw_id_fields = ("mrp_run", "product", "supplier", "parent_planned_order")
+
+
+@admin.register(MRPException)
+class MRPExceptionAdmin(admin.ModelAdmin):
+    list_display = ("exception_code", "severity", "mrp_run", "product", "site", "is_resolved", "created_at")
+    list_filter = ("exception_code", "severity", "is_resolved")
+    search_fields = ("product__sku", "message")
+    raw_id_fields = ("mrp_run", "product", "planned_order")
+
+
+admin.site.register(MRPDemand)
+admin.site.register(MRPSupply)
+admin.site.register(MRPPegging)

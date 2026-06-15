@@ -7359,3 +7359,121 @@ def email_log(request):
     logs = EmailLog.objects.filter(tenant=tenant)[:300]
     return render(request, "notifications/email_log.html", {"logs": logs})
 
+
+
+# ===========================================================================
+# MRP (Material Requirements Planning) - Phase 1 foundation.
+# CRUD for the per-item planning profile + create/list/detail for MRP runs.
+# The planning engine that fills demand/supply/planned-orders/exceptions
+# arrives in Phase 2+; for now a run is created in DRAFT with its parameters.
+# ===========================================================================
+
+_MRP_READ = [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE]
+_MRP_WRITE = [ROLE_ADMIN, ROLE_PROCUREMENT, ROLE_WAREHOUSE]
+
+
+@login_required
+@role_required(_MRP_READ)
+def item_planning_list(request):
+    from core.models import ItemSitePlanning
+    tenant = _get_default_tenant(request)
+    profiles = (ItemSitePlanning.objects.filter(tenant=tenant)
+                .select_related("product", "site", "default_supplier")
+                .order_by("product__sku", "site__name"))
+    return render(request, "mrp/item_planning_list.html",
+                  {"tenant": tenant, "profiles": profiles})
+
+
+@login_required
+@role_required(_MRP_WRITE, _MRP_WRITE)
+def item_planning_create(request):
+    from core.forms import ItemSitePlanningForm
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "base.html", {"content": "Create a Tenant in admin first."})
+    form = ItemSitePlanningForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        obj = form.save(commit=False)
+        obj.tenant = tenant
+        try:
+            with transaction.atomic():
+                obj.save()
+            log_audit(action="item_planning_create", request=request, user=request.user, tenant=tenant,
+                      detail=f"{obj.product.sku} @ {obj.site.name}")
+            messages.success(request, "Planning profile saved.")
+            return redirect("item_planning_list")
+        except IntegrityError:
+            form.add_error(None, "A planning profile for this product and site already exists.")
+    return render(request, "mrp/item_planning_form.html",
+                  {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@role_required(_MRP_WRITE, _MRP_WRITE)
+def item_planning_edit(request, profile_id):
+    from core.models import ItemSitePlanning
+    from core.forms import ItemSitePlanningForm
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(ItemSitePlanning, id=profile_id, tenant=tenant)
+    form = ItemSitePlanningForm(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+            messages.success(request, "Planning profile updated.")
+            return redirect("item_planning_list")
+        except IntegrityError:
+            form.add_error(None, "A planning profile for this product and site already exists.")
+    return render(request, "mrp/item_planning_form.html",
+                  {"tenant": tenant, "form": form, "mode": "edit", "profile": obj})
+
+
+@login_required
+@role_required(_MRP_READ)
+def mrp_run_list(request):
+    from core.models import MRPRun
+    tenant = _get_default_tenant(request)
+    runs = (MRPRun.objects.filter(tenant=tenant)
+            .select_related("site_scope", "started_by")
+            .order_by("-created_at"))
+    return render(request, "mrp/run_list.html", {"tenant": tenant, "runs": runs})
+
+
+@login_required
+@role_required(_MRP_WRITE, _MRP_WRITE)
+def mrp_run_create(request):
+    from core.forms import MRPRunForm
+    from core.models import MRPRun
+    from core.services.mrp import next_run_number
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "base.html", {"content": "Create a Tenant in admin first."})
+    form = MRPRunForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        run = form.save(commit=False)
+        run.tenant = tenant
+        run.run_number = next_run_number(tenant)
+        run.started_by = request.user
+        run.status = MRPRun.Status.DRAFT
+        run.save()
+        log_audit(action="mrp_run_create", request=request, user=request.user, tenant=tenant,
+                  detail=f"{run.run_number}")
+        messages.success(request, f"MRP run {run.run_number} created (Draft). The planning engine arrives in a later phase.")
+        return redirect("mrp_run_detail", run_id=run.id)
+    return render(request, "mrp/run_form.html", {"tenant": tenant, "form": form})
+
+
+@login_required
+@role_required(_MRP_READ)
+def mrp_run_detail(request, run_id):
+    from core.models import MRPRun
+    tenant = _get_default_tenant(request)
+    run = get_object_or_404(MRPRun.objects.select_related("site_scope", "started_by"),
+                            id=run_id, tenant=tenant)
+    counts = {
+        "demands": run.demands.count(),
+        "supplies": run.supplies.count(),
+        "planned_orders": run.planned_orders.count(),
+        "exceptions": run.exceptions.count(),
+    }
+    return render(request, "mrp/run_detail.html", {"tenant": tenant, "run": run, "counts": counts})

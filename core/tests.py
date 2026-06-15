@@ -10315,3 +10315,136 @@ class BootstrapDemoAdminsTests(TestCase):
         self.assertEqual(OrgMembership.objects.filter(tenant=other).count(), 1)
         m = OrgMembership.objects.get(user=ouser, tenant=other)
         self.assertEqual(m.role, "SALES")
+
+
+class MRPPhase1FoundationTests(TestCase):
+    """Phase 1: planning master-data + MRP run foundation (models, CRUD,
+    numbering, permissions). No engine yet."""
+
+    def setUp(self):
+        from core.models import OrgMembership, Site
+        self.tenant = Tenant.objects.create(name="MRP Co")
+        # Tenant creation auto-seeds a default "Main Site" (see core.signals).
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.other_site = Site.objects.create(tenant=self.tenant, name="Second Site")
+        self.product = Product.objects.create(tenant=self.tenant, sku="MRP-001", name="Widget")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Acme Supplies")
+        self.admin = User.objects.create_user("mrpadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.sales = User.objects.create_user("mrpsales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+
+    # --- models ---
+    def test_item_site_planning_created_and_scoped(self):
+        from core.models import ItemSitePlanning
+        p = ItemSitePlanning.objects.create(
+            tenant=self.tenant, product=self.product, site=self.site,
+            source_type=ItemSitePlanning.SourceType.BUY, default_supplier=self.supplier,
+            safety_stock_qty=Decimal("5"), min_order_qty=Decimal("10"),
+        )
+        self.assertEqual(p.tenant, self.tenant)
+        self.assertEqual(str(p), "MRP-001 @ Main Site (BUY)")
+
+    def test_item_site_planning_unique_per_product_site(self):
+        from core.models import ItemSitePlanning
+        from django.db import IntegrityError
+        ItemSitePlanning.objects.create(tenant=self.tenant, product=self.product, site=self.site)
+        with self.assertRaises(IntegrityError):
+            ItemSitePlanning.objects.create(tenant=self.tenant, product=self.product, site=self.site)
+
+    def test_run_number_helper_unique(self):
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number, next_planned_order_number
+        n1 = next_run_number(self.tenant)
+        self.assertTrue(n1.startswith("MRP-"))
+        MRPRun.objects.create(tenant=self.tenant, run_number=n1)
+        n2 = next_run_number(self.tenant)
+        self.assertNotEqual(n1, n2)
+        self.assertTrue(next_planned_order_number(self.tenant).startswith("PLN-"))
+
+    def test_planned_order_links_and_pegging(self):
+        from core.models import MRPRun, MRPDemand, MRPPlannedOrder, MRPPegging
+        from core.services.mrp import next_planned_order_number
+        import datetime
+        run = MRPRun.objects.create(tenant=self.tenant, run_number="MRP-T1")
+        demand = MRPDemand.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.product, site=self.site,
+            demand_type=MRPDemand.DemandType.SALES_ORDER, required_date=datetime.date(2026, 7, 1),
+            quantity=Decimal("20"), open_quantity=Decimal("20"))
+        po = MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.product, site=self.site,
+            source_type=MRPPlannedOrder.SourceType.BUY,
+            planned_order_number=next_planned_order_number(self.tenant),
+            quantity=Decimal("20"), required_date=datetime.date(2026, 7, 1))
+        MRPPegging.objects.create(tenant=self.tenant, planned_order=po, demand=demand,
+                                  pegged_quantity=Decimal("20"))
+        self.assertEqual(run.planned_orders.count(), 1)
+        self.assertEqual(po.peggings.first().demand, demand)
+
+    # --- views: item planning CRUD ---
+    def test_item_planning_create_edit_list_views(self):
+        from core.models import ItemSitePlanning
+        self.client.login(username="mrpadmin", password="pw")
+        self.assertEqual(self.client.get("/mrp/item-planning/").status_code, 200)
+        resp = self.client.post("/mrp/item-planning/new/", {
+            "product": self.product.id, "site": self.site.id, "source_type": "BUY",
+            "default_supplier": self.supplier.id,
+            "safety_stock_qty": "5", "min_order_qty": "10", "max_order_qty": "0",
+            "order_multiple": "0", "fixed_order_qty": "0", "period_days": "0",
+            "lead_time_days": "7", "planning_horizon_days": "90", "time_fence_days": "0",
+            "lot_sizing_method": "LOT_FOR_LOT", "yield_percent": "100", "scrap_percent": "0",
+            "mrp_enabled": "on", "include_sales_orders": "on",
+            "include_safety_stock": "on", "is_active": "on",
+        })
+        self.assertEqual(resp.status_code, 302)
+        prof = ItemSitePlanning.objects.get(tenant=self.tenant, product=self.product, site=self.site)
+        self.assertEqual(prof.lead_time_days, 7)
+        resp = self.client.post(f"/mrp/item-planning/{prof.id}/edit/", {
+            "product": self.product.id, "site": self.site.id, "source_type": "MAKE",
+            "safety_stock_qty": "5", "min_order_qty": "10", "max_order_qty": "0",
+            "order_multiple": "0", "fixed_order_qty": "0", "period_days": "0",
+            "lead_time_days": "14", "planning_horizon_days": "90", "time_fence_days": "0",
+            "lot_sizing_method": "LOT_FOR_LOT", "yield_percent": "100", "scrap_percent": "0",
+            "is_active": "on",
+        })
+        self.assertEqual(resp.status_code, 302)
+        prof.refresh_from_db()
+        self.assertEqual(prof.lead_time_days, 14)
+        self.assertEqual(prof.source_type, "MAKE")
+
+    # --- views: run create + detail ---
+    def test_mrp_run_create_and_detail(self):
+        from core.models import MRPRun
+        self.client.login(username="mrpadmin", password="pw")
+        resp = self.client.post("/mrp/runs/new/", {
+            "site_scope": self.site.id, "run_type": "FULL",
+            "planning_start_date": "2026-06-15", "planning_end_date": "2026-09-15",
+            "include_sales_orders": "on", "include_safety_stock": "on", "include_transfers": "on",
+            "notes": "first run",
+        })
+        self.assertEqual(resp.status_code, 302)
+        run = MRPRun.objects.get(tenant=self.tenant)
+        self.assertEqual(run.status, MRPRun.Status.DRAFT)
+        self.assertTrue(run.run_number.startswith("MRP-"))
+        self.assertEqual(run.started_by, self.admin)
+        self.assertEqual(self.client.get(f"/mrp/runs/{run.id}/").status_code, 200)
+
+    # --- permissions ---
+    def test_mrp_requires_authorised_role(self):
+        # Sales role has no MRP access.
+        self.client.login(username="mrpsales", password="pw")
+        self.assertEqual(self.client.get("/mrp/runs/").status_code, 403)
+        self.assertEqual(self.client.get("/mrp/item-planning/").status_code, 403)
+        # Admin can.
+        self.client.login(username="mrpadmin", password="pw")
+        self.assertEqual(self.client.get("/mrp/runs/").status_code, 200)
+
+    def test_mrp_requires_login(self):
+        self.assertEqual(self.client.get("/mrp/runs/").status_code, 302)
+
+    def test_planning_nav_section_and_permissions(self):
+        from core import roles as roles_mod
+        from core import permissions as perms_mod
+        sections = [t for t, _ in roles_mod.sidebar_for_role(roles_mod.ADMIN)]
+        self.assertIn("Planning", sections)
+        self.assertIn(perms_mod.MANAGE_MRP, perms_mod.ROLE_PERMISSIONS[roles_mod.PURCHASING])

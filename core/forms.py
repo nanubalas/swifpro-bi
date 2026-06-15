@@ -18,7 +18,8 @@ from core.models import (
     TaxCode, Customer, CustomerInvoice, CustomerInvoiceLine, GLAccount,
     Payment, AccessRequest, Expense, CreditNote, CreditNoteLine, BankTransaction,
     SalesQuote, SalesQuoteLine, CustomerOrder, CustomerOrderLine,
-    RecurringInvoice, RecurringInvoiceLine
+    RecurringInvoice, RecurringInvoiceLine,
+    ItemSitePlanning, MRPRun,
 )
 
 
@@ -950,3 +951,49 @@ class BankTransactionForm(TenantModelForm):
         fields = ["txn_date", "description", "amount", "reference"]
         widgets = {"txn_date": forms.DateInput(attrs={"type": "date"})}
         help_texts = {"amount": "Positive for money received, negative for money paid out."}
+
+
+class ItemSitePlanningForm(TenantModelForm):
+    """Create / edit a per-item, per-site MRP planning profile."""
+    class Meta:
+        model = ItemSitePlanning
+        fields = [
+            "product", "site", "source_type",
+            "default_supplier", "default_transfer_from_site", "default_manufacturing_site",
+            "safety_stock_qty", "min_order_qty", "max_order_qty", "order_multiple",
+            "fixed_order_qty", "period_days",
+            "lead_time_days", "planning_horizon_days", "time_fence_days",
+            "lot_sizing_method", "yield_percent", "scrap_percent",
+            "planner", "buyer",
+            "mrp_enabled", "include_sales_orders", "include_forecast",
+            "include_safety_stock", "is_active",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # planner / buyer are User FKs (no tenant column) so TenantModelForm
+        # cannot scope them; limit to members of the active organisation.
+        tenant = get_current_tenant()
+        if tenant is not None:
+            member_ids = OrgMembership.objects.filter(tenant=tenant).values_list("user_id", flat=True)
+            from django.contrib.auth.models import User
+            people = User.objects.filter(id__in=member_ids).order_by("username")
+            for name in ("planner", "buyer"):
+                if name in self.fields:
+                    self.fields[name].queryset = people
+
+
+class MRPRunForm(TenantModelForm):
+    """Set up an MRP run's parameters. The engine (Phase 2+) consumes these."""
+    class Meta:
+        model = MRPRun
+        fields = [
+            "site_scope", "run_type", "planning_start_date", "planning_end_date",
+            "include_sales_orders", "include_forecast", "include_safety_stock",
+            "include_transfers", "notes",
+        ]
+        widgets = {
+            "planning_start_date": forms.DateInput(attrs={"type": "date"}),
+            "planning_end_date": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
