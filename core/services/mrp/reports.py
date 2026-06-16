@@ -413,3 +413,45 @@ def work_order_cost_report(tenant, filters):
                   "finished_goods_cost"):
             totals[f] += (getattr(wo, f) or ZERO)
     return {"columns": columns, "rows": rows, "kpis": dict(totals)}
+
+
+# --------------------------------------------------------------------------- #
+# Reschedule suggestions (Phase 16)
+# --------------------------------------------------------------------------- #
+def reschedule_suggestion_report(run, filters):
+    qs = (run.reschedule_suggestions.select_related(
+              "product", "site", "work_centre", "applied_by", "rejected_by")
+          .order_by("severity", "id"))
+    if filters.get("suggestion_type"):
+        qs = qs.filter(suggestion_type=filters["suggestion_type"])
+    if filters.get("status"):
+        qs = qs.filter(status=filters["status"])
+    if filters.get("severity"):
+        qs = qs.filter(severity=filters["severity"])
+    if filters.get("site"):
+        qs = qs.filter(site_id=filters["site"])
+    if filters.get("work_centre"):
+        qs = qs.filter(work_centre_id=filters["work_centre"])
+    if filters.get("source_type"):
+        qs = qs.filter(source_type=filters["source_type"])
+
+    columns = ["Suggestion", "Type", "Status", "Severity", "Source document", "Item", "Site",
+               "Work centre", "Current release", "Current receipt", "Suggested release",
+               "Suggested receipt", "Current start", "Suggested start", "Reason", "Impact",
+               "Applied by", "Applied at", "Rejected by", "Rejected at"]
+    rows = []
+    for s in qs:
+        rows.append([
+            s.suggestion_number, s.get_suggestion_type_display(), s.get_status_display(),
+            s.get_severity_display(), s.source_document_id,
+            (s.product.sku if s.product_id else ""), (s.site.name if s.site_id else ""),
+            (s.work_centre.code if s.work_centre_id else ""),
+            _d(s.current_release_date), _d(s.current_receipt_date),
+            _d(s.suggested_release_date), _d(s.suggested_receipt_date),
+            _d(s.current_start), _d(s.suggested_start), s.reason, s.impact_summary,
+            (s.applied_by.username if s.applied_by_id else ""),
+            (s.applied_at.strftime("%Y-%m-%d %H:%M") if s.applied_at else ""),
+            (s.rejected_by.username if s.rejected_by_id else ""),
+            (s.rejected_at.strftime("%Y-%m-%d %H:%M") if s.rejected_at else ""),
+        ])
+    return {"columns": columns, "rows": rows, "objects": list(qs)}

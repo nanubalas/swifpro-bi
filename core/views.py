@@ -7577,7 +7577,7 @@ def mrp_planned_order_convert(request, po_id):
 _WORKBENCH_FILTERS = [
     "source_type", "status", "site", "transfer_from", "supplier", "q",
     "exception_level", "has_exception", "has_document", "demand_source", "forecast_version",
-    "req_from", "req_to", "rel_from", "rel_to",
+    "has_suggestion", "req_from", "req_to", "rel_from", "rel_to",
 ]
 
 
@@ -7648,6 +7648,15 @@ def mrp_workbench(request, run_id):
     if f.get("forecast_version"):
         qs = qs.filter(peggings__demand__demand_type="FORECAST",
                        peggings__demand__source_document_id=f["forecast_version"]).distinct()
+    # Open reschedule suggestions per planned order (Phase 16).
+    from django.db.models import Count as _Count, Q as _Q
+    qs = qs.annotate(suggestion_count=_Count(
+        "reschedule_suggestions",
+        filter=_Q(reschedule_suggestions__status__in=["SUGGESTED", "ACCEPTED"]), distinct=True))
+    if f.get("has_suggestion") == "yes":
+        qs = qs.filter(suggestion_count__gt=0)
+    elif f.get("has_suggestion") == "no":
+        qs = qs.filter(suggestion_count=0)
 
     planned_orders = list(qs.order_by("product__sku", "required_date"))
 
@@ -8614,6 +8623,134 @@ def mrp_report_work_order_cost(request):
     # Export gating: VIEW_WORK_ORDER can view; export still needs EXPORT_MRP_REPORTS.
     return _report_export_or_render(request, title="Work order cost", data=data,
                                     export_name="work-order-cost", controls=controls, kpis=kpis)
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_report_suggestions(request):
+    tenant = _get_default_tenant(request)
+    from core.models import MRPRun
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    run = _latest_run(tenant, request.GET.get("run"))
+    if run is None:
+        return render(request, "mrp/reports/empty.html",
+                      {"tenant": tenant, "title": "Reschedule suggestions"})
+    f = {k: request.GET.get(k) for k in ("suggestion_type", "status", "severity", "site",
+                                         "work_centre", "source_type")}
+    data = mrp_reports_mod.reschedule_suggestion_report(run, f)
+    controls = _run_controls(request, tenant, run, runs, extra=[
+        {"name": "suggestion_type", "label": "Type", "type": "select",
+         "options": [("", "All")] + [(t, t.replace("_", " ").title()) for t in
+                     ["CAPACITY_LEVEL", "RESCHEDULE_IN", "RESCHEDULE_OUT", "CANCEL_SUPPLY",
+                      "EXPEDITE", "DEFER"]], "value": f.get("suggestion_type") or ""},
+        {"name": "status", "label": "Status", "type": "select",
+         "options": [("", "All")] + [(s, s.title()) for s in
+                     ["SUGGESTED", "ACCEPTED", "APPLIED", "REJECTED", "EXPIRED", "FAILED"]],
+         "value": f.get("status") or ""},
+        {"name": "severity", "label": "Severity", "type": "select",
+         "options": [("", "All"), ("INFO", "Info"), ("WARNING", "Warning"), ("CRITICAL", "Critical")],
+         "value": f.get("severity") or ""},
+    ])
+    return _report_export_or_render(request, title="Reschedule suggestions", data=data,
+                                    export_name="reschedule-suggestions", controls=controls,
+                                    run=run, runs=runs)
+
+
+# ===========================================================================
+# Reschedule suggestions + capacity levelling (Phase 16)
+# ===========================================================================
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_SUGGESTIONS)
+def mrp_suggestions(request, run_id=None):
+    from core.models import MRPRun, Site, WorkCentre
+    from django.db.models import Count, Q
+    tenant = _get_default_tenant(request)
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    run = _latest_run(tenant, run_id or request.GET.get("run"))
+    if run is None:
+        return render(request, "mrp/suggestions.html",
+                      {"tenant": tenant, "run": None, "runs": runs, "suggestions": []})
+    qs = (run.reschedule_suggestions
+          .select_related("product", "site", "work_centre", "planned_order").order_by("severity", "id"))
+    f = request.GET
+    if f.get("suggestion_type"):
+        qs = qs.filter(suggestion_type=f["suggestion_type"])
+    if f.get("status"):
+        qs = qs.filter(status=f["status"])
+    if f.get("severity"):
+        qs = qs.filter(severity=f["severity"])
+    if f.get("site"):
+        qs = qs.filter(site_id=f["site"])
+    if f.get("work_centre"):
+        qs = qs.filter(work_centre_id=f["work_centre"])
+    if f.get("source_type"):
+        qs = qs.filter(source_type=f["source_type"])
+    counts = run.reschedule_suggestions.aggregate(
+        total=Count("id"),
+        open=Count("id", filter=Q(status="SUGGESTED")),
+        applied=Count("id", filter=Q(status="APPLIED")),
+        rejected=Count("id", filter=Q(status="REJECTED")),
+        critical=Count("id", filter=Q(severity="CRITICAL")),
+    )
+    return render(request, "mrp/suggestions.html", {
+        "tenant": tenant, "run": run, "runs": runs, "suggestions": list(qs), "filters": f,
+        "counts": counts,
+        "can_manage": permissions_mod.MANAGE_MRP_SUGGESTIONS in _effective_perms(request),
+        "sites": Site.objects.filter(tenant=tenant).order_by("name"),
+        "work_centres": WorkCentre.objects.filter(tenant=tenant).order_by("code"),
+        "types": ["CAPACITY_LEVEL", "RESCHEDULE_IN", "RESCHEDULE_OUT", "CANCEL_SUPPLY", "EXPEDITE", "DEFER"],
+        "statuses": ["SUGGESTED", "ACCEPTED", "APPLIED", "REJECTED", "EXPIRED", "FAILED"],
+        "severities": ["INFO", "WARNING", "CRITICAL"],
+    })
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_MRP_SUGGESTIONS)
+def mrp_generate_suggestions(request, run_id):
+    from core.models import MRPRun
+    from core.services.mrp import reschedule
+    tenant = _get_default_tenant(request)
+    run = get_object_or_404(MRPRun, id=run_id, tenant=tenant)
+    if request.method == "POST":
+        n = reschedule.generate_reschedule_suggestions(run, request.user)
+        log_audit(action="mrp_generate_suggestions", request=request, user=request.user,
+                  tenant=tenant, detail=f"{run.run_number}: {n}")
+        messages.success(request, f"Generated {n} reschedule suggestion(s).")
+    return redirect("mrp_suggestions_run", run_id=run.id)
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_MRP_SUGGESTIONS)
+def mrp_suggestion_action(request, run_id):
+    from core.models import MRPRun, MRPRescheduleSuggestion
+    from core.services.mrp import reschedule
+    tenant = _get_default_tenant(request)
+    run = get_object_or_404(MRPRun, id=run_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("mrp_suggestions_run", run_id=run.id)
+    action = (request.POST.get("action") or "").lower()
+    ids = request.POST.getlist("selected")
+    sugs = list(MRPRescheduleSuggestion.objects.filter(tenant=tenant, mrp_run=run, id__in=ids)
+                .select_related("planned_order", "work_order_operation", "work_order_operation__work_order"))
+    if not sugs:
+        messages.info(request, "Select at least one suggestion.")
+        return redirect("mrp_suggestions_run", run_id=run.id)
+    reason = request.POST.get("reason") or ""
+    if action in ("apply", "bulk_apply"):
+        res = reschedule.bulk_apply_suggestions(sugs, request.user)
+        lvl = messages.success if res["applied"] and not res["failed"] else messages.warning
+        lvl(request, f"Applied {res['applied']}, failed {res['failed']}.")
+        for r in res["reasons"][:10]:
+            messages.warning(request, r)
+    elif action in ("reject", "bulk_reject"):
+        res = reschedule.bulk_reject_suggestions(sugs, request.user, reason)
+        messages.success(request, f"Rejected {res['rejected']} suggestion(s).")
+    else:
+        messages.error(request, "Unknown suggestion action.")
+    log_audit(action=f"mrp_suggestion_{action}", request=request, user=request.user, tenant=tenant,
+              detail=run.run_number)
+    return redirect("mrp_suggestions_run", run_id=run.id)
 
 
 # ===========================================================================

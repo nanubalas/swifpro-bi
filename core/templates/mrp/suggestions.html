@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Reschedule Suggestions{% endblock %}
+{% block back_url %}{% url 'mrp_reports_index' %}{% endblock %}
+{% block body %}
+<style>
+  .sg-sev-CRITICAL { color: #b02a37; font-weight: 600; }
+  .sg-sev-WARNING { color: #997404; font-weight: 600; }
+  .sg-sev-INFO { color: #0a58ca; }
+</style>
+
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-lightbulb me-2"></i>Reschedule Suggestions</h2>
+    <div class="text-muted">{% if run %}Run {{ run.run_number }}{% else %}No MRP runs yet{% endif %} &middot; planner-approved recommendations.</div>
+  </div>
+  {% if run %}
+  <div class="d-flex gap-2 align-self-center flex-wrap">
+    <form method="get" class="d-flex gap-1 align-self-center">
+      <select name="run" class="form-select form-select-sm" onchange="this.form.submit()">
+        {% for r in runs %}<option value="{{ r.id }}" {% if r.id == run.id %}selected{% endif %}>{{ r.run_number }}</option>{% endfor %}
+      </select>
+    </form>
+    {% if can_manage %}
+    <form method="post" action="{% url 'mrp_generate_suggestions' run.id %}">{% csrf_token %}
+      <button class="btn btn-primary" type="submit"><i class="bi bi-magic me-1"></i> Generate suggestions</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if run %}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Total</div><div class="fs-5 fw-bold">{{ counts.total }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Open</div><div class="fs-5 fw-bold">{{ counts.open }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Applied</div><div class="fs-5 fw-bold">{{ counts.applied }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Rejected</div><div class="fs-5 fw-bold">{{ counts.rejected }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Critical</div><div class="fs-5 fw-bold sg-sev-CRITICAL">{{ counts.critical }}</div></div></div></div>
+</div>
+
+<div class="card mb-3"><div class="card-body py-3">
+  <form method="get" class="row g-2 align-items-end">
+    <input type="hidden" name="run" value="{{ run.id }}">
+    <div class="col-6 col-md-2"><label class="form-label small mb-1">Type</label>
+      <select name="suggestion_type" class="form-select form-select-sm"><option value="">All</option>
+        {% for t in types %}<option value="{{ t }}" {% if filters.suggestion_type == t %}selected{% endif %}>{{ t|title }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label small mb-1">Status</label>
+      <select name="status" class="form-select form-select-sm"><option value="">All</option>
+        {% for s in statuses %}<option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label small mb-1">Severity</label>
+      <select name="severity" class="form-select form-select-sm"><option value="">All</option>
+        {% for s in severities %}<option value="{{ s }}" {% if filters.severity == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label small mb-1">Site</label>
+      <select name="site" class="form-select form-select-sm"><option value="">All</option>
+        {% for s in sites %}<option value="{{ s.id }}" {% if filters.site == s.id|stringformat:'s' %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label small mb-1">Work centre</label>
+      <select name="work_centre" class="form-select form-select-sm"><option value="">All</option>
+        {% for w in work_centres %}<option value="{{ w.id }}" {% if filters.work_centre == w.id|stringformat:'s' %}selected{% endif %}>{{ w.code }}</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-auto"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply</button>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'mrp_suggestions_run' run.id %}">Clear</a></div>
+  </form>
+</div></div>
+
+<form method="post" action="{% url 'mrp_suggestion_action' run.id %}">
+  {% csrf_token %}
+  {% if can_manage %}
+  <div class="card mb-2"><div class="card-body py-2 d-flex flex-wrap gap-2 align-items-center">
+    <span class="small text-muted me-1"><span id="sg-count">0</span> selected</span>
+    <button class="btn btn-sm btn-success" type="submit" name="action" value="bulk_apply"><i class="bi bi-check2 me-1"></i>Apply</button>
+    <input type="text" name="reason" class="form-control form-control-sm" style="width:12rem" placeholder="reject reason (optional)">
+    <button class="btn btn-sm btn-outline-danger" type="submit" name="action" value="bulk_reject">Reject</button>
+  </div></div>
+  {% endif %}
+  <div class="card"><div class="table-responsive" style="max-height:calc(100vh - 360px);overflow:auto">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light" style="position:sticky;top:0;z-index:2"><tr>
+        {% if can_manage %}<th style="width:30px"><input type="checkbox" id="sg-all" class="form-check-input"></th>{% endif %}
+        <th>Suggestion</th><th>Type</th><th>Severity</th><th>Item</th><th>Site</th><th>Work centre</th>
+        <th>Source</th><th>Current</th><th>Suggested</th><th>Reason</th><th>Status</th>
+      </tr></thead>
+      <tbody>
+        {% for s in suggestions %}<tr>
+          {% if can_manage %}<td>{% if s.is_open %}<input type="checkbox" class="form-check-input sg-check" name="selected" value="{{ s.id }}">{% endif %}</td>{% endif %}
+          <td class="small text-nowrap">{{ s.suggestion_number }}</td>
+          <td><span class="badge text-bg-light">{{ s.get_suggestion_type_display }}</span></td>
+          <td class="small sg-sev-{{ s.severity }}">{{ s.get_severity_display }}</td>
+          <td class="small">{{ s.product.sku|default:'-' }}</td>
+          <td class="small">{{ s.site.name|default:'-' }}</td>
+          <td class="small">{{ s.work_centre.code|default:'-' }}</td>
+          <td class="small">{{ s.source_document_id|default:'-' }}</td>
+          <td class="small text-nowrap">{{ s.current_receipt_date|default:s.current_release_date|default:s.current_start|default:'-' }}</td>
+          <td class="small text-nowrap">{{ s.suggested_receipt_date|default:s.suggested_release_date|default:s.suggested_start|default:'-' }}</td>
+          <td class="small">{{ s.reason }}</td>
+          <td><span class="badge {% if s.status == 'APPLIED' %}text-bg-success{% elif s.status == 'REJECTED' %}text-bg-secondary{% else %}text-bg-light{% endif %}">{{ s.get_status_display }}</span></td>
+        </tr>{% empty %}
+        <tr><td colspan="12" class="text-center text-muted py-4">No suggestions. Click Generate suggestions to analyse this run.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div></div>
+</form>
+{% else %}
+<div class="card"><div class="card-body text-center text-muted py-5">No MRP runs yet. Create and run an MRP run first.</div></div>
+{% endif %}
+
+<script>
+  (function () {
+    var all = document.getElementById("sg-all");
+    var boxes = Array.prototype.slice.call(document.querySelectorAll(".sg-check"));
+    var count = document.getElementById("sg-count");
+    function refresh() { if (count) count.textContent = boxes.filter(function (b) { return b.checked; }).length; }
+    if (all) all.addEventListener("change", function () { boxes.forEach(function (b) { b.checked = all.checked; }); refresh(); });
+    boxes.forEach(function (b) { b.addEventListener("change", refresh); });
+    refresh();
+  })();
+</script>
+{% endblock %}

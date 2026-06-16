@@ -14633,3 +14633,343 @@ class MRPPhase15ReportsTests(TestCase):
         self.client.login(username="repsales", password="pw")  # Sales: no MRP report perms
         resp = self.client.get("/mrp/reports/")
         self.assertEqual(resp.status_code, 403)
+
+
+class MRPPhase16RescheduleTests(TestCase):
+    """Phase 16: reschedule suggestions + capacity-levelling recommendations."""
+
+    def setUp(self):
+        import datetime
+        from core.models import (OrgMembership, Site, WorkCentre, RoutingHeader, RoutingOperation,
+                                  MRPRun)
+        from core.services.mrp import next_run_number
+        self.tenant = Tenant.objects.create(name="Sug Co")
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.admin = User.objects.create_user("sugadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.purchasing = User.objects.create_user("sugpur", password="pw")
+        OrgMembership.objects.create(user=self.purchasing, tenant=self.tenant, role="PURCHASING", is_default=True)
+        self.warehouse = User.objects.create_user("sugwh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.sales = User.objects.create_user("sugsales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+
+        self.wc = WorkCentre.objects.create(tenant=self.tenant, site=self.site, code="ASM", name="Assembly",
+                                            capacity_hours_per_day=Decimal("8"), efficiency_percent=Decimal("100"),
+                                            is_active=True)
+        self.routing = RoutingHeader.objects.create(tenant=self.tenant, product=self.fg, site=self.site,
+                                                    routing_code="R-FG", status="ACTIVE", is_default=True)
+        RoutingOperation.objects.create(routing=self.routing, operation_sequence=10, operation_name="Assembly",
+                                        work_centre=self.wc, setup_minutes=Decimal("480"),
+                                        run_minutes_per_unit=Decimal("0"))
+        from django.utils import timezone as _tz
+        d = datetime.date(2026, 7, 15)
+        self.wed = d - datetime.timedelta(days=d.weekday()) + datetime.timedelta(days=2)  # a Wednesday
+        self.tue = self.wed - datetime.timedelta(days=1)
+        self.today = _tz.localdate()
+        self.run = MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant), site_scope=None,
+            planning_start_date=self.today, planning_end_date=self.today + datetime.timedelta(days=120),
+            status="COMPLETED")
+
+    # --- helpers ---
+    def _po(self, source="MAKE", product=None, qty="1", status="SUGGESTED", receipt=None, required=None,
+            release=None, supplier=None):
+        from core.models import MRPPlannedOrder
+        from core.services.mrp import next_planned_order_number
+        return MRPPlannedOrder.objects.create(
+            mrp_run=self.run, tenant=self.tenant, product=(product or self.fg), site=self.site,
+            source_type=source, planned_order_number=next_planned_order_number(self.tenant),
+            quantity=Decimal(qty), required_date=(required or self.wed),
+            planned_receipt_date=(receipt or self.wed), planned_release_date=(release or self.wed),
+            supplier=supplier, status=status)
+
+    def _demand(self, product=None, required=None, qty="10"):
+        from core.models import MRPDemand
+        return MRPDemand.objects.create(
+            mrp_run=self.run, tenant=self.tenant, product=(product or self.fg), site=self.site,
+            demand_type="SALES_ORDER", required_date=(required or self.wed), quantity=Decimal(qty),
+            open_quantity=Decimal(qty))
+
+    def _supply(self, stype="PURCHASE_ORDER", product=None, receipt=None, qty="10", src="PO-1"):
+        from core.models import MRPSupply
+        return MRPSupply.objects.create(
+            mrp_run=self.run, tenant=self.tenant, product=(product or self.fg), site=self.site,
+            supply_type=stype, source_document_type="PurchaseOrder", source_document_id=src,
+            receipt_date=receipt, quantity=Decimal(qty), available_quantity=Decimal(qty))
+
+    def _wo(self, status="PLANNED", op_dates=True):
+        from core.models import WorkOrder, WorkOrderOperation
+        from core.services.mrp.numbering import next_planned_order_number
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.site, product=self.fg, quantity=Decimal("1"), status=status,
+            required_date=self.wed, planned_end_date=self.wed)
+        op = WorkOrderOperation.objects.create(
+            work_order=wo, operation_sequence=10, operation_name="Assembly", work_centre=self.wc,
+            planned_hours=Decimal("8"),
+            planned_start=(self.wed if op_dates else None), planned_end=(self.wed if op_dates else None),
+            status="PLANNED")
+        return wo, op
+
+    def _sug(self, **kw):
+        from core.models import MRPRescheduleSuggestion
+        defaults = dict(tenant=self.tenant, mrp_run=self.run, suggestion_number="RS-T-1",
+                        suggestion_type="RESCHEDULE_IN", source_type="MRP_PLANNED_ORDER",
+                        source_document_type="MRPPlannedOrder", severity="WARNING")
+        defaults.update(kw)
+        return MRPRescheduleSuggestion.objects.create(**defaults)
+
+    # =========================== capacity levelling ===========================
+    def test_capacity_level_suggestion_created(self):
+        from core.services.mrp import reschedule
+        self._po(qty="1", receipt=self.wed, required=self.wed)            # 8h
+        self._po(qty="1", receipt=self.wed, required=self.wed + __import__("datetime").timedelta(days=5))  # 8h
+        n = reschedule.generate_capacity_level_suggestions(self.run, self.admin)
+        self.assertGreaterEqual(n, 1)
+        from core.models import MRPRescheduleSuggestion
+        sug = MRPRescheduleSuggestion.objects.filter(mrp_run=self.run, suggestion_type="CAPACITY_LEVEL").first()
+        self.assertIsNotNone(sug)
+        self.assertEqual(sug.work_centre_id, self.wc.id)
+
+    def test_capacity_level_chooses_unconverted_planned_order(self):
+        import datetime
+        from core.services.mrp import reschedule
+        converted = self._po(qty="1", receipt=self.wed, required=self.wed, status="CONVERTED")
+        unconverted = self._po(qty="1", receipt=self.wed, required=self.wed + datetime.timedelta(days=5))
+        reschedule.generate_capacity_level_suggestions(self.run, self.admin)
+        from core.models import MRPRescheduleSuggestion
+        sug = MRPRescheduleSuggestion.objects.get(mrp_run=self.run, suggestion_type="CAPACITY_LEVEL")
+        self.assertEqual(sug.planned_order_id, unconverted.id)
+        self.assertEqual(sug.suggested_receipt_date, self.tue)  # nearest earlier working day
+
+    def test_capacity_level_does_not_move_released_work_order(self):
+        from core.services.mrp import reschedule
+        self._po(qty="1", receipt=self.wed, required=self.wed)
+        self._po(qty="1", receipt=self.wed, required=self.wed)
+        self._wo(status="RELEASED")   # contributes load but must not be moved
+        reschedule.generate_capacity_level_suggestions(self.run, self.admin)
+        from core.models import MRPRescheduleSuggestion
+        for s in MRPRescheduleSuggestion.objects.filter(mrp_run=self.run, suggestion_type="CAPACITY_LEVEL"):
+            self.assertIsNone(s.work_order_operation_id)
+            self.assertIsNotNone(s.planned_order_id)
+
+    def test_capacity_level_does_not_move_closed_work_order(self):
+        from core.services.mrp import reschedule
+        self._wo(status="CLOSED")   # closed WO load is ignored entirely
+        # Only a single planned order (8h) -> no overload -> no suggestion.
+        self._po(qty="1", receipt=self.wed, required=self.wed)
+        n = reschedule.generate_capacity_level_suggestions(self.run, self.admin)
+        self.assertEqual(n, 0)
+
+    # =========================== reschedule in/out ===========================
+    def test_reschedule_in_when_supply_late(self):
+        import datetime
+        from core.services.mrp import reschedule
+        self._demand(required=self.wed)
+        self._supply(receipt=self.wed + datetime.timedelta(days=10))   # late
+        reschedule.generate_reschedule_in_out_suggestions(self.run, self.admin)
+        from core.models import MRPRescheduleSuggestion
+        self.assertTrue(MRPRescheduleSuggestion.objects.filter(
+            mrp_run=self.run, suggestion_type="RESCHEDULE_IN").exists())
+
+    def test_reschedule_out_when_supply_early(self):
+        import datetime
+        from core.services.mrp import reschedule
+        self._demand(required=self.wed)
+        self._supply(receipt=self.wed - datetime.timedelta(days=20))   # far too early
+        reschedule.generate_reschedule_in_out_suggestions(self.run, self.admin)
+        from core.models import MRPRescheduleSuggestion
+        self.assertTrue(MRPRescheduleSuggestion.objects.filter(
+            mrp_run=self.run, suggestion_type="RESCHEDULE_OUT").exists())
+
+    # =========================== cancel / expedite ===========================
+    def test_cancel_suggestion_for_unpegged_planned_order(self):
+        from core.services.mrp import reschedule
+        self._po(source="BUY", product=self.rm, supplier=self.supplier)   # no pegging
+        reschedule.generate_cancel_supply_suggestions(self.run, self.admin)
+        from core.models import MRPRescheduleSuggestion
+        self.assertTrue(MRPRescheduleSuggestion.objects.filter(
+            mrp_run=self.run, suggestion_type="CANCEL_SUPPLY").exists())
+
+    def test_expedite_suggestion_for_past_due_release(self):
+        import datetime
+        from core.services.mrp import reschedule
+        self._po(source="BUY", product=self.rm, supplier=self.supplier,
+                 release=self.today - datetime.timedelta(days=5))
+        reschedule.generate_expedite_suggestions(self.run, self.admin)
+        from core.models import MRPRescheduleSuggestion
+        s = MRPRescheduleSuggestion.objects.filter(mrp_run=self.run, suggestion_type="EXPEDITE").first()
+        self.assertIsNotNone(s)
+        self.assertEqual(s.severity, "CRITICAL")
+
+    # =========================== idempotency ===========================
+    def test_generation_is_idempotent(self):
+        import datetime
+        from core.services.mrp import reschedule
+        from core.models import MRPRescheduleSuggestion
+        self._po(source="BUY", product=self.rm, supplier=self.supplier,
+                 release=self.today - datetime.timedelta(days=5))
+        reschedule.generate_reschedule_suggestions(self.run, self.admin)
+        first = MRPRescheduleSuggestion.objects.filter(mrp_run=self.run).count()
+        reschedule.generate_reschedule_suggestions(self.run, self.admin)
+        second = MRPRescheduleSuggestion.objects.filter(mrp_run=self.run).count()
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(first, 1)
+
+    # =========================== apply / reject ===========================
+    def test_apply_reschedule_updates_planned_dates(self):
+        import datetime
+        from core.services.mrp import reschedule
+        po = self._po(source="BUY", product=self.rm, supplier=self.supplier)
+        new_receipt = self.wed + datetime.timedelta(days=3)
+        sug = self._sug(suggestion_type="RESCHEDULE_IN", planned_order=po, product=self.rm,
+                        site=self.site, suggested_receipt_date=new_receipt, suggested_release_date=new_receipt)
+        reschedule.apply_suggestion(sug, self.admin)
+        po.refresh_from_db(); sug.refresh_from_db()
+        self.assertEqual(po.planned_receipt_date, new_receipt)
+        self.assertEqual(po.action_type, "RESCHEDULE_IN")
+        self.assertEqual(sug.status, "APPLIED")
+        self.assertEqual(sug.applied_by_id, self.admin.id)
+
+    def test_apply_cancel_only_safe(self):
+        from core.services.mrp import reschedule
+        po = self._po(source="BUY", product=self.rm, supplier=self.supplier)
+        sug = self._sug(suggestion_type="CANCEL_SUPPLY", planned_order=po)
+        reschedule.apply_suggestion(sug, self.admin)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CANCELLED")
+
+    def test_apply_cancel_blocked_for_converted(self):
+        from core.services.mrp import reschedule
+        po = self._po(source="BUY", product=self.rm, supplier=self.supplier, status="CONVERTED")
+        sug = self._sug(suggestion_type="CANCEL_SUPPLY", planned_order=po)
+        with self.assertRaises(reschedule.RescheduleError):
+            reschedule.apply_suggestion(sug, self.admin)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CONVERTED")
+
+    def test_apply_work_order_operation_updates_dates(self):
+        import datetime
+        from core.services.mrp import reschedule
+        wo, op = self._wo(status="PLANNED")
+        new_start = self.tue
+        sug = self._sug(suggestion_type="CAPACITY_LEVEL", source_type="WORK_ORDER_OPERATION",
+                        source_document_type="WorkOrderOperation", work_order_operation=op,
+                        suggested_start=new_start, suggested_end=new_start)
+        reschedule.apply_suggestion(sug, self.admin)
+        op.refresh_from_db()
+        self.assertEqual(op.planned_start, new_start)
+
+    def test_apply_blocked_for_released_work_order(self):
+        from core.services.mrp import reschedule
+        wo, op = self._wo(status="RELEASED")
+        sug = self._sug(suggestion_type="CAPACITY_LEVEL", source_type="WORK_ORDER_OPERATION",
+                        source_document_type="WorkOrderOperation", work_order_operation=op,
+                        suggested_start=self.tue, suggested_end=self.tue)
+        with self.assertRaises(reschedule.RescheduleError):
+            reschedule.apply_suggestion(sug, self.admin)
+        sug.refresh_from_db()
+        self.assertEqual(sug.status, "SUGGESTED")
+
+    def test_reject_updates_status(self):
+        from core.services.mrp import reschedule
+        po = self._po(source="BUY", product=self.rm, supplier=self.supplier)
+        sug = self._sug(suggestion_type="CANCEL_SUPPLY", planned_order=po)
+        reschedule.reject_suggestion(sug, self.admin, "not needed")
+        sug.refresh_from_db()
+        self.assertEqual(sug.status, "REJECTED")
+        self.assertEqual(sug.rejection_reason, "not needed")
+
+    def test_bulk_apply_skips_invalid(self):
+        from core.services.mrp import reschedule
+        po = self._po(source="BUY", product=self.rm, supplier=self.supplier)
+        good = self._sug(suggestion_type="CANCEL_SUPPLY", planned_order=po, suggestion_number="RS-G")
+        wo, op = self._wo(status="RELEASED")
+        bad = self._sug(suggestion_type="CAPACITY_LEVEL", source_type="WORK_ORDER_OPERATION",
+                        work_order_operation=op, suggested_start=self.tue, suggested_end=self.tue,
+                        suggestion_number="RS-B")
+        res = reschedule.bulk_apply_suggestions([good, bad], self.admin)
+        self.assertEqual(res["applied"], 1)
+        self.assertEqual(res["failed"], 1)
+
+    def test_bulk_reject(self):
+        from core.services.mrp import reschedule
+        s1 = self._sug(suggestion_number="RS-1")
+        s2 = self._sug(suggestion_number="RS-2")
+        res = reschedule.bulk_reject_suggestions([s1, s2], self.admin, "bulk")
+        self.assertEqual(res["rejected"], 2)
+
+    # =========================== views ===========================
+    def test_suggestions_page_loads(self):
+        self._sug(suggestion_number="RS-V", planned_order=self._po(), product=self.fg, site=self.site)
+        self.client.login(username="sugadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/suggestions/" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Reschedule Suggestions")
+
+    def test_suggestions_filter_by_type(self):
+        self._sug(suggestion_number="RS-IN", suggestion_type="RESCHEDULE_IN", planned_order=self._po())
+        self._sug(suggestion_number="RS-EXP", suggestion_type="EXPEDITE", planned_order=self._po(source="BUY", product=self.rm))
+        self.client.login(username="sugadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/suggestions/?suggestion_type=EXPEDITE" % self.run.id)
+        self.assertContains(resp, "RS-EXP")
+        self.assertNotContains(resp, "RS-IN")
+
+    def test_generate_via_view(self):
+        import datetime
+        self._po(source="BUY", product=self.rm, supplier=self.supplier,
+                 release=self.today - datetime.timedelta(days=5))
+        self.client.login(username="sugadmin", password="pw")
+        resp = self.client.post("/mrp/runs/%d/suggestions/generate/" % self.run.id)
+        self.assertEqual(resp.status_code, 302)
+        from core.models import MRPRescheduleSuggestion
+        self.assertTrue(MRPRescheduleSuggestion.objects.filter(mrp_run=self.run).exists())
+
+    def test_capacity_load_links_to_suggestions(self):
+        self.client.login(username="sugadmin", password="pw")
+        resp = self.client.get("/capacity-load/")
+        self.assertContains(resp, "Levelling suggestions")
+
+    def test_workbench_shows_suggestion_count(self):
+        po = self._po()
+        self._sug(suggestion_number="RS-WB", planned_order=po)
+        self.client.login(username="sugadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "bi-lightbulb")
+
+    def test_suggestions_report_loads_and_exports(self):
+        self._sug(suggestion_number="RS-RPT", planned_order=self._po())
+        self.client.login(username="sugadmin", password="pw")
+        resp = self.client.get("/mrp/reports/suggestions/?run=%d" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "RS-RPT")
+        csv = self.client.get("/mrp/reports/suggestions/?run=%d&export=1" % self.run.id)
+        self.assertTrue(csv["Content-Type"].startswith("text/csv"))
+        self.assertIn("RS-RPT", csv.content.decode())
+
+    # =========================== permissions ===========================
+    def test_view_only_user_cannot_apply(self):
+        po = self._po(source="BUY", product=self.rm, supplier=self.supplier)
+        sug = self._sug(suggestion_type="CANCEL_SUPPLY", planned_order=po, suggestion_number="RS-P")
+        self.client.login(username="sugwh", password="pw")  # Warehouse: VIEW_MRP_SUGGESTIONS only
+        resp = self.client.post("/mrp/runs/%d/suggestions/action/" % self.run.id,
+                                {"action": "bulk_apply", "selected": [sug.id]})
+        self.assertEqual(resp.status_code, 403)
+        sug.refresh_from_db()
+        self.assertEqual(sug.status, "SUGGESTED")
+
+    def test_manage_user_can_apply(self):
+        po = self._po(source="BUY", product=self.rm, supplier=self.supplier)
+        sug = self._sug(suggestion_type="CANCEL_SUPPLY", planned_order=po, suggestion_number="RS-M")
+        self.client.login(username="sugpur", password="pw")  # Purchasing: MANAGE_MRP_SUGGESTIONS
+        resp = self.client.post("/mrp/runs/%d/suggestions/action/" % self.run.id,
+                                {"action": "bulk_apply", "selected": [sug.id]})
+        self.assertEqual(resp.status_code, 302)
+        sug.refresh_from_db()
+        self.assertEqual(sug.status, "APPLIED")
