@@ -37,6 +37,7 @@
   <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_forecast_consumption' %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-graph-up-arrow me-2"></i>Forecast Consumption</h6><div class="small text-muted">Forecast, consumed and remaining quantity by version.</div></div></a></div>
   <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'capacity_load' %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-bar-chart-steps me-2"></i>Capacity Load</h6><div class="small text-muted">Work-centre available vs scheduled hours by day.</div></div></a></div>
   <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_work_order_cost' %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-cash-coin me-2"></i>Work Order Cost</h6><div class="small text-muted">Material, labour, overhead, scrap, FG and variance cost.</div></div></a></div>
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_suggestions' %}{% if rid %}?run={{ rid }}{% endif %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-lightbulb me-2"></i>Reschedule Suggestions</h6><div class="small text-muted">Capacity-levelling and reschedule recommendations.</div></div></a></div>
   {% endwith %}
 </div>
 {% endblock %}

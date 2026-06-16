@@ -129,6 +129,14 @@
       </select>
     </div>
     <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Has suggestion</label>
+      <select name="has_suggestion" class="form-select form-select-sm">
+        <option value="">Any</option>
+        <option value="yes" {% if filters.has_suggestion == 'yes' %}selected{% endif %}>Yes</option>
+        <option value="no" {% if filters.has_suggestion == 'no' %}selected{% endif %}>No</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
       <label class="form-label small mb-1">Required from</label>
       <input type="date" name="req_from" value="{{ filters.req_from }}" class="form-control form-control-sm">
     </div>
@@ -185,7 +193,7 @@
       {% for p in planned_orders %}
         <tr>
           {% if 'manage_mrp' in perms %}<td><input type="checkbox" class="form-check-input wb-check" name="selected" value="{{ p.id }}"></td>{% endif %}
-          <td class="small text-nowrap">{{ p.planned_order_number }}</td>
+          <td class="small text-nowrap">{{ p.planned_order_number }}{% if p.suggestion_count %} <a href="{% url 'mrp_suggestions_run' run.id %}" class="badge text-bg-info text-decoration-none" title="Open reschedule suggestions"><i class="bi bi-lightbulb"></i> {{ p.suggestion_count }}</a>{% endif %}</td>
           <td><span class="badge text-bg-light">{{ p.get_source_type_display }}</span></td>
           <td class="fw-semibold">{{ p.product.sku }}</td>
           <td class="small">{{ p.product.name|truncatechars:32 }}</td>

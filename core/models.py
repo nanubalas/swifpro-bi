@@ -3621,3 +3621,102 @@ class WorkOrderCostBooking(models.Model):
 
     def __str__(self):
         return f"{self.booking_type} {self.amount} ({self.work_order.work_order_number})"
+
+
+class MRPRescheduleSuggestion(models.Model):
+    """A planner-reviewable reschedule / levelling recommendation (Phase 16).
+
+    Suggestions are generated from a run's capacity load, supply timing and
+    planned-order state; they are never auto-applied. ``apply_suggestion`` makes
+    only safe changes (unconverted planned orders, PLANNED/FIRM work orders);
+    everything is auditable via the status + applied/rejected fields."""
+    class Type(models.TextChoices):
+        CAPACITY_LEVEL = "CAPACITY_LEVEL", "Capacity levelling"
+        RESCHEDULE_IN = "RESCHEDULE_IN", "Reschedule in"
+        RESCHEDULE_OUT = "RESCHEDULE_OUT", "Reschedule out"
+        CANCEL_SUPPLY = "CANCEL_SUPPLY", "Cancel supply"
+        EXPEDITE = "EXPEDITE", "Expedite"
+        DEFER = "DEFER", "Defer"
+
+    class Status(models.TextChoices):
+        SUGGESTED = "SUGGESTED", "Suggested"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        APPLIED = "APPLIED", "Applied"
+        REJECTED = "REJECTED", "Rejected"
+        EXPIRED = "EXPIRED", "Expired"
+        FAILED = "FAILED", "Failed"
+
+    class SourceType(models.TextChoices):
+        MRP_PLANNED_ORDER = "MRP_PLANNED_ORDER", "Planned order"
+        WORK_ORDER_OPERATION = "WORK_ORDER_OPERATION", "Work order operation"
+        PURCHASE_ORDER = "PURCHASE_ORDER", "Purchase order"
+        PURCHASE_REQUISITION = "PURCHASE_REQUISITION", "Purchase requisition"
+        TRANSFER_ORDER = "TRANSFER_ORDER", "Transfer order"
+        WORK_ORDER = "WORK_ORDER", "Work order"
+
+    class Severity(models.TextChoices):
+        INFO = "INFO", "Info"
+        WARNING = "WARNING", "Warning"
+        CRITICAL = "CRITICAL", "Critical"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="reschedule_suggestions")
+    mrp_run = models.ForeignKey(MRPRun, on_delete=models.CASCADE, related_name="reschedule_suggestions")
+    suggestion_number = models.CharField(max_length=40)
+    suggestion_type = models.CharField(max_length=20, choices=Type.choices)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.SUGGESTED)
+    source_type = models.CharField(max_length=24, choices=SourceType.choices)
+    source_document_type = models.CharField(max_length=50, blank=True)
+    source_document_id = models.CharField(max_length=100, blank=True)
+    source_line_id = models.CharField(max_length=100, blank=True)
+
+    # Direct links for safe apply (nullable; only set for movable sources).
+    planned_order = models.ForeignKey(MRPPlannedOrder, on_delete=models.CASCADE, null=True, blank=True,
+                                      related_name="reschedule_suggestions")
+    work_order_operation = models.ForeignKey(WorkOrderOperation, on_delete=models.CASCADE, null=True,
+                                             blank=True, related_name="reschedule_suggestions")
+
+    product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name="reschedule_suggestions")
+    site = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="reschedule_suggestions")
+    work_centre = models.ForeignKey(WorkCentre, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="reschedule_suggestions")
+
+    current_start = models.DateField(null=True, blank=True)
+    current_end = models.DateField(null=True, blank=True)
+    suggested_start = models.DateField(null=True, blank=True)
+    suggested_end = models.DateField(null=True, blank=True)
+    current_release_date = models.DateField(null=True, blank=True)
+    current_receipt_date = models.DateField(null=True, blank=True)
+    suggested_release_date = models.DateField(null=True, blank=True)
+    suggested_receipt_date = models.DateField(null=True, blank=True)
+    quantity = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+
+    reason = models.CharField(max_length=255, blank=True)
+    impact_summary = models.CharField(max_length=255, blank=True)
+    severity = models.CharField(max_length=8, choices=Severity.choices, default=Severity.INFO)
+
+    created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="reschedule_suggestions_created")
+    created_at = models.DateTimeField(default=timezone.now)
+    applied_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="reschedule_suggestions_applied")
+    applied_at = models.DateTimeField(null=True, blank=True)
+    rejected_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="reschedule_suggestions_rejected")
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["severity", "id"]
+        indexes = [
+            models.Index(fields=["tenant", "mrp_run", "status"]),
+            models.Index(fields=["mrp_run", "suggestion_type"]),
+        ]
+
+    def __str__(self):
+        return f"{self.suggestion_number} {self.suggestion_type} ({self.status})"
+
+    @property
+    def is_open(self):
+        return self.status in (self.Status.SUGGESTED, self.Status.ACCEPTED)

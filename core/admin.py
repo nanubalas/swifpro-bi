@@ -285,6 +285,19 @@ class ShopCalendarAdmin(admin.ModelAdmin):
     inlines = [ShopCalendarWorkingDayInline, ShopCalendarExceptionInline]
 
 
+from core.models import MRPRescheduleSuggestion
+
+
+@admin.register(MRPRescheduleSuggestion)
+class MRPRescheduleSuggestionAdmin(admin.ModelAdmin):
+    list_display = ("suggestion_number", "mrp_run", "suggestion_type", "status", "severity",
+                    "source_type", "source_document_id", "product", "work_centre", "created_at")
+    list_filter = ("suggestion_type", "status", "severity", "source_type")
+    search_fields = ("suggestion_number", "source_document_id")
+    raw_id_fields = ("tenant", "mrp_run", "planned_order", "work_order_operation", "product",
+                     "site", "work_centre", "created_by", "applied_by", "rejected_by")
+
+
 class RoutingOperationInline(admin.TabularInline):
     model = RoutingOperation
     extra = 0

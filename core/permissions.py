@@ -42,6 +42,8 @@ VIEW_SHOP_CALENDAR = "view_shop_calendar"
 MANAGE_SHOP_CALENDAR = "manage_shop_calendar"
 VIEW_MRP_REPORTS = "view_mrp_reports"
 EXPORT_MRP_REPORTS = "export_mrp_reports"
+VIEW_MRP_SUGGESTIONS = "view_mrp_suggestions"
+MANAGE_MRP_SUGGESTIONS = "manage_mrp_suggestions"
 
 # Catalog: (code, label, category) - drives the matrix UI.
 PERMISSIONS = [
@@ -79,6 +81,8 @@ PERMISSIONS = [
     (MANAGE_SHOP_CALENDAR, "Manage shop calendars", "Planning"),
     (VIEW_MRP_REPORTS, "View MRP / planning reports", "Planning"),
     (EXPORT_MRP_REPORTS, "Export MRP / planning reports (CSV)", "Planning"),
+    (VIEW_MRP_SUGGESTIONS, "View reschedule suggestions", "Planning"),
+    (MANAGE_MRP_SUGGESTIONS, "Generate / apply / reject reschedule suggestions", "Planning"),
 ]
 ALL_PERMISSIONS = {code for code, _, _ in PERMISSIONS}
 PERMISSION_LABELS = {code: label for code, label, _ in PERMISSIONS}
@@ -100,17 +104,19 @@ ROLE_PERMISSIONS = {
         VIEW_SUBCONTRACT, MANAGE_SUBCONTRACT,
         VIEW_SCHEDULE, MANAGE_SCHEDULE, VIEW_SHOP_CALENDAR, MANAGE_SHOP_CALENDAR,
         VIEW_MRP_REPORTS, EXPORT_MRP_REPORTS,
+        VIEW_MRP_SUGGESTIONS, MANAGE_MRP_SUGGESTIONS,
     },
     roles.SALES: {VIEW_DASHBOARD, MANAGE_CUSTOMERS, MANAGE_INVOICES},
     roles.WAREHOUSE: {VIEW_DASHBOARD, MANAGE_INVENTORY, MANAGE_PRODUCTS, VIEW_MRP,
                       VIEW_WORK_ORDER, EXECUTE_WORK_ORDER, VIEW_FORECAST,
                       VIEW_ROUTING, VIEW_WORK_CENTRE, VIEW_SUBCONTRACT,
                       VIEW_SCHEDULE, MANAGE_SCHEDULE, VIEW_SHOP_CALENDAR,
-                      VIEW_MRP_REPORTS},
+                      VIEW_MRP_REPORTS, VIEW_MRP_SUGGESTIONS},
     roles.PURCHASING: {VIEW_DASHBOARD, MANAGE_PURCHASE_ORDERS, MANAGE_SUPPLIERS, MANAGE_INVENTORY,
                        VIEW_MRP, MANAGE_MRP, VIEW_WORK_ORDER, VIEW_FORECAST, MANAGE_FORECAST,
                        VIEW_ROUTING, VIEW_WORK_CENTRE, VIEW_SUBCONTRACT, MANAGE_SUBCONTRACT,
-                       VIEW_SCHEDULE, VIEW_SHOP_CALENDAR, VIEW_MRP_REPORTS, EXPORT_MRP_REPORTS},
+                       VIEW_SCHEDULE, VIEW_SHOP_CALENDAR, VIEW_MRP_REPORTS, EXPORT_MRP_REPORTS,
+                       VIEW_MRP_SUGGESTIONS, MANAGE_MRP_SUGGESTIONS},
     roles.FINANCE: {
         VIEW_DASHBOARD, MANAGE_CUSTOMERS, MANAGE_INVOICES, MANAGE_PAYMENTS,
         VIEW_FINANCE_REPORTS, EXPORT_DATA,

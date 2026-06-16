@@ -395,6 +395,13 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("mrp/reports/pegging/", views.mrp_report_pegging, name="mrp_report_pegging"),
     path("mrp/reports/forecast-consumption/", views.mrp_report_forecast_consumption, name="mrp_report_forecast_consumption"),
     path("mrp/reports/work-order-cost/", views.mrp_report_work_order_cost, name="mrp_report_work_order_cost"),
+    path("mrp/reports/suggestions/", views.mrp_report_suggestions, name="mrp_report_suggestions"),
+
+    # Reschedule suggestions (Phase 16)
+    path("mrp/suggestions/", views.mrp_suggestions, name="mrp_suggestions"),
+    path("mrp/runs/<int:run_id>/suggestions/", views.mrp_suggestions, name="mrp_suggestions_run"),
+    path("mrp/runs/<int:run_id>/suggestions/generate/", views.mrp_generate_suggestions, name="mrp_generate_suggestions"),
+    path("mrp/runs/<int:run_id>/suggestions/action/", views.mrp_suggestion_action, name="mrp_suggestion_action"),
 
     # Work orders (Phase 6)
     path("work-orders/", views.work_order_list, name="work_order_list"),
