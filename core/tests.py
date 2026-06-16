@@ -12709,3 +12709,343 @@ class MRPPhase9ForecastTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         from core.models import ForecastLine
         self.assertEqual(ForecastLine.objects.filter(forecast_version=v).count(), 0)
+
+
+class MRPPhase10RoutingCapacityTests(TestCase):
+    """Phase 10: routing duration, rough-cut work-centre capacity, and work-order
+    operation lines."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Location, Customer
+        self.tenant = Tenant.objects.create(name="RC Co")
+        self.a = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material",
+                                         standard_cost=Decimal("1.00"))
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.admin = User.objects.create_user("rcadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.manager = User.objects.create_user("rcmgr", password="pw")
+        OrgMembership.objects.create(user=self.manager, tenant=self.tenant, role="MANAGER", is_default=True)
+        self.warehouse = User.objects.create_user("rcwh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.sales = User.objects.create_user("rcsales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+        self.start = datetime.date(2026, 6, 1)
+        self.end = datetime.date(2026, 8, 31)
+        self.future = datetime.date(2026, 7, 1)
+
+    # --- helpers ---
+    def _wc(self, code="ASM", capacity="8", efficiency="100", active=True, name=None):
+        from core.models import WorkCentre
+        return WorkCentre.objects.create(
+            tenant=self.tenant, site=self.a, code=code, name=(name or code),
+            capacity_hours_per_day=Decimal(capacity), efficiency_percent=Decimal(efficiency),
+            is_active=active)
+
+    def _routing(self, product=None, site="a", status="ACTIVE", is_default=True, code="R1"):
+        from core.models import RoutingHeader
+        return RoutingHeader.objects.create(
+            tenant=self.tenant, product=(product or self.fg),
+            site=(self.a if site == "a" else site), routing_code=code,
+            status=status, is_default=is_default)
+
+    def _op(self, routing, seq=10, name="Assembly", wc=None, setup="0", run="0",
+            queue="0", move="0", yld="100", subcon=False):
+        from core.models import RoutingOperation
+        return RoutingOperation.objects.create(
+            routing=routing, operation_sequence=seq, operation_name=name, work_centre=wc,
+            setup_minutes=Decimal(setup), run_minutes_per_unit=Decimal(run),
+            queue_minutes=Decimal(queue), move_minutes=Decimal(move),
+            yield_percent=Decimal(yld), is_subcontract_operation=subcon)
+
+    def _profile(self, product=None, site=None, source_type="BUY", supplier="default", **kw):
+        from core.models import ItemSitePlanning
+        if supplier == "default":
+            supplier = self.supplier if source_type == "BUY" else None
+        defaults = dict(
+            tenant=self.tenant, product=(product or self.fg), site=(site or self.a),
+            source_type=source_type, default_supplier=supplier,
+            safety_stock_qty=Decimal("0"), min_order_qty=Decimal("0"), max_order_qty=Decimal("0"),
+            order_multiple=Decimal("0"),
+            lead_time_days={"BUY": 7, "MAKE": 5}.get(source_type, 0),
+            lot_sizing_method="LOT_FOR_LOT")
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def _bom(self, parent=None, component=None, qty=Decimal("1")):
+        from core.models import BillOfMaterials, BillOfMaterialsLine
+        bom = BillOfMaterials.objects.create(tenant=self.tenant, product=(parent or self.fg),
+                                             name="BOM", output_qty=Decimal("1"))
+        BillOfMaterialsLine.objects.create(bom=bom, line_no=10, component=(component or self.rm), qty=qty)
+        return bom
+
+    def _sales(self, qty, date=None, product=None):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.services.mrp import next_run_number
+        o = CustomerOrder.objects.create(
+            tenant=self.tenant, customer=self.customer, site=self.a,
+            order_number="SO-" + next_run_number(self.tenant), status="CONFIRMED",
+            order_date=(date or self.future))
+        CustomerOrderLine.objects.create(order=o, product=(product or self.fg), qty=Decimal(qty))
+        return o
+
+    def _run(self):
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number
+        return MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant), site_scope=None,
+            planning_start_date=self.start, planning_end_date=self.end)
+
+    def _exec(self):
+        from core.services.mrp import run_mrp
+        return run_mrp(self._run(), user=self.admin)
+
+    def _mk_make_po(self, qty="10"):
+        from core.models import MRPPlannedOrder
+        from core.services.mrp import next_planned_order_number
+        run = self._run()
+        return MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.fg, site=self.a, source_type="MAKE",
+            planned_order_number=next_planned_order_number(self.tenant),
+            quantity=Decimal(qty), required_date=self.future,
+            planned_receipt_date=self.future, planned_release_date=self.start, status="SUGGESTED")
+
+    # =========================== duration unit tests ===========================
+    def test_duration_includes_setup(self):
+        from core.services.mrp import routing_capacity as rc
+        op = self._op(self._routing(), wc=self._wc(), setup="120", run="0")
+        self.assertEqual(rc.calculate_operation_hours(op, Decimal("5")), Decimal("2.00"))
+
+    def test_duration_includes_run_per_unit(self):
+        from core.services.mrp import routing_capacity as rc
+        op = self._op(self._routing(), wc=self._wc(), setup="0", run="30")
+        self.assertEqual(rc.calculate_operation_hours(op, Decimal("10")), Decimal("5.00"))
+
+    def test_duration_includes_queue_and_move(self):
+        from core.services.mrp import routing_capacity as rc
+        op = self._op(self._routing(), wc=self._wc(), setup="0", run="0", queue="30", move="30")
+        self.assertEqual(rc.calculate_operation_hours(op, Decimal("1")), Decimal("1.00"))
+
+    def test_efficiency_adjusts_hours(self):
+        from core.services.mrp import routing_capacity as rc
+        op = self._op(self._routing(), wc=self._wc(efficiency="50"), setup="60", run="0")
+        self.assertEqual(rc.calculate_operation_hours(op, Decimal("1")), Decimal("2.00"))
+
+    def test_yield_inflates_quantity(self):
+        from core.services.mrp import routing_capacity as rc
+        op = self._op(self._routing(), wc=self._wc(), setup="0", run="60", yld="50")
+        # eff_qty = 10/0.5 = 20; 60min * 20 = 1200min = 20h
+        self.assertEqual(rc.calculate_operation_hours(op, Decimal("10")), Decimal("20.00"))
+
+    def test_routing_duration_sums_operations(self):
+        from core.services.mrp import routing_capacity as rc
+        r = self._routing()
+        wc = self._wc()
+        self._op(r, seq=10, wc=wc, setup="60", run="30")   # 1 + 5 = 6h for qty 10
+        self._op(r, seq=20, wc=wc, setup="0", run="6")      # 1h for qty 10
+        self.assertEqual(rc.calculate_routing_duration(r, Decimal("10")), Decimal("7.00"))
+
+    # =========================== routing selection ===========================
+    def test_active_default_routing_selected(self):
+        from core.services.mrp import routing_capacity as rc
+        self._routing(code="OLD", status="OBSOLETE", is_default=False)
+        active = self._routing(code="NEW", status="ACTIVE", is_default=True)
+        self.assertEqual(rc.find_active_routing(self.fg, self.a).id, active.id)
+
+    # =========================== CRUD / views ===========================
+    def test_work_centre_crud_loads(self):
+        wc = self._wc()
+        self.client.login(username="rcadmin", password="pw")
+        self.assertEqual(self.client.get("/work-centres/").status_code, 200)
+        self.assertEqual(self.client.get("/work-centres/%d/" % wc.id).status_code, 200)
+        resp = self.client.post("/work-centres/new/", {
+            "site": self.a.id, "code": "WC2", "name": "Paint", "capacity_hours_per_day": "8",
+            "efficiency_percent": "100", "default_queue_hours": "0", "default_move_hours": "0",
+            "is_active": "on"})
+        self.assertEqual(resp.status_code, 302)
+
+    def test_routing_crud_and_operation_add(self):
+        from core.models import RoutingOperation
+        wc = self._wc()
+        self.client.login(username="rcadmin", password="pw")
+        resp = self.client.post("/routings/new/", {
+            "product": self.fg.id, "site": self.a.id, "routing_code": "RT1", "revision": "A",
+            "status": "ACTIVE", "is_default": "on"})
+        self.assertEqual(resp.status_code, 302)
+        from core.models import RoutingHeader
+        routing = RoutingHeader.objects.get(tenant=self.tenant, routing_code="RT1")
+        self.assertEqual(self.client.get("/routings/").status_code, 200)
+        self.assertEqual(self.client.get("/routings/%d/" % routing.id).status_code, 200)
+        resp = self.client.post("/routings/%d/operations/new/" % routing.id, {
+            "operation_sequence": "10", "operation_name": "Assemble", "work_centre": wc.id,
+            "setup_minutes": "60", "run_minutes_per_unit": "30", "queue_minutes": "0",
+            "move_minutes": "0", "yield_percent": "100"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(RoutingOperation.objects.filter(routing=routing).count(), 1)
+
+    # =========================== engine integration ===========================
+    def test_make_uses_routing_duration_for_release(self):
+        import datetime
+        wc = self._wc(capacity="8")
+        self._profile(self.fg, source_type="MAKE")
+        self._profile(self.rm, source_type="BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=10, wc=wc, setup="60", run="30")  # qty 10 -> 6h -> 1 day
+        self._sales(10)
+        run = self._exec()
+        po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        # routing-derived release is receipt - 1 day, not lead_time (5 days)
+        self.assertEqual((po.planned_receipt_date - po.planned_release_date), datetime.timedelta(days=1))
+
+    def test_missing_routing_creates_exception(self):
+        self._profile(self.fg, source_type="MAKE")
+        self._profile(self.rm, source_type="BUY")
+        self._bom(self.fg, self.rm)
+        self._sales(10)
+        run = self._exec()
+        self.assertTrue(run.exceptions.filter(exception_code="MISSING_ROUTING").exists())
+
+    def test_inactive_work_centre_creates_exception(self):
+        wc = self._wc(active=False)
+        self._profile(self.fg, source_type="MAKE")
+        self._profile(self.rm, source_type="BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=10, wc=wc, setup="60", run="30")
+        self._sales(10)
+        run = self._exec()
+        self.assertTrue(run.exceptions.filter(exception_code="INVALID_WORK_CENTRE").exists())
+
+    def test_capacity_overload_exception(self):
+        wc = self._wc(capacity="8")
+        self._profile(self.fg, source_type="MAKE")
+        self._profile(self.rm, source_type="BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=10, wc=wc, setup="60", run="30")  # qty 20 -> 1 + 10 = 11h vs 8
+        self._sales(20)
+        run = self._exec()
+        self.assertTrue(run.exceptions.filter(exception_code="CAPACITY_OVERLOAD").exists())
+
+    def test_no_overload_within_capacity(self):
+        wc = self._wc(capacity="8")
+        self._profile(self.fg, source_type="MAKE")
+        self._profile(self.rm, source_type="BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=10, wc=wc, setup="60", run="30")  # qty 10 -> 6h <= 8
+        self._sales(10)
+        run = self._exec()
+        self.assertFalse(run.exceptions.filter(exception_code="CAPACITY_OVERLOAD").exists())
+
+    def test_subcontract_operation_creates_exception(self):
+        wc = self._wc()
+        self._profile(self.fg, source_type="MAKE")
+        self._profile(self.rm, source_type="BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=10, wc=wc, setup="60", run="30", subcon=True)
+        self._sales(10)
+        run = self._exec()
+        self.assertTrue(run.exceptions.filter(
+            exception_code="SUBCONTRACT_OPERATION_NOT_SUPPORTED").exists())
+
+    def test_open_work_order_contributes_to_load(self):
+        from core.models import WorkOrder, WorkOrderOperation
+        from core.services.mrp import next_planned_order_number
+        wc = self._wc(capacity="8")
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.a, product=self.fg, quantity=Decimal("5"), status="PLANNED",
+            required_date=self.future, planned_end_date=self.future)
+        WorkOrderOperation.objects.create(
+            work_order=wo, operation_sequence=10, operation_name="Assembly", work_centre=wc,
+            planned_hours=Decimal("12"), planned_start=self.future, planned_end=self.future,
+            status="PLANNED")
+        run = self._exec()  # no MRP profiles, but the open WO op loads the work centre
+        self.assertTrue(run.exceptions.filter(exception_code="CAPACITY_OVERLOAD").exists())
+
+    # =========================== conversion ===========================
+    def test_conversion_creates_operations_in_sequence(self):
+        from core.models import WorkOrderOperation
+        from core.services.mrp import conversion
+        wc = self._wc()
+        r = self._routing(self.fg)
+        self._op(r, seq=10, name="Cut", wc=wc, setup="30", run="10")
+        self._op(r, seq=20, name="Assemble", wc=wc, setup="60", run="30")
+        po = self._mk_make_po(qty="10")
+        wo, created, msg = conversion.convert_make_to_work_order(po, self.admin)
+        self.assertTrue(created)
+        ops = list(WorkOrderOperation.objects.filter(work_order=wo).order_by("operation_sequence"))
+        self.assertEqual(len(ops), 2)
+        self.assertEqual([o.operation_sequence for o in ops], [10, 20])
+        self.assertEqual(ops[0].operation_name, "Cut")
+        self.assertEqual(ops[0].source_routing_operation_id is not None, True)
+
+    def test_conversion_without_routing_creates_no_operations(self):
+        from core.models import WorkOrderOperation
+        from core.services.mrp import conversion
+        po = self._mk_make_po(qty="10")
+        wo, created, msg = conversion.convert_make_to_work_order(po, self.admin)
+        self.assertTrue(created)
+        self.assertEqual(WorkOrderOperation.objects.filter(work_order=wo).count(), 0)
+        self.assertIn("no operations", msg.lower())
+
+    def test_work_order_detail_shows_operations(self):
+        from core.services.mrp import conversion
+        wc = self._wc()
+        r = self._routing(self.fg)
+        self._op(r, seq=10, name="Assemble", wc=wc, setup="60", run="30")
+        po = self._mk_make_po(qty="10")
+        wo, _, _ = conversion.convert_make_to_work_order(po, self.admin)
+        self.client.login(username="rcadmin", password="pw")
+        resp = self.client.get("/work-orders/%d/" % wo.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Assemble")
+
+    # =========================== workbench ===========================
+    def test_workbench_shows_capacity_exceptions(self):
+        wc = self._wc(capacity="8")
+        self._profile(self.fg, source_type="MAKE")
+        self._profile(self.rm, source_type="BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=10, wc=wc, setup="60", run="30")
+        self._sales(20)
+        run = self._exec()
+        self.client.login(username="rcadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "overloaded")
+
+    # =========================== permissions ===========================
+    def test_view_only_user_cannot_edit_routing(self):
+        from core.models import RoutingHeader
+        self.client.login(username="rcwh", password="pw")  # Warehouse: VIEW_ROUTING only
+        self.assertEqual(self.client.get("/routings/").status_code, 200)
+        resp = self.client.post("/routings/new/", {
+            "product": self.fg.id, "site": self.a.id, "routing_code": "X1", "status": "ACTIVE"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(RoutingHeader.objects.filter(tenant=self.tenant, routing_code="X1").exists())
+
+    def test_view_only_user_cannot_edit_work_centre(self):
+        from core.models import WorkCentre
+        self.client.login(username="rcwh", password="pw")
+        resp = self.client.post("/work-centres/new/", {
+            "site": self.a.id, "code": "X9", "name": "X", "capacity_hours_per_day": "8",
+            "efficiency_percent": "100"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(WorkCentre.objects.filter(tenant=self.tenant, code="X9").exists())
+
+    def test_manage_user_can_create_routing(self):
+        from core.models import RoutingHeader
+        self.client.login(username="rcmgr", password="pw")  # Manager: MANAGE_ROUTING
+        resp = self.client.post("/routings/new/", {
+            "product": self.fg.id, "site": self.a.id, "routing_code": "M1", "status": "ACTIVE"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(RoutingHeader.objects.filter(tenant=self.tenant, routing_code="M1").exists())

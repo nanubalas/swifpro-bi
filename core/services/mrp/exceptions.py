@@ -47,6 +47,15 @@ _REGISTRY = {
     "UNSUPPORTED_FORECAST_CONSUMPTION_METHOD": ("INFO", "Consumption method not supported yet; forecast not consumed."),
     "FORECAST_UOM_CONVERSION_MISSING": ("WARNING", "Add the missing forecast UOM conversion."),
     "FORECAST_SITE_MISSING": ("WARNING", "Set a site on the forecast line."),
+    # Phase 10 (routing + work-centre capacity)
+    "MISSING_ROUTING": ("WARNING", "Create an active routing for this make item; lead time was used."),
+    "INVALID_ROUTING": ("WARNING", "Routing has no usable operations."),
+    "ROUTING_NOT_ACTIVE": ("WARNING", "Activate a routing for this make item; lead time was used."),
+    "MISSING_WORK_CENTRE": ("WARNING", "Assign a work centre to the routing operation."),
+    "INVALID_WORK_CENTRE": ("WARNING", "Activate the work centre or choose another."),
+    "CAPACITY_OVERLOAD": ("WARNING", "Work-centre load exceeds capacity; level the schedule."),
+    "SUBCONTRACT_OPERATION_NOT_SUPPORTED": ("INFO", "Subcontract operations are not scheduled yet."),
+    "ROUTING_DURATION_INVALID": ("WARNING", "Check the routing operation times."),
 }
 
 

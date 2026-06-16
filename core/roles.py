@@ -137,6 +137,8 @@ NAV = [
         ("MRP Runs", "/mrp/runs/", "cpu", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Item Planning", "/mrp/item-planning/", "sliders2", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Forecasts", "/forecasts/", "graph-up-arrow", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
+        ("Work Centres", "/work-centres/", "diagram-2", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
+        ("Routings", "/routings/", "diagram-3", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
         ("Work Orders", "/work-orders/", "tools", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
     ]),
     ("Finance", [
@@ -310,6 +312,8 @@ NAV_META = {
     "/mrp/runs/": {"desc": "Material requirements planning runs and results.", "keywords": ["mrp", "material requirements planning", "planning run", "net requirement", "planned order"]},
     "/mrp/item-planning/": {"desc": "Per-item, per-site MRP planning parameters.", "keywords": ["item planning", "planning profile", "safety stock", "lead time", "moq", "lot sizing", "source type", "make buy transfer"]},
     "/forecasts/": {"desc": "Demand forecast versions and lines for MRP.", "keywords": ["forecast", "demand forecast", "forecast version", "forecast line", "consumption", "baseline", "planning demand"]},
+    "/work-centres/": {"desc": "Work centres and daily capacity for manufacturing.", "keywords": ["work centre", "work center", "capacity", "machine", "resource", "shop floor"]},
+    "/routings/": {"desc": "Manufacturing routings and operations for make items.", "keywords": ["routing", "operation", "process", "run time", "setup time", "work centre", "capacity"]},
     "/work-orders/": {"desc": "Manufacturing work orders: issue materials, complete finished goods.", "keywords": ["work order", "production order", "manufacturing", "make", "issue material", "complete", "wip"]},
     "/cycle-counts/": {"desc": "Targeted spot stock counts.", "keywords": ["cycle count", "spot count"]},
     "/stock-takes/": {"desc": "Full physical count of a location or whole site.", "keywords": ["stock take", "stocktake", "physical count", "stock-take"]},

@@ -3046,6 +3046,13 @@ class MRPException(models.Model):
         UNSUPPORTED_FORECAST_CONSUMPTION_METHOD = "UNSUPPORTED_FORECAST_CONSUMPTION_METHOD", "Unsupported forecast consumption method"
         FORECAST_UOM_CONVERSION_MISSING = "FORECAST_UOM_CONVERSION_MISSING", "Missing forecast UOM conversion"
         FORECAST_SITE_MISSING = "FORECAST_SITE_MISSING", "Forecast site missing"
+        # Phase 10 additions (routing + work-centre capacity)
+        INVALID_ROUTING = "INVALID_ROUTING", "Invalid routing"
+        ROUTING_NOT_ACTIVE = "ROUTING_NOT_ACTIVE", "Routing not active"
+        MISSING_WORK_CENTRE = "MISSING_WORK_CENTRE", "Missing work centre"
+        INVALID_WORK_CENTRE = "INVALID_WORK_CENTRE", "Invalid / inactive work centre"
+        SUBCONTRACT_OPERATION_NOT_SUPPORTED = "SUBCONTRACT_OPERATION_NOT_SUPPORTED", "Subcontract operation not supported"
+        ROUTING_DURATION_INVALID = "ROUTING_DURATION_INVALID", "Routing duration invalid"
         # Phase 3 additions (BOM / MAKE planning)
         INVALID_BOM = "INVALID_BOM", "Invalid BOM"
         BOM_NOT_APPROVED = "BOM_NOT_APPROVED", "BOM not approved"
@@ -3305,3 +3312,129 @@ class WorkOrderMaterial(models.Model):
     @property
     def remaining_quantity(self):
         return (self.required_quantity or Decimal("0.00")) - (self.issued_quantity or Decimal("0.00"))
+
+
+# ===========================================================================
+# Routing + Work Centre capacity - Phase 10 (rough-cut capacity planning).
+#
+# Work centres carry a simple daily capacity; routings describe the operations
+# (and their times) to make a product. MRP uses routing duration for MAKE
+# release dates and rough-cut work-centre load; conversion creates the work
+# order's operation lines. No finite scheduling, labour booking or overhead.
+# ===========================================================================
+class WorkCentre(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="work_centres")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="work_centres")
+    code = models.CharField(max_length=40)
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True)
+    capacity_hours_per_day = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("8.00"))
+    efficiency_percent = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("100.00"))
+    calendar_code = models.CharField(max_length=40, blank=True)
+    working_days_mask = models.CharField(max_length=7, blank=True,
+                                         help_text="Optional Mon-Sun mask, e.g. 1111100")
+    default_queue_hours = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("0.00"))
+    default_move_hours = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("0.00"))
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("tenant", "code")
+        ordering = ["code"]
+        indexes = [models.Index(fields=["tenant", "site", "is_active"])]
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+    @property
+    def available_hours_per_day(self):
+        """Rough-cut daily capacity. Efficiency is applied to *required* hours in
+        the routing duration (see routing_capacity), so it is not re-applied
+        here, to avoid double-counting."""
+        return self.capacity_hours_per_day or Decimal("0.00")
+
+
+class RoutingHeader(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACTIVE = "ACTIVE", "Active"
+        OBSOLETE = "OBSOLETE", "Obsolete"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="routings")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="routings")
+    site = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="routings", help_text="Blank = applies at any site")
+    routing_code = models.CharField(max_length=40)
+    revision = models.CharField(max_length=20, blank=True, default="")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    is_default = models.BooleanField(default=False)
+    effective_from = models.DateField(null=True, blank=True)
+    effective_to = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("tenant", "routing_code")
+        ordering = ["product__sku", "routing_code"]
+        indexes = [models.Index(fields=["tenant", "product", "status"])]
+
+    def __str__(self):
+        return f"{self.routing_code} ({self.product.sku})"
+
+    @property
+    def is_usable_for_mrp(self):
+        return self.status == self.Status.ACTIVE
+
+
+class RoutingOperation(models.Model):
+    routing = models.ForeignKey(RoutingHeader, on_delete=models.CASCADE, related_name="operations")
+    operation_sequence = models.PositiveIntegerField(default=10)
+    operation_name = models.CharField(max_length=120)
+    work_centre = models.ForeignKey(WorkCentre, on_delete=models.PROTECT, null=True, blank=True,
+                                    related_name="routing_operations")
+    setup_minutes = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    run_minutes_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=Decimal("0.00"))
+    queue_minutes = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    move_minutes = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    yield_percent = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("100.00"))
+    is_subcontract_operation = models.BooleanField(default=False)
+    notes = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        ordering = ["operation_sequence", "id"]
+        unique_together = ("routing", "operation_sequence")
+
+    def __str__(self):
+        return f"{self.operation_sequence} {self.operation_name}"
+
+
+class WorkOrderOperation(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = "PLANNED", "Planned"
+        READY = "READY", "Ready"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        COMPLETE = "COMPLETE", "Complete"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    work_order = models.ForeignKey(WorkOrder, on_delete=models.CASCADE, related_name="operations")
+    operation_sequence = models.PositiveIntegerField(default=10)
+    operation_name = models.CharField(max_length=120)
+    work_centre = models.ForeignKey(WorkCentre, on_delete=models.PROTECT, null=True, blank=True,
+                                    related_name="work_order_operations")
+    setup_minutes = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    run_minutes_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=Decimal("0.00"))
+    planned_hours = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    planned_start = models.DateField(null=True, blank=True)
+    planned_end = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PLANNED)
+    source_routing_operation = models.ForeignKey(RoutingOperation, on_delete=models.SET_NULL,
+                                                 null=True, blank=True, related_name="work_order_operations")
+    notes = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        ordering = ["operation_sequence", "id"]
+
+    def __str__(self):
+        return f"{self.operation_sequence} {self.operation_name} ({self.work_order.work_order_number})"

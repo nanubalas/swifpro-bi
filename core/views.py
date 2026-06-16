@@ -7674,6 +7674,10 @@ def mrp_workbench(request, run_id):
     fc_ids = [i for i in fc_ids if i and i.isdigit()]
     forecast_versions = ForecastVersion.objects.filter(tenant=tenant, id__in=fc_ids).order_by("code")
 
+    # Run-level capacity exceptions (not tied to a planned order) - shown as a banner.
+    capacity_exceptions = list(run.exceptions.filter(exception_code="CAPACITY_OVERLOAD")
+                               .order_by("severity")[:50])
+
     return render(request, "mrp/workbench.html", {
         "tenant": tenant, "run": run, "planned_orders": planned_orders,
         "cards": cards, "sites": sites, "suppliers": suppliers, "today": today,
@@ -7687,6 +7691,7 @@ def mrp_workbench(request, run_id):
             ("SAFETY_STOCK", "Safety stock"), ("WORK_ORDER_COMPONENT", "Work order component"),
             ("TRANSFER_REQUEST", "Transfer request")],
         "forecast_versions": forecast_versions,
+        "capacity_exceptions": capacity_exceptions,
     })
 
 
@@ -7948,6 +7953,206 @@ def forecast_line_delete(request, line_id):
 
 
 # ===========================================================================
+# Routing + Work Centre capacity (Phase 10)
+# ===========================================================================
+
+@login_required
+@permission_required(permissions_mod.VIEW_WORK_CENTRE)
+def work_centre_list(request):
+    from core.models import WorkCentre
+    tenant = _get_default_tenant(request)
+    centres = WorkCentre.objects.filter(tenant=tenant).select_related("site").order_by("code")
+    return render(request, "manufacturing/work_centre_list.html", {"tenant": tenant, "centres": centres})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_WORK_CENTRE)
+def work_centre_create(request):
+    from core.forms import WorkCentreForm
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "base.html", {"content": "Create a Tenant in admin first."})
+    form = WorkCentreForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                obj = form.save(commit=False)
+                obj.tenant = tenant
+                obj.save()
+            log_audit(action="work_centre_create", request=request, user=request.user, tenant=tenant,
+                      detail=obj.code)
+            messages.success(request, f"Work centre {obj.code} created.")
+            return redirect("work_centre_detail", wc_id=obj.id)
+        except IntegrityError:
+            form.add_error("code", "A work centre with this code already exists.")
+    return render(request, "manufacturing/work_centre_form.html",
+                  {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_WORK_CENTRE)
+def work_centre_edit(request, wc_id):
+    from core.forms import WorkCentreForm
+    from core.models import WorkCentre
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(WorkCentre, id=wc_id, tenant=tenant)
+    form = WorkCentreForm(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+            messages.success(request, "Work centre updated.")
+            return redirect("work_centre_detail", wc_id=obj.id)
+        except IntegrityError:
+            form.add_error("code", "A work centre with this code already exists.")
+    return render(request, "manufacturing/work_centre_form.html",
+                  {"tenant": tenant, "form": form, "mode": "edit", "centre": obj})
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_WORK_CENTRE)
+def work_centre_detail(request, wc_id):
+    from core.models import WorkCentre, RoutingOperation
+    tenant = _get_default_tenant(request)
+    centre = get_object_or_404(WorkCentre, id=wc_id, tenant=tenant)
+    operations = (RoutingOperation.objects.filter(work_centre=centre)
+                  .select_related("routing", "routing__product").order_by("routing__routing_code",
+                                                                          "operation_sequence"))
+    return render(request, "manufacturing/work_centre_detail.html",
+                  {"tenant": tenant, "centre": centre, "operations": operations})
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_ROUTING)
+def routing_list(request):
+    from core.models import RoutingHeader
+    from django.db.models import Count
+    tenant = _get_default_tenant(request)
+    routings = (RoutingHeader.objects.filter(tenant=tenant)
+                .select_related("product", "site").annotate(op_count=Count("operations"))
+                .order_by("product__sku", "routing_code"))
+    return render(request, "manufacturing/routing_list.html", {"tenant": tenant, "routings": routings})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_ROUTING)
+def routing_create(request):
+    from core.forms import RoutingHeaderForm
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "base.html", {"content": "Create a Tenant in admin first."})
+    form = RoutingHeaderForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                obj = form.save(commit=False)
+                obj.tenant = tenant
+                obj.save()
+            log_audit(action="routing_create", request=request, user=request.user, tenant=tenant,
+                      detail=obj.routing_code)
+            messages.success(request, f"Routing {obj.routing_code} created. Add operations next.")
+            return redirect("routing_detail", routing_id=obj.id)
+        except IntegrityError:
+            form.add_error("routing_code", "A routing with this code already exists.")
+    return render(request, "manufacturing/routing_form.html",
+                  {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_ROUTING)
+def routing_edit(request, routing_id):
+    from core.forms import RoutingHeaderForm
+    from core.models import RoutingHeader
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(RoutingHeader, id=routing_id, tenant=tenant)
+    form = RoutingHeaderForm(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+            messages.success(request, "Routing updated.")
+            return redirect("routing_detail", routing_id=obj.id)
+        except IntegrityError:
+            form.add_error("routing_code", "A routing with this code already exists.")
+    return render(request, "manufacturing/routing_form.html",
+                  {"tenant": tenant, "form": form, "mode": "edit", "routing": obj})
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_ROUTING)
+def routing_detail(request, routing_id):
+    from core.models import RoutingHeader
+    from core.services.mrp import routing_capacity
+    tenant = _get_default_tenant(request)
+    routing = get_object_or_404(RoutingHeader.objects.select_related("product", "site"),
+                                id=routing_id, tenant=tenant)
+    operations = routing.operations.select_related("work_centre").order_by("operation_sequence")
+    # Illustrative duration for one unit so the planner can sanity-check times.
+    sample_hours = routing_capacity.calculate_routing_duration(routing, Decimal("1"))
+    return render(request, "manufacturing/routing_detail.html",
+                  {"tenant": tenant, "routing": routing, "operations": operations,
+                   "sample_hours": sample_hours})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_ROUTING)
+def routing_operation_create(request, routing_id):
+    from core.forms import RoutingOperationForm
+    from core.models import RoutingHeader
+    tenant = _get_default_tenant(request)
+    routing = get_object_or_404(RoutingHeader, id=routing_id, tenant=tenant)
+    form = RoutingOperationForm(request.POST or None, routing=routing)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                op = form.save(commit=False)
+                op.routing = routing
+                op.save()
+            messages.success(request, "Operation added.")
+            return redirect("routing_detail", routing_id=routing.id)
+        except IntegrityError:
+            form.add_error("operation_sequence", "An operation with this sequence already exists.")
+    return render(request, "manufacturing/routing_operation_form.html",
+                  {"tenant": tenant, "form": form, "routing": routing, "mode": "create"})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_ROUTING)
+def routing_operation_edit(request, op_id):
+    from core.forms import RoutingOperationForm
+    from core.models import RoutingOperation
+    tenant = _get_default_tenant(request)
+    op = get_object_or_404(RoutingOperation.objects.select_related("routing"),
+                           id=op_id, routing__tenant=tenant)
+    routing = op.routing
+    form = RoutingOperationForm(request.POST or None, instance=op, routing=routing)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+            messages.success(request, "Operation updated.")
+            return redirect("routing_detail", routing_id=routing.id)
+        except IntegrityError:
+            form.add_error("operation_sequence", "An operation with this sequence already exists.")
+    return render(request, "manufacturing/routing_operation_form.html",
+                  {"tenant": tenant, "form": form, "routing": routing, "mode": "edit", "operation": op})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_ROUTING)
+def routing_operation_delete(request, op_id):
+    from core.models import RoutingOperation
+    tenant = _get_default_tenant(request)
+    op = get_object_or_404(RoutingOperation.objects.select_related("routing"),
+                           id=op_id, routing__tenant=tenant)
+    routing_id = op.routing_id
+    if request.method == "POST":
+        op.delete()
+        messages.success(request, "Operation deleted.")
+    return redirect("routing_detail", routing_id=routing_id)
+
+
+# ===========================================================================
 # Work Order execution (Phase 6)
 # ===========================================================================
 
@@ -7975,6 +8180,7 @@ def work_order_detail(request, wo_id):
                                          "released_by", "closed_by"),
         id=wo_id, tenant=tenant)
     materials = wo.materials.select_related("component", "source_location", "bom_line").all()
+    operations = wo.operations.select_related("work_centre").order_by("operation_sequence")
     movements = list(InventoryMovement.objects
                      .filter(tenant=tenant, ref_type="WORK_ORDER", ref_id=wo.work_order_number)
                      .select_related("product", "location", "journal_entry").order_by("created_at"))
@@ -7988,8 +8194,9 @@ def work_order_detail(request, wo_id):
     remaining_wip = (wo.wip_material_cost or Decimal("0.00")) - (wo.finished_goods_cost or Decimal("0.00"))
     gl_configured = wop.get_profile(tenant, wo.site) is not None
     return render(request, "work_orders/detail.html", {
-        "tenant": tenant, "wo": wo, "materials": materials, "movements": movements,
-        "journals": journals, "remaining_wip": remaining_wip, "gl_configured": gl_configured,
+        "tenant": tenant, "wo": wo, "materials": materials, "operations": operations,
+        "movements": movements, "journals": journals, "remaining_wip": remaining_wip,
+        "gl_configured": gl_configured,
     })
 
 

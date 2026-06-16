@@ -250,3 +250,39 @@ class ForecastLineAdmin(admin.ModelAdmin):
                     "bucket_type", "quantity", "consumed_quantity", "remaining_quantity")
     list_filter = ("bucket_type", "source")
     raw_id_fields = ("product", "site", "forecast_version")
+
+
+from core.models import WorkCentre, RoutingHeader, RoutingOperation, WorkOrderOperation
+
+
+@admin.register(WorkCentre)
+class WorkCentreAdmin(admin.ModelAdmin):
+    list_display = ("code", "name", "tenant", "site", "capacity_hours_per_day",
+                    "efficiency_percent", "is_active")
+    list_filter = ("is_active",)
+    search_fields = ("code", "name")
+    raw_id_fields = ("site",)
+
+
+class RoutingOperationInline(admin.TabularInline):
+    model = RoutingOperation
+    extra = 0
+    raw_id_fields = ("work_centre",)
+
+
+@admin.register(RoutingHeader)
+class RoutingHeaderAdmin(admin.ModelAdmin):
+    list_display = ("routing_code", "product", "tenant", "site", "status", "is_default",
+                    "effective_from", "effective_to")
+    list_filter = ("status", "is_default")
+    search_fields = ("routing_code", "product__sku")
+    raw_id_fields = ("product", "site")
+    inlines = [RoutingOperationInline]
+
+
+@admin.register(WorkOrderOperation)
+class WorkOrderOperationAdmin(admin.ModelAdmin):
+    list_display = ("work_order", "operation_sequence", "operation_name", "work_centre",
+                    "planned_hours", "planned_start", "planned_end", "status")
+    list_filter = ("status",)
+    raw_id_fields = ("work_order", "work_centre", "source_routing_operation")

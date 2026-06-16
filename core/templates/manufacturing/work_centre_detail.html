@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ centre.code }} - Work Centre{% endblock %}
+{% block back_url %}{% url 'work_centre_list' %}{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-diagram-2 me-2"></i>{{ centre.code }}</h2>
+    <div class="text-muted">{{ centre.name }} &middot; {{ centre.site.name }}</div>
+  </div>
+  {% if 'manage_work_centre' in perms %}
+  <a class="btn btn-outline-primary align-self-center" href="{% url 'work_centre_edit' centre.id %}"><i class="bi bi-pencil me-1"></i>Edit</a>
+  {% endif %}
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card"><div class="card-body">
+      <h5 class="fw-semibold mb-3">Details</h5>
+      <dl class="row mb-0 small">
+        <dt class="col-sm-5 text-muted">Capacity / day</dt><dd class="col-sm-7">{{ centre.capacity_hours_per_day }} h</dd>
+        <dt class="col-sm-5 text-muted">Efficiency</dt><dd class="col-sm-7">{{ centre.efficiency_percent }}%</dd>
+        <dt class="col-sm-5 text-muted">Available / day</dt><dd class="col-sm-7">{{ centre.available_hours_per_day }} h</dd>
+        <dt class="col-sm-5 text-muted">Calendar</dt><dd class="col-sm-7">{{ centre.calendar_code|default:'-' }}</dd>
+        <dt class="col-sm-5 text-muted">Working days</dt><dd class="col-sm-7">{{ centre.working_days_mask|default:'-' }}</dd>
+        <dt class="col-sm-5 text-muted">Status</dt><dd class="col-sm-7">{{ centre.is_active|yesno:"Active,Inactive" }}</dd>
+      </dl>
+      {% if centre.description %}<hr><div class="small">{{ centre.description|linebreaksbr }}</div>{% endif %}
+    </div></div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card"><div class="card-body">
+      <h5 class="fw-semibold mb-3">Used by routing operations</h5>
+      <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+        <th>Routing</th><th>Item</th><th>Seq</th><th>Operation</th></tr></thead><tbody>
+        {% for op in operations %}<tr>
+          <td class="small"><a href="{% url 'routing_detail' op.routing_id %}">{{ op.routing.routing_code }}</a></td>
+          <td class="small">{{ op.routing.product.sku }}</td>
+          <td class="small">{{ op.operation_sequence }}</td>
+          <td class="small">{{ op.operation_name }}</td>
+        </tr>{% empty %}<tr><td colspan="4" class="text-center text-muted py-4">Not used by any routing yet.</td></tr>{% endfor %}
+      </tbody></table>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

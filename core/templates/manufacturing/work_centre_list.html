@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Work Centres - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'dashboard' %}{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-diagram-2 me-2"></i>Work Centres</h2>
+    <div class="text-muted">Production resources and their rough-cut daily capacity.</div>
+  </div>
+  {% if 'manage_work_centre' in perms %}
+  <a class="btn btn-primary" href="{% url 'work_centre_create' %}"><i class="bi bi-plus-lg me-1"></i> New work centre</a>
+  {% endif %}
+</div>
+
+<div class="card"><div class="card-body p-0">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr>
+      <th>Code</th><th>Name</th><th>Site</th><th class="text-end">Hours/day</th>
+      <th class="text-end">Efficiency</th><th>Active</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for c in centres %}
+      <tr {% if not c.is_active %}class="text-muted"{% endif %}>
+        <td class="fw-semibold">{{ c.code }}</td><td>{{ c.name }}</td><td class="small">{{ c.site.name }}</td>
+        <td class="text-end">{{ c.capacity_hours_per_day }}</td>
+        <td class="text-end">{{ c.efficiency_percent }}%</td>
+        <td>{% if c.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'work_centre_detail' c.id %}">Open</a></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="text-center text-muted py-5">No work centres yet. Create one to plan capacity.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

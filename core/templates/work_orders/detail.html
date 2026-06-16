@@ -24,6 +24,7 @@
     <div class="card wo-left"><div class="list-group list-group-flush p-2">
       <button type="button" class="wo-nav list-group-item list-group-item-action active" data-pane="header"><i class="bi bi-card-heading me-2"></i>Header</button>
       <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="materials"><span><i class="bi bi-box-seam me-2"></i>Materials</span><span class="badge text-bg-light">{{ materials|length }}</span></button>
+      <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="operations"><span><i class="bi bi-list-ol me-2"></i>Operations</span><span class="badge text-bg-light">{{ operations|length }}</span></button>
       <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="movements"><span><i class="bi bi-list-columns-reverse me-2"></i>Movements</span><span class="badge text-bg-light">{{ movements|length }}</span></button>
       <button type="button" class="wo-nav list-group-item list-group-item-action d-flex justify-content-between" data-pane="costing"><span><i class="bi bi-cash-coin me-2"></i>Costing / GL</span><span class="badge text-bg-light">{{ journals|length }}</span></button>
       <button type="button" class="wo-nav list-group-item list-group-item-action" data-pane="actions"><i class="bi bi-lightning me-2"></i>Actions</button>
@@ -80,6 +81,22 @@
         {% if 'execute_work_order' in perms and wo.status == 'RELEASED' %}
         <form method="post" action="{% url 'work_order_issue' wo.id %}">{% csrf_token %}<input type="hidden" name="action" value="issue_all"><button class="btn btn-outline-primary btn-sm"><i class="bi bi-box-arrow-in-down me-1"></i> Issue all available</button></form>
         {% endif %}
+      </div>
+
+      <div class="wo-pane" id="wo-pane-operations" hidden>
+        <h5 class="fw-semibold mb-3">Operations</h5>
+        <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
+          <th>Seq</th><th>Operation</th><th>Work centre</th><th class="text-end">Planned hours</th>
+          <th>Planned start</th><th>Planned end</th><th>Status</th></tr></thead><tbody>
+          {% for op in operations %}<tr>
+            <td>{{ op.operation_sequence }}</td><td class="fw-semibold">{{ op.operation_name }}</td>
+            <td class="small">{{ op.work_centre.code|default:'-' }}</td>
+            <td class="text-end">{{ op.planned_hours }}</td>
+            <td class="small">{{ op.planned_start|default:'-' }}</td><td class="small">{{ op.planned_end|default:'-' }}</td>
+            <td><span class="badge text-bg-light">{{ op.get_status_display }}</span></td>
+          </tr>{% empty %}<tr><td colspan="7" class="text-center text-muted py-4">No operations. (No active routing at conversion time.)</td></tr>{% endfor %}
+        </tbody></table>
+        <div class="alert alert-info small mb-0"><i class="bi bi-info-circle me-1"></i> Rough-cut schedule from the item's routing. Labour booking and overhead absorption are not posted in this phase.</div>
       </div>
 
       <div class="wo-pane" id="wo-pane-movements" hidden>

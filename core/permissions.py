@@ -30,6 +30,10 @@ MANAGE_WORK_ORDER = "manage_work_order"
 EXECUTE_WORK_ORDER = "execute_work_order"
 VIEW_FORECAST = "view_forecast"
 MANAGE_FORECAST = "manage_forecast"
+VIEW_ROUTING = "view_routing"
+MANAGE_ROUTING = "manage_routing"
+VIEW_WORK_CENTRE = "view_work_centre"
+MANAGE_WORK_CENTRE = "manage_work_centre"
 
 # Catalog: (code, label, category) - drives the matrix UI.
 PERMISSIONS = [
@@ -55,6 +59,10 @@ PERMISSIONS = [
     (EXECUTE_WORK_ORDER, "Execute work orders (release/issue/complete)", "Planning"),
     (VIEW_FORECAST, "View demand forecasts", "Planning"),
     (MANAGE_FORECAST, "Manage demand forecasts (create/edit/lock/archive)", "Planning"),
+    (VIEW_ROUTING, "View routings", "Planning"),
+    (MANAGE_ROUTING, "Manage routings (create/edit/delete)", "Planning"),
+    (VIEW_WORK_CENTRE, "View work centres", "Planning"),
+    (MANAGE_WORK_CENTRE, "Manage work centres (create/edit/delete)", "Planning"),
 ]
 ALL_PERMISSIONS = {code for code, _, _ in PERMISSIONS}
 PERMISSION_LABELS = {code: label for code, label, _ in PERMISSIONS}
@@ -72,12 +80,15 @@ ROLE_PERMISSIONS = {
         APPROVE_TRANSACTIONS, EXPORT_DATA, VIEW_MRP, MANAGE_MRP,
         VIEW_WORK_ORDER, MANAGE_WORK_ORDER, EXECUTE_WORK_ORDER,
         VIEW_FORECAST, MANAGE_FORECAST,
+        VIEW_ROUTING, MANAGE_ROUTING, VIEW_WORK_CENTRE, MANAGE_WORK_CENTRE,
     },
     roles.SALES: {VIEW_DASHBOARD, MANAGE_CUSTOMERS, MANAGE_INVOICES},
     roles.WAREHOUSE: {VIEW_DASHBOARD, MANAGE_INVENTORY, MANAGE_PRODUCTS, VIEW_MRP,
-                      VIEW_WORK_ORDER, EXECUTE_WORK_ORDER, VIEW_FORECAST},
+                      VIEW_WORK_ORDER, EXECUTE_WORK_ORDER, VIEW_FORECAST,
+                      VIEW_ROUTING, VIEW_WORK_CENTRE},
     roles.PURCHASING: {VIEW_DASHBOARD, MANAGE_PURCHASE_ORDERS, MANAGE_SUPPLIERS, MANAGE_INVENTORY,
-                       VIEW_MRP, MANAGE_MRP, VIEW_WORK_ORDER, VIEW_FORECAST, MANAGE_FORECAST},
+                       VIEW_MRP, MANAGE_MRP, VIEW_WORK_ORDER, VIEW_FORECAST, MANAGE_FORECAST,
+                       VIEW_ROUTING, VIEW_WORK_CENTRE},
     roles.FINANCE: {
         VIEW_DASHBOARD, MANAGE_CUSTOMERS, MANAGE_INVOICES, MANAGE_PAYMENTS,
         VIEW_FINANCE_REPORTS, EXPORT_DATA,

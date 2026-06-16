@@ -77,6 +77,18 @@ def run_mrp(run, user=None):
                     f"Planning failed for {profile.product.sku} at {profile.site.name}: {e}",
                     product=profile.product, site=profile.site, severity="CRITICAL")
 
+        # Rough-cut work-centre capacity check across all MAKE planned orders
+        # (and existing open work orders with operations). Phase 10.
+        try:
+            from core.services.mrp import routing_capacity
+            with transaction.atomic():
+                routing_capacity.detect_capacity_overloads(run)
+        except Exception as e:  # capacity is advisory; never fail the run
+            mrp_exc.raise_exception(
+                run, "CAPACITY_OVERLOAD",
+                f"Capacity check could not complete: {e}", severity="INFO",
+                dedupe_key=("cap_error",))
+
         has_exc = MRPException.objects.filter(mrp_run=run).exists()
         run.status = "COMPLETED_WITH_EXCEPTIONS" if has_exc else "COMPLETED"
         run.completed_at = timezone.now()
@@ -154,8 +166,12 @@ def _plan_profile(run, profile):
                                         dedupe_key=(code, profile.id))
                 mrp_exc.bump_level(po, "INFO")
             order_exceptions(run, profile, po, start)
-            # MAKE orders drive dependent component demand (Phase 3).
+            # MAKE orders drive dependent component demand (Phase 3) and use
+            # routing duration for the release date (Phase 10) - applied before
+            # explosion so components are offset from the routing-based release.
             if profile.source_type == "MAKE":
+                from core.services.mrp import routing_capacity
+                routing_capacity.apply_routing_schedule(run, profile, po)
                 bom_explosion.explode_and_plan(
                     run, product, site, po.quantity, po.planned_release_date, po,
                     depth=0, ancestors=frozenset({product.id}))
