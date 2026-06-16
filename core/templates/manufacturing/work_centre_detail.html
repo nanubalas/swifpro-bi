@@ -20,6 +20,9 @@
         <dt class="col-sm-5 text-muted">Capacity / day</dt><dd class="col-sm-7">{{ centre.capacity_hours_per_day }} h</dd>
         <dt class="col-sm-5 text-muted">Efficiency</dt><dd class="col-sm-7">{{ centre.efficiency_percent }}%</dd>
         <dt class="col-sm-5 text-muted">Available / day</dt><dd class="col-sm-7">{{ centre.available_hours_per_day }} h</dd>
+        <dt class="col-sm-5 text-muted">Labour rate / h</dt><dd class="col-sm-7">{{ centre.labour_rate_per_hour }}</dd>
+        <dt class="col-sm-5 text-muted">Overhead rate / h</dt><dd class="col-sm-7">{{ centre.overhead_rate_per_hour }}</dd>
+        <dt class="col-sm-5 text-muted">Machine rate / h</dt><dd class="col-sm-7">{{ centre.machine_rate_per_hour }}</dd>
         <dt class="col-sm-5 text-muted">Calendar</dt><dd class="col-sm-7">{{ centre.calendar_code|default:'-' }}</dd>
         <dt class="col-sm-5 text-muted">Working days</dt><dd class="col-sm-7">{{ centre.working_days_mask|default:'-' }}</dd>
         <dt class="col-sm-5 text-muted">Status</dt><dd class="col-sm-7">{{ centre.is_active|yesno:"Active,Inactive" }}</dd>

@@ -287,11 +287,15 @@ def create_work_order_operations(work_order, routing):
 
     created = []
     for op, hours, start, end in reversed(scheduled):
+        # Planned labour / overhead hours seed from the operation's planned hours
+        # (Phase 13); subcontract operations carry no internal labour/overhead.
+        plan_hours = ZERO if op.is_subcontract_operation else hours
         created.append(WorkOrderOperation.objects.create(
             work_order=work_order, operation_sequence=op.operation_sequence,
             operation_name=op.operation_name, work_centre=op.work_centre,
             setup_minutes=op.setup_minutes, run_minutes_per_unit=op.run_minutes_per_unit,
-            planned_hours=hours, planned_start=start, planned_end=end,
+            planned_hours=hours, planned_labour_hours=plan_hours, planned_overhead_hours=plan_hours,
+            planned_start=start, planned_end=end,
             status="PLANNED", source_routing_operation=op, notes=op.notes))
     return created
 

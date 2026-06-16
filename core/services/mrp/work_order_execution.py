@@ -251,10 +251,18 @@ def issue_all_available_materials(wo, user):
 # Completion
 # --------------------------------------------------------------------------- #
 def _completion_unit_cost(wo):
-    """Value finished goods at the work order's accumulated material cost spread
-    over its planned quantity, else the product standard cost."""
-    if (wo.wip_material_cost or ZERO) > ZERO and (wo.quantity or ZERO) > ZERO:
-        return (wo.wip_material_cost / wo.quantity).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    """Value finished goods at the WIP not yet absorbed into completed units,
+    spread over the units still to complete. WIP now includes material + labour +
+    overhead (Phase 13), so finished-goods cost picks up absorbed conversion cost.
+    Falls back to the product standard cost when there is no WIP to spread.
+
+    With WIP unchanged between completions this equals the Phase 6/7 formula
+    (wip / planned qty); it only diverges once labour/overhead is booked between
+    completions, which is the intended behaviour."""
+    available_wip = (wo.total_wip_cost or ZERO) - (wo.finished_goods_cost or ZERO)
+    remaining_units = (wo.quantity or ZERO) - (wo.quantity_completed or ZERO)
+    if available_wip > ZERO and remaining_units > ZERO:
+        return (available_wip / remaining_units).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
     return Decimal(wo.product.standard_cost or ZERO)
 
 

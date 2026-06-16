@@ -44,6 +44,8 @@ DEFAULT_ACCOUNT_CODES = {
     "wip": "1030",
     "finished_goods_inventory": "1040",
     "manufacturing_variance": "5300",
+    "direct_labour_absorption": "5400",
+    "manufacturing_overhead_absorption": "5500",
     "bank": "1050",
     "ar": "1100",
     "ap": "2000",

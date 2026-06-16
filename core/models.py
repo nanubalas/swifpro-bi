@@ -2322,6 +2322,12 @@ class ManufacturingAccountingProfile(models.Model):
                                                          null=True, blank=True, related_name="+")
     manufacturing_variance_account = models.ForeignKey(GLAccount, on_delete=models.PROTECT,
                                                        null=True, blank=True, related_name="+")
+    # Phase 13: labour / overhead absorption (clearing) accounts. Optional; when
+    # unset, posting that booking type is skipped with a warning.
+    direct_labour_absorption_account = models.ForeignKey(GLAccount, on_delete=models.PROTECT,
+                                                         null=True, blank=True, related_name="+")
+    manufacturing_overhead_absorption_account = models.ForeignKey(GLAccount, on_delete=models.PROTECT,
+                                                                  null=True, blank=True, related_name="+")
     is_default = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
@@ -3271,6 +3277,9 @@ class WorkOrder(models.Model):
     # Phase 12: accumulated correction costs (scrap moved out of WIP, value reversed).
     scrap_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
     reversal_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    # Phase 13: absorbed labour / overhead in WIP.
+    wip_labour_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    wip_overhead_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
     # Phase 7: WIP variance cleared to the GL on close.
     variance_journal = models.ForeignKey("JournalEntry", on_delete=models.SET_NULL, null=True, blank=True,
                                          related_name="+")
@@ -3299,6 +3308,13 @@ class WorkOrder(models.Model):
     @property
     def quantity_remaining(self):
         return (self.quantity or Decimal("0.00")) - (self.quantity_completed or Decimal("0.00"))
+
+    @property
+    def total_wip_cost(self):
+        """All absorbed cost in WIP: material + labour + overhead (Phase 13)."""
+        return ((self.wip_material_cost or Decimal("0.00"))
+                + (self.wip_labour_cost or Decimal("0.00"))
+                + (self.wip_overhead_cost or Decimal("0.00")))
 
 
 class WorkOrderMaterial(models.Model):
@@ -3362,6 +3378,10 @@ class WorkCentre(models.Model):
                                          help_text="Optional Mon-Sun mask, e.g. 1111100")
     default_queue_hours = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("0.00"))
     default_move_hours = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("0.00"))
+    # Phase 13: cost-absorption rates per hour for labour / overhead / machine.
+    labour_rate_per_hour = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    overhead_rate_per_hour = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    machine_rate_per_hour = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
@@ -3464,6 +3484,13 @@ class WorkOrderOperation(models.Model):
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PLANNED)
     source_routing_operation = models.ForeignKey(RoutingOperation, on_delete=models.SET_NULL,
                                                  null=True, blank=True, related_name="work_order_operations")
+    # Phase 13: planned vs booked labour / overhead hours and their absorbed cost.
+    planned_labour_hours = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    planned_overhead_hours = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    actual_labour_hours = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    actual_overhead_hours = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    labour_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    overhead_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
     notes = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
@@ -3471,3 +3498,38 @@ class WorkOrderOperation(models.Model):
 
     def __str__(self):
         return f"{self.operation_sequence} {self.operation_name} ({self.work_order.work_order_number})"
+
+
+class WorkOrderCostBooking(models.Model):
+    """An append-only labour / overhead absorption booking against a work-order
+    operation (Phase 13). Each booking converts hours x work-centre rate into a
+    WIP cost and (when manufacturing GL is configured) its own balanced journal."""
+    class Type(models.TextChoices):
+        LABOUR = "LABOUR", "Direct labour"
+        OVERHEAD = "OVERHEAD", "Manufacturing overhead"
+
+    class Status(models.TextChoices):
+        POSTED = "POSTED", "Posted"
+        REVERSED = "REVERSED", "Reversed"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="wo_cost_bookings")
+    work_order = models.ForeignKey(WorkOrder, on_delete=models.CASCADE, related_name="cost_bookings")
+    operation = models.ForeignKey(WorkOrderOperation, on_delete=models.CASCADE, related_name="cost_bookings")
+    booking_type = models.CharField(max_length=10, choices=Type.choices)
+    hours = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    rate_per_hour = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    amount = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.POSTED)
+    journal_entry = models.ForeignKey("JournalEntry", on_delete=models.SET_NULL, null=True, blank=True,
+                                      related_name="+")
+    booked_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
+    booked_at = models.DateTimeField(default=timezone.now)
+    notes = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        ordering = ["id"]
+        indexes = [models.Index(fields=["tenant", "work_order"]),
+                   models.Index(fields=["operation", "booking_type"])]
+
+    def __str__(self):
+        return f"{self.booking_type} {self.amount} ({self.work_order.work_order_number})"

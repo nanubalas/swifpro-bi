@@ -32,6 +32,8 @@ DEFAULT_ACCOUNTS = [
     ("5100", "Purchase Price Variance", "EXPENSE"),
     ("5200", "Inventory Adjustments / Shrinkage", "EXPENSE"),
     ("5300", "Manufacturing Variance", "EXPENSE"),
+    ("5400", "Direct Labour Absorption", "EXPENSE"),
+    ("5500", "Manufacturing Overhead Absorption", "EXPENSE"),
     # Operating expense accounts (used by the Expenses module).
     ("6000", "General Expenses", "EXPENSE"),
     ("6100", "Rent & Rates", "EXPENSE"),

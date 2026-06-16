@@ -283,6 +283,18 @@ class RoutingHeaderAdmin(admin.ModelAdmin):
 @admin.register(WorkOrderOperation)
 class WorkOrderOperationAdmin(admin.ModelAdmin):
     list_display = ("work_order", "operation_sequence", "operation_name", "work_centre",
-                    "planned_hours", "planned_start", "planned_end", "status")
+                    "planned_hours", "actual_labour_hours", "actual_overhead_hours",
+                    "labour_cost", "overhead_cost", "status")
     list_filter = ("status",)
     raw_id_fields = ("work_order", "work_centre", "source_routing_operation")
+
+
+from core.models import WorkOrderCostBooking
+
+
+@admin.register(WorkOrderCostBooking)
+class WorkOrderCostBookingAdmin(admin.ModelAdmin):
+    list_display = ("work_order", "operation", "booking_type", "hours", "rate_per_hour",
+                    "amount", "status", "booked_at")
+    list_filter = ("booking_type", "status")
+    raw_id_fields = ("tenant", "work_order", "operation", "journal_entry", "booked_by")

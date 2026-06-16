@@ -13710,3 +13710,307 @@ class MRPPhase12CorrectionTests(TestCase):
         self.assertEqual(resp.status_code, 403)
         wom.refresh_from_db()
         self.assertEqual(wom.scrapped_quantity, Decimal("0.00"))
+
+
+class MRPPhase13LabourOverheadTests(TestCase):
+    """Phase 13: labour + overhead absorption into work orders."""
+
+    def setUp(self):
+        import datetime
+        from core.models import (OrgMembership, Location, Product, GLAccount,
+                                  ManufacturingAccountingProfile, WorkCentre,
+                                  RoutingHeader, RoutingOperation, Site)
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="LO Co")
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.loc = Location.objects.filter(tenant=self.tenant, site=self.site).order_by("id").first()
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("4.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material",
+                                         standard_cost=Decimal("2.00"))
+        self.admin = User.objects.create_user("loadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.warehouse = User.objects.create_user("lowh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.sales = User.objects.create_user("losales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+
+        def acc(code):
+            return GLAccount.objects.get(tenant=self.tenant, code=code)
+        self.profile = ManufacturingAccountingProfile.objects.create(
+            tenant=self.tenant, site=None, is_default=True, is_active=True,
+            raw_material_inventory_account=acc("1020"), wip_account=acc("1030"),
+            finished_goods_inventory_account=acc("1040"), manufacturing_variance_account=acc("5300"),
+            direct_labour_absorption_account=acc("5400"),
+            manufacturing_overhead_absorption_account=acc("5500"))
+
+        self.wc = WorkCentre.objects.create(
+            tenant=self.tenant, site=self.site, code="ASM", name="Assembly",
+            capacity_hours_per_day=Decimal("8"), efficiency_percent=Decimal("100"),
+            labour_rate_per_hour=Decimal("20"), overhead_rate_per_hour=Decimal("10"), is_active=True)
+        self.routing = RoutingHeader.objects.create(
+            tenant=self.tenant, product=self.fg, site=self.site, routing_code="R1",
+            status="ACTIVE", is_default=True)
+        RoutingOperation.objects.create(
+            routing=self.routing, operation_sequence=10, operation_name="Assembly",
+            work_centre=self.wc, setup_minutes=Decimal("60"), run_minutes_per_unit=Decimal("30"))
+
+        apply_movement(tenant=self.tenant, product=self.rm, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("100"), ref_type="SEED",
+                       ref_id="seed", unit_cost=Decimal("2.00"), user=self.admin)
+        self.today = datetime.date(2026, 6, 16)
+
+    # --- helpers ---
+    def _wo(self, plan="10", req="20", issue=None):
+        from core.models import WorkOrder, WorkOrderMaterial
+        from core.services.mrp.numbering import next_planned_order_number
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp import routing_capacity as rc
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.site, product=self.fg, quantity=Decimal(plan), status="PLANNED",
+            required_date=self.today, planned_end_date=self.today, created_by=self.admin)
+        wom = WorkOrderMaterial.objects.create(work_order=wo, component=self.rm,
+                                               required_quantity=Decimal(req))
+        rc.create_work_order_operations(wo, self.routing)
+        wox.release_work_order(wo, self.admin)
+        if issue:
+            wox.issue_material(wom, Decimal(issue), self.admin)
+        wo.refresh_from_db()
+        return wo, wo.operations.first(), wom
+
+    def _je(self, ref_type, ref_id):
+        from core.models import JournalEntry
+        return JournalEntry.objects.filter(tenant=self.tenant, ref_type=ref_type, ref_id=str(ref_id)).first()
+
+    def _dr_cr(self, je):
+        dr = [l.account.code for l in je.lines.all() if l.debit and l.debit > 0]
+        cr = [l.account.code for l in je.lines.all() if l.credit and l.credit > 0]
+        return dr, cr
+
+    def _on_hand(self, product):
+        from core.models import InventoryBalance
+        b = InventoryBalance.objects.filter(tenant=self.tenant, product=product, location=self.loc).first()
+        return (b.on_hand if b else Decimal("0.00")) or Decimal("0.00")
+
+    # =========================== rates / planned cost ===========================
+    def test_work_centre_stores_rates(self):
+        self.wc.refresh_from_db()
+        self.assertEqual(self.wc.labour_rate_per_hour, Decimal("20.00"))
+        self.assertEqual(self.wc.overhead_rate_per_hour, Decimal("10.00"))
+
+    def test_planned_operation_cost(self):
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        cost = wol.calculate_planned_operation_cost(op)
+        self.assertEqual(cost["labour"], Decimal("120.00"))   # 6h * 20
+        self.assertEqual(cost["overhead"], Decimal("60.00"))  # 6h * 10
+        self.assertEqual(cost["total"], Decimal("180.00"))
+
+    def test_conversion_seeds_planned_hours(self):
+        from core.models import MRPPlannedOrder, MRPRun
+        from core.services.mrp import next_run_number, next_planned_order_number, conversion
+        run = MRPRun.objects.create(tenant=self.tenant, run_number=next_run_number(self.tenant),
+                                    planning_start_date=self.today, planning_end_date=self.today)
+        po = MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.fg, site=self.site, source_type="MAKE",
+            planned_order_number=next_planned_order_number(self.tenant),
+            quantity=Decimal("10"), required_date=self.today,
+            planned_receipt_date=self.today, planned_release_date=self.today, status="SUGGESTED")
+        wo, created, _ = conversion.convert_make_to_work_order(po, self.admin)
+        op = wo.operations.first()
+        self.assertEqual(op.planned_labour_hours, op.planned_hours)
+        self.assertTrue(op.planned_hours > 0)
+
+    # =========================== booking ===========================
+    def test_labour_booking_creates_booking(self):
+        from core.models import WorkOrderCostBooking
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        wol.book_operation_labour(op, Decimal("6"), self.admin)
+        self.assertEqual(WorkOrderCostBooking.objects.filter(
+            work_order=wo, booking_type="LABOUR").count(), 1)
+
+    def test_overhead_booking_creates_booking(self):
+        from core.models import WorkOrderCostBooking
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        wol.book_operation_overhead(op, Decimal("6"), self.admin)
+        self.assertEqual(WorkOrderCostBooking.objects.filter(
+            work_order=wo, booking_type="OVERHEAD").count(), 1)
+
+    def test_labour_booking_increases_wip_labour(self):
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        wol.book_operation_labour(op, Decimal("6"), self.admin)
+        wo.refresh_from_db(); op.refresh_from_db()
+        self.assertEqual(wo.wip_labour_cost, Decimal("120.00"))
+        self.assertEqual(op.labour_cost, Decimal("120.00"))
+        self.assertEqual(op.actual_labour_hours, Decimal("6.00"))
+
+    def test_overhead_booking_increases_wip_overhead(self):
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        wol.book_operation_overhead(op, Decimal("6"), self.admin)
+        wo.refresh_from_db()
+        self.assertEqual(wo.wip_overhead_cost, Decimal("60.00"))
+
+    def test_labour_booking_posts_gl(self):
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        b = wol.book_operation_labour(op, Decimal("6"), self.admin)
+        je = self._je("WORK_ORDER_LABOUR", b.id)
+        self.assertIsNotNone(je)
+        dr, cr = self._dr_cr(je)
+        self.assertIn("1030", dr)   # WIP
+        self.assertIn("5400", cr)   # Direct labour absorption
+        self.assertEqual(je.total_debit, Decimal("120.00"))
+
+    def test_overhead_booking_posts_gl(self):
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        b = wol.book_operation_overhead(op, Decimal("6"), self.admin)
+        je = self._je("WORK_ORDER_OVERHEAD", b.id)
+        self.assertIsNotNone(je)
+        dr, cr = self._dr_cr(je)
+        self.assertIn("1030", dr)   # WIP
+        self.assertIn("5500", cr)   # Overhead absorption
+
+    def test_missing_labour_account_warns_no_crash(self):
+        from core.services.mrp import work_order_labour as wol
+        self.profile.direct_labour_absorption_account = None
+        self.profile.save()
+        wo, op, wom = self._wo()
+        b = wol.book_operation_labour(op, Decimal("6"), self.admin)
+        self.assertIsNone(b.journal_entry_id)        # GL skipped, no crash
+        wo.refresh_from_db()
+        self.assertEqual(wo.wip_labour_cost, Decimal("120.00"))  # cost still absorbed
+
+    def test_missing_overhead_account_warns_no_crash(self):
+        from core.services.mrp import work_order_labour as wol
+        self.profile.manufacturing_overhead_absorption_account = None
+        self.profile.save()
+        wo, op, wom = self._wo()
+        b = wol.book_operation_overhead(op, Decimal("6"), self.admin)
+        self.assertIsNone(b.journal_entry_id)
+        wo.refresh_from_db()
+        self.assertEqual(wo.wip_overhead_cost, Decimal("60.00"))
+
+    def test_multiple_bookings_allowed(self):
+        from core.models import WorkOrderCostBooking
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        wol.book_operation_labour(op, Decimal("6"), self.admin)
+        wol.book_operation_labour(op, Decimal("2"), self.admin)
+        self.assertEqual(WorkOrderCostBooking.objects.filter(work_order=wo, booking_type="LABOUR").count(), 2)
+        wo.refresh_from_db()
+        self.assertEqual(wo.wip_labour_cost, Decimal("160.00"))  # (6+2)*20
+
+    def test_repeated_post_same_booking_idempotent(self):
+        from core.models import JournalEntry
+        from core.services.mrp import work_order_labour as wol
+        from core.services.mrp import work_order_posting as wop
+        wo, op, wom = self._wo()
+        b = wol.book_operation_labour(op, Decimal("6"), self.admin)
+        wop.post_work_order_labour(b, self.admin)  # re-post the same booking
+        self.assertEqual(JournalEntry.objects.filter(
+            tenant=self.tenant, ref_type="WORK_ORDER_LABOUR", ref_id=str(b.id)).count(), 1)
+
+    def test_booking_actuals_books_both(self):
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        bookings = wol.book_operation_actuals(op, Decimal("6"), Decimal("6"), self.admin)
+        self.assertEqual(len(bookings), 2)
+        wo.refresh_from_db()
+        self.assertEqual(wo.wip_labour_cost, Decimal("120.00"))
+        self.assertEqual(wo.wip_overhead_cost, Decimal("60.00"))
+
+    # =========================== completion costing ===========================
+    def test_completion_cost_includes_labour_overhead(self):
+        from core.services.mrp import work_order_labour as wol
+        from core.services.mrp import work_order_execution as wox
+        wo, op, wom = self._wo(issue="20")     # material WIP = 40
+        wol.book_operation_labour(op, Decimal("6"), self.admin)    # +120
+        wol.book_operation_overhead(op, Decimal("6"), self.admin)  # +60
+        wo.refresh_from_db()
+        self.assertEqual(wo.total_wip_cost, Decimal("220.00"))
+        movement, _ = wox.complete_work_order(wo, Decimal("10"), self.admin)
+        # unit cost = 220 / 10 = 22 (material 4 + labour 12 + overhead 6)
+        self.assertEqual(movement.value, Decimal("220.00"))
+        wo.refresh_from_db()
+        self.assertEqual(wo.finished_goods_cost, Decimal("220.00"))
+
+    def test_finished_goods_value_includes_conversion(self):
+        from core.services.mrp import work_order_labour as wol
+        from core.services.mrp import work_order_execution as wox
+        wo, op, wom = self._wo(issue="20")
+        wol.book_operation_actuals(op, Decimal("6"), Decimal("6"), self.admin)
+        movement, _ = wox.complete_work_order(wo, Decimal("10"), self.admin)
+        self.fg.refresh_from_db()
+        self.assertEqual(movement.unit_cost, Decimal("22.0000"))  # not material-only 4
+        self.assertEqual(self._on_hand(self.fg), Decimal("10.00"))
+
+    def test_close_variance_includes_labour_overhead(self):
+        from core.services.mrp import work_order_execution as wox
+        wo, op, wom = self._wo(issue="20")
+        # Simulate labour/overhead that was not absorbed into finished goods, so
+        # the close variance must clear material + labour + overhead.
+        wo.wip_labour_cost = Decimal("120.00")
+        wo.wip_overhead_cost = Decimal("60.00")
+        wo.quantity_completed = Decimal("10")
+        wo.finished_goods_cost = Decimal("40.00")   # only material absorbed
+        wo.status = "COMPLETED"
+        wo.save()
+        wox.close_work_order(wo, self.admin)
+        wo.refresh_from_db()
+        self.assertIsNotNone(wo.variance_journal_id)
+        # remaining WIP = 220 - 40 = 180
+        self.assertEqual(wo.variance_journal.total_debit, Decimal("180.00"))
+        dr, cr = self._dr_cr(wo.variance_journal)
+        self.assertIn("5300", dr)   # Manufacturing variance
+        self.assertIn("1030", cr)   # WIP
+
+    # =========================== guards ===========================
+    def test_cannot_book_on_planned(self):
+        from core.models import WorkOrder, WorkOrderMaterial
+        from core.services.mrp.numbering import next_planned_order_number
+        from core.services.mrp import routing_capacity as rc
+        from core.services.mrp import work_order_labour as wol
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.site, product=self.fg, quantity=Decimal("10"), status="PLANNED",
+            required_date=self.today, planned_end_date=self.today)
+        rc.create_work_order_operations(wo, self.routing)
+        with self.assertRaises(WorkOrderError) as cm:
+            wol.book_operation_labour(wo.operations.first(), Decimal("6"), self.admin)
+        self.assertEqual(cm.exception.code, wol.NOT_OPERATIONAL)
+
+    # =========================== UI / permissions ===========================
+    def test_detail_shows_labour_overhead_costing(self):
+        from core.services.mrp import work_order_labour as wol
+        wo, op, wom = self._wo()
+        wol.book_operation_actuals(op, Decimal("6"), Decimal("6"), self.admin)
+        self.client.login(username="loadmin", password="pw")
+        resp = self.client.get("/work-orders/%d/" % wo.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "WIP labour cost")
+        self.assertContains(resp, "Direct labour")
+
+    def test_book_via_view(self):
+        from core.models import WorkOrderCostBooking
+        wo, op, wom = self._wo()
+        self.client.login(username="lowh", password="pw")  # Warehouse: EXECUTE_WORK_ORDER
+        resp = self.client.post("/work-orders/%d/book/" % wo.id, {
+            "operation_id": op.id, "labour_hours": "6", "overhead_hours": "6"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(WorkOrderCostBooking.objects.filter(work_order=wo).count(), 2)
+
+    def test_permissions_block_unauthorised_booking(self):
+        from core.models import WorkOrderCostBooking
+        wo, op, wom = self._wo()
+        self.client.login(username="losales", password="pw")  # Sales: no work-order perms
+        resp = self.client.post("/work-orders/%d/book/" % wo.id, {
+            "operation_id": op.id, "labour_hours": "6"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(WorkOrderCostBooking.objects.filter(work_order=wo).count(), 0)
