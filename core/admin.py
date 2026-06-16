@@ -258,10 +258,31 @@ from core.models import WorkCentre, RoutingHeader, RoutingOperation, WorkOrderOp
 @admin.register(WorkCentre)
 class WorkCentreAdmin(admin.ModelAdmin):
     list_display = ("code", "name", "tenant", "site", "capacity_hours_per_day",
-                    "efficiency_percent", "is_active")
-    list_filter = ("is_active",)
+                    "efficiency_percent", "finite_capacity_enabled", "shop_calendar", "is_active")
+    list_filter = ("is_active", "finite_capacity_enabled")
     search_fields = ("code", "name")
-    raw_id_fields = ("site",)
+    raw_id_fields = ("site", "shop_calendar")
+
+
+from core.models import ShopCalendar, ShopCalendarWorkingDay, ShopCalendarException
+
+
+class ShopCalendarWorkingDayInline(admin.TabularInline):
+    model = ShopCalendarWorkingDay
+    extra = 0
+
+
+class ShopCalendarExceptionInline(admin.TabularInline):
+    model = ShopCalendarException
+    extra = 0
+
+
+@admin.register(ShopCalendar)
+class ShopCalendarAdmin(admin.ModelAdmin):
+    list_display = ("code", "name", "tenant", "is_default", "is_active")
+    list_filter = ("is_default", "is_active")
+    search_fields = ("code", "name")
+    inlines = [ShopCalendarWorkingDayInline, ShopCalendarExceptionInline]
 
 
 class RoutingOperationInline(admin.TabularInline):

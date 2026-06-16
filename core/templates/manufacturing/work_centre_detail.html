@@ -23,6 +23,8 @@
         <dt class="col-sm-5 text-muted">Labour rate / h</dt><dd class="col-sm-7">{{ centre.labour_rate_per_hour }}</dd>
         <dt class="col-sm-5 text-muted">Overhead rate / h</dt><dd class="col-sm-7">{{ centre.overhead_rate_per_hour }}</dd>
         <dt class="col-sm-5 text-muted">Machine rate / h</dt><dd class="col-sm-7">{{ centre.machine_rate_per_hour }}</dd>
+        <dt class="col-sm-5 text-muted">Shop calendar</dt><dd class="col-sm-7">{% if centre.shop_calendar %}<a href="{% url 'shop_calendar_detail' centre.shop_calendar_id %}">{{ centre.shop_calendar.code }}</a>{% else %}<span class="text-muted">Mon-Fri fallback</span>{% endif %}</dd>
+        <dt class="col-sm-5 text-muted">Finite capacity</dt><dd class="col-sm-7">{{ centre.finite_capacity_enabled|yesno:"Enabled,Disabled" }}</dd>
         <dt class="col-sm-5 text-muted">Calendar</dt><dd class="col-sm-7">{{ centre.calendar_code|default:'-' }}</dd>
         <dt class="col-sm-5 text-muted">Working days</dt><dd class="col-sm-7">{{ centre.working_days_mask|default:'-' }}</dd>
         <dt class="col-sm-5 text-muted">Status</dt><dd class="col-sm-7">{{ centre.is_active|yesno:"Active,Inactive" }}</dd>

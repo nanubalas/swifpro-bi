@@ -36,6 +36,10 @@ VIEW_WORK_CENTRE = "view_work_centre"
 MANAGE_WORK_CENTRE = "manage_work_centre"
 VIEW_SUBCONTRACT = "view_subcontract"
 MANAGE_SUBCONTRACT = "manage_subcontract"
+VIEW_SCHEDULE = "view_schedule"
+MANAGE_SCHEDULE = "manage_schedule"
+VIEW_SHOP_CALENDAR = "view_shop_calendar"
+MANAGE_SHOP_CALENDAR = "manage_shop_calendar"
 
 # Catalog: (code, label, category) - drives the matrix UI.
 PERMISSIONS = [
@@ -67,6 +71,10 @@ PERMISSIONS = [
     (MANAGE_WORK_CENTRE, "Manage work centres (create/edit/delete)", "Planning"),
     (VIEW_SUBCONTRACT, "View subcontract orders", "Planning"),
     (MANAGE_SUBCONTRACT, "Manage subcontract orders (convert/receive)", "Planning"),
+    (VIEW_SCHEDULE, "View capacity schedule / load", "Planning"),
+    (MANAGE_SCHEDULE, "Reschedule work orders", "Planning"),
+    (VIEW_SHOP_CALENDAR, "View shop calendars", "Planning"),
+    (MANAGE_SHOP_CALENDAR, "Manage shop calendars", "Planning"),
 ]
 ALL_PERMISSIONS = {code for code, _, _ in PERMISSIONS}
 PERMISSION_LABELS = {code: label for code, label, _ in PERMISSIONS}
@@ -86,14 +94,17 @@ ROLE_PERMISSIONS = {
         VIEW_FORECAST, MANAGE_FORECAST,
         VIEW_ROUTING, MANAGE_ROUTING, VIEW_WORK_CENTRE, MANAGE_WORK_CENTRE,
         VIEW_SUBCONTRACT, MANAGE_SUBCONTRACT,
+        VIEW_SCHEDULE, MANAGE_SCHEDULE, VIEW_SHOP_CALENDAR, MANAGE_SHOP_CALENDAR,
     },
     roles.SALES: {VIEW_DASHBOARD, MANAGE_CUSTOMERS, MANAGE_INVOICES},
     roles.WAREHOUSE: {VIEW_DASHBOARD, MANAGE_INVENTORY, MANAGE_PRODUCTS, VIEW_MRP,
                       VIEW_WORK_ORDER, EXECUTE_WORK_ORDER, VIEW_FORECAST,
-                      VIEW_ROUTING, VIEW_WORK_CENTRE, VIEW_SUBCONTRACT},
+                      VIEW_ROUTING, VIEW_WORK_CENTRE, VIEW_SUBCONTRACT,
+                      VIEW_SCHEDULE, MANAGE_SCHEDULE, VIEW_SHOP_CALENDAR},
     roles.PURCHASING: {VIEW_DASHBOARD, MANAGE_PURCHASE_ORDERS, MANAGE_SUPPLIERS, MANAGE_INVENTORY,
                        VIEW_MRP, MANAGE_MRP, VIEW_WORK_ORDER, VIEW_FORECAST, MANAGE_FORECAST,
-                       VIEW_ROUTING, VIEW_WORK_CENTRE, VIEW_SUBCONTRACT, MANAGE_SUBCONTRACT},
+                       VIEW_ROUTING, VIEW_WORK_CENTRE, VIEW_SUBCONTRACT, MANAGE_SUBCONTRACT,
+                       VIEW_SCHEDULE, VIEW_SHOP_CALENDAR},
     roles.FINANCE: {
         VIEW_DASHBOARD, MANAGE_CUSTOMERS, MANAGE_INVOICES, MANAGE_PAYMENTS,
         VIEW_FINANCE_REPORTS, EXPORT_DATA,

@@ -162,6 +162,23 @@ def apply_routing_schedule(run, profile, po):
     receipt = po.planned_receipt_date or po.required_date
     po.planned_release_date = receipt - datetime.timedelta(days=days)
     po.save(update_fields=["planned_release_date"])
+
+    # Phase 14: when a work centre opts into scheduling (calendar / finite),
+    # refine the release/receipt from a finite backward schedule. Any failure
+    # falls back to the rough-cut dates above and is reported, never fatal.
+    from core.services.mrp import scheduling
+    if scheduling.should_finite_schedule(routing):
+        try:
+            release, receipt_actual = scheduling.schedule_mrp_planned_order(po, routing)
+            po.planned_release_date = release
+            po.planned_receipt_date = receipt_actual
+            po.save(update_fields=["planned_release_date", "planned_receipt_date"])
+        except scheduling.SchedulingError as e:
+            mrp_exc.raise_exception(
+                run, e.code,
+                f"Finite scheduling for {product.sku} could not complete ({e}); used rough-cut dates.",
+                product=product, site=site, planned_order=po, dedupe_key=("sched", routing.id))
+            mrp_exc.bump_level(po, "WARNING")
     return routing
 
 
@@ -297,6 +314,16 @@ def create_work_order_operations(work_order, routing):
             planned_hours=hours, planned_labour_hours=plan_hours, planned_overhead_hours=plan_hours,
             planned_start=start, planned_end=end,
             status="PLANNED", source_routing_operation=op, notes=op.notes))
+
+    # Phase 14: refine the rough-cut operation dates with a finite backward
+    # schedule when a work centre opts in (calendar / finite). Failure keeps the
+    # rough-cut dates above.
+    from core.services.mrp import scheduling
+    if scheduling.should_finite_schedule(routing):
+        try:
+            scheduling.schedule_work_order_operations(work_order, mode="BACKWARD")
+        except scheduling.SchedulingError:
+            pass
     return created
 
 

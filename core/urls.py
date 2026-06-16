@@ -376,6 +376,16 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("routings/operations/<int:op_id>/edit/", views.routing_operation_edit, name="routing_operation_edit"),
     path("routings/operations/<int:op_id>/delete/", views.routing_operation_delete, name="routing_operation_delete"),
 
+    # Shop calendars + capacity load (Phase 14)
+    path("shop-calendars/", views.shop_calendar_list, name="shop_calendar_list"),
+    path("shop-calendars/new/", views.shop_calendar_create, name="shop_calendar_create"),
+    path("shop-calendars/<int:calendar_id>/", views.shop_calendar_detail, name="shop_calendar_detail"),
+    path("shop-calendars/<int:calendar_id>/edit/", views.shop_calendar_edit, name="shop_calendar_edit"),
+    path("shop-calendars/<int:calendar_id>/working-day/", views.shop_calendar_working_day_edit, name="shop_calendar_working_day_edit"),
+    path("shop-calendars/<int:calendar_id>/exceptions/new/", views.shop_calendar_exception_create, name="shop_calendar_exception_create"),
+    path("shop-calendars/exceptions/<int:exception_id>/delete/", views.shop_calendar_exception_delete, name="shop_calendar_exception_delete"),
+    path("capacity-load/", views.capacity_load, name="capacity_load"),
+
     # Work orders (Phase 6)
     path("work-orders/", views.work_order_list, name="work_order_list"),
     path("work-orders/<int:wo_id>/", views.work_order_detail, name="work_order_detail"),
@@ -385,4 +395,5 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("work-orders/<int:wo_id>/complete/", views.work_order_complete, name="work_order_complete"),
     path("work-orders/<int:wo_id>/correct/", views.work_order_correct, name="work_order_correct"),
     path("work-orders/<int:wo_id>/book/", views.work_order_book, name="work_order_book"),
+    path("work-orders/<int:wo_id>/reschedule/", views.work_order_reschedule, name="work_order_reschedule"),
 ]
