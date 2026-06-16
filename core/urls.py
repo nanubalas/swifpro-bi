@@ -363,6 +363,19 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("forecasts/lines/<int:line_id>/edit/", views.forecast_line_edit, name="forecast_line_edit"),
     path("forecasts/lines/<int:line_id>/delete/", views.forecast_line_delete, name="forecast_line_delete"),
 
+    # Routing + work-centre capacity (Phase 10)
+    path("work-centres/", views.work_centre_list, name="work_centre_list"),
+    path("work-centres/new/", views.work_centre_create, name="work_centre_create"),
+    path("work-centres/<int:wc_id>/", views.work_centre_detail, name="work_centre_detail"),
+    path("work-centres/<int:wc_id>/edit/", views.work_centre_edit, name="work_centre_edit"),
+    path("routings/", views.routing_list, name="routing_list"),
+    path("routings/new/", views.routing_create, name="routing_create"),
+    path("routings/<int:routing_id>/", views.routing_detail, name="routing_detail"),
+    path("routings/<int:routing_id>/edit/", views.routing_edit, name="routing_edit"),
+    path("routings/<int:routing_id>/operations/new/", views.routing_operation_create, name="routing_operation_create"),
+    path("routings/operations/<int:op_id>/edit/", views.routing_operation_edit, name="routing_operation_edit"),
+    path("routings/operations/<int:op_id>/delete/", views.routing_operation_delete, name="routing_operation_delete"),
+
     # Work orders (Phase 6)
     path("work-orders/", views.work_order_list, name="work_order_list"),
     path("work-orders/<int:wo_id>/", views.work_order_detail, name="work_order_detail"),

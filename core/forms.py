@@ -20,6 +20,7 @@ from core.models import (
     SalesQuote, SalesQuoteLine, CustomerOrder, CustomerOrderLine,
     RecurringInvoice, RecurringInvoiceLine,
     ItemSitePlanning, MRPRun, ForecastVersion, ForecastLine,
+    WorkCentre, RoutingHeader, RoutingOperation,
 )
 
 
@@ -1067,3 +1068,64 @@ class ForecastLineForm(TenantModelForm):
             if v.end_date and d > v.end_date:
                 raise forms.ValidationError(f"Date is after the version end ({v.end_date}).")
         return d
+
+
+class WorkCentreForm(TenantModelForm):
+    """Create / edit a work centre (rough-cut capacity)."""
+    class Meta:
+        model = WorkCentre
+        fields = [
+            "site", "code", "name", "description", "capacity_hours_per_day",
+            "efficiency_percent", "calendar_code", "working_days_mask",
+            "default_queue_hours", "default_move_hours", "is_active",
+        ]
+        widgets = {"description": forms.Textarea(attrs={"rows": 2})}
+
+    def clean_capacity_hours_per_day(self):
+        v = self.cleaned_data.get("capacity_hours_per_day")
+        if v is not None and v < 0:
+            raise forms.ValidationError("Capacity hours cannot be negative.")
+        return v
+
+
+class RoutingHeaderForm(TenantModelForm):
+    """Create / edit a routing header for a make item."""
+    class Meta:
+        model = RoutingHeader
+        fields = [
+            "product", "site", "routing_code", "revision", "status",
+            "is_default", "effective_from", "effective_to", "notes",
+        ]
+        widgets = {
+            "effective_from": forms.DateInput(attrs={"type": "date"}),
+            "effective_to": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        ef, et = cleaned.get("effective_from"), cleaned.get("effective_to")
+        if ef and et and et < ef:
+            self.add_error("effective_to", "Effective-to cannot be before effective-from.")
+        return cleaned
+
+
+class RoutingOperationForm(TenantModelForm):
+    """Add / edit a routing operation."""
+    class Meta:
+        model = RoutingOperation
+        fields = [
+            "operation_sequence", "operation_name", "work_centre",
+            "setup_minutes", "run_minutes_per_unit", "queue_minutes", "move_minutes",
+            "yield_percent", "is_subcontract_operation", "notes",
+        ]
+
+    def __init__(self, *args, routing=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._routing = routing
+
+    def clean_yield_percent(self):
+        v = self.cleaned_data.get("yield_percent")
+        if v is not None and v <= 0:
+            raise forms.ValidationError("Yield percent must be greater than zero.")
+        return v

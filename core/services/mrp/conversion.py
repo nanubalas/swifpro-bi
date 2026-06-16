@@ -213,6 +213,7 @@ def convert_transfer_to_transfer_order(po, user):
 # --------------------------------------------------------------------------- #
 def convert_make_to_work_order(po, user):
     from core.models import WorkOrder, WorkOrderMaterial, MRPDemand, BillOfMaterialsLine
+    from core.services.mrp import routing_capacity
 
     if po.source_type != "MAKE":
         raise ConversionError(WRONG_TARGET, "Only MAKE planned orders convert to a work order.")
@@ -226,6 +227,10 @@ def convert_make_to_work_order(po, user):
         mrp_run=po.mrp_run, demand_type="WORK_ORDER_COMPONENT",
         source_document_type="MRPPlannedOrder", source_document_id=po.planned_order_number)
         .select_related("product"))
+
+    # Routing for the finished good (Phase 10) drives operation lines. Missing
+    # routing is not fatal - the work order is still created without operations.
+    routing = routing_capacity.find_active_routing(po.product, po.site, po.required_date)
 
     with transaction.atomic():
         wo = WorkOrder.objects.create(
@@ -242,9 +247,13 @@ def convert_make_to_work_order(po, user):
             WorkOrderMaterial.objects.create(
                 work_order=wo, component=d.product, required_quantity=d.open_quantity,
                 required_date=d.required_date, bom_line=bom_line, source_mrp_demand=d)
+        operations = routing_capacity.create_work_order_operations(wo, routing)
         _mark_converted(po, user, created_work_order=wo)
 
+    routing_note = (f" {len(operations)} operation(s) scheduled."
+                    if operations else " No active routing found, so no operations were scheduled.")
     if not component_demands:
         return wo, True, (f"Work order {wo.work_order_number} created with no material lines "
-                          f"(no component demand found - {MATERIALS_MISSING}).")
-    return wo, True, f"Work order {wo.work_order_number} created with {len(component_demands)} material line(s)."
+                          f"(no component demand found - {MATERIALS_MISSING}).{routing_note}")
+    return wo, True, (f"Work order {wo.work_order_number} created with "
+                      f"{len(component_demands)} material line(s).{routing_note}")
