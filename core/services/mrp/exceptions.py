@@ -56,6 +56,13 @@ _REGISTRY = {
     "CAPACITY_OVERLOAD": ("WARNING", "Work-centre load exceeds capacity; level the schedule."),
     "SUBCONTRACT_OPERATION_NOT_SUPPORTED": ("INFO", "Subcontract operations are not scheduled yet."),
     "ROUTING_DURATION_INVALID": ("WARNING", "Check the routing operation times."),
+    # Phase 11 (subcontracting)
+    "MISSING_SUBCONTRACT_SUPPLIER": ("WARNING", "Set a default supplier on the subcontract item planning profile."),
+    "SUBCONTRACT_OPERATION_SUPPLIER_MISSING": ("WARNING", "Set a supplier on the subcontract routing operation."),
+    "SUBCONTRACT_CONVERSION_FAILED": ("WARNING", "Subcontract conversion could not complete; review the order."),
+    "SUBCONTRACT_RECEIPT_UNSUPPORTED": ("INFO", "Subcontract receipt is handled via the existing goods-receipt flow."),
+    "SUBCONTRACT_COST_MISSING": ("INFO", "No subcontract service cost set; standard cost was used."),
+    "SUBCONTRACT_ORDER_ALREADY_CONVERTED": ("INFO", "This subcontract order has already been converted."),
 }
 
 

@@ -12943,7 +12943,11 @@ class MRPPhase10RoutingCapacityTests(TestCase):
         run = self._exec()
         self.assertFalse(run.exceptions.filter(exception_code="CAPACITY_OVERLOAD").exists())
 
-    def test_subcontract_operation_creates_exception(self):
+    def test_subcontract_operation_is_planned_not_rejected(self):
+        # Phase 11 supersedes the Phase 10 "not supported" behaviour: a
+        # subcontract routing operation now produces a SUBCONTRACT planned order
+        # (and, when no supplier is set, a supplier-missing exception) rather
+        # than SUBCONTRACT_OPERATION_NOT_SUPPORTED.
         wc = self._wc()
         self._profile(self.fg, source_type="MAKE")
         self._profile(self.rm, source_type="BUY")
@@ -12952,8 +12956,9 @@ class MRPPhase10RoutingCapacityTests(TestCase):
         self._op(r, seq=10, wc=wc, setup="60", run="30", subcon=True)
         self._sales(10)
         run = self._exec()
-        self.assertTrue(run.exceptions.filter(
+        self.assertFalse(run.exceptions.filter(
             exception_code="SUBCONTRACT_OPERATION_NOT_SUPPORTED").exists())
+        self.assertTrue(run.planned_orders.filter(source_type="SUBCONTRACT", product=self.fg).exists())
 
     def test_open_work_order_contributes_to_load(self):
         from core.models import WorkOrder, WorkOrderOperation
@@ -13049,3 +13054,298 @@ class MRPPhase10RoutingCapacityTests(TestCase):
             "product": self.fg.id, "site": self.a.id, "routing_code": "M1", "status": "ACTIVE"})
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(RoutingHeader.objects.filter(tenant=self.tenant, routing_code="M1").exists())
+
+
+class MRPPhase11SubcontractTests(TestCase):
+    """Phase 11: subcontract item sourcing (Scenario A) and subcontract routing
+    operations (Scenario B), converting to requisitions / POs."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Customer
+        self.tenant = Tenant.objects.create(name="SC Co")
+        self.a = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.sub = Product.objects.create(tenant=self.tenant, sku="SUB-001", name="Subcontracted item",
+                                          standard_cost=Decimal("4.00"))
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material",
+                                         standard_cost=Decimal("1.00"))
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Subby")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.admin = User.objects.create_user("scadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.manager = User.objects.create_user("scmgr", password="pw")
+        OrgMembership.objects.create(user=self.manager, tenant=self.tenant, role="MANAGER", is_default=True)
+        self.warehouse = User.objects.create_user("scwh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.start = datetime.date(2026, 6, 1)
+        self.end = datetime.date(2026, 8, 31)
+        self.future = datetime.date(2026, 7, 1)
+
+    # --- helpers ---
+    def _profile(self, product=None, source_type="SUBCONTRACT", supplier="default", lead=5, **kw):
+        from core.models import ItemSitePlanning
+        if supplier == "default":
+            supplier = self.supplier if source_type in ("BUY", "SUBCONTRACT") else None
+        defaults = dict(
+            tenant=self.tenant, product=(product or self.sub), site=self.a,
+            source_type=source_type, default_supplier=supplier,
+            safety_stock_qty=Decimal("0"), min_order_qty=Decimal("0"), max_order_qty=Decimal("0"),
+            order_multiple=Decimal("0"), lead_time_days=lead, lot_sizing_method="LOT_FOR_LOT")
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def _bom(self, parent=None, component=None, qty=Decimal("1")):
+        from core.models import BillOfMaterials, BillOfMaterialsLine
+        bom = BillOfMaterials.objects.create(tenant=self.tenant, product=(parent or self.fg),
+                                             name="BOM", output_qty=Decimal("1"))
+        BillOfMaterialsLine.objects.create(bom=bom, line_no=10, component=(component or self.rm), qty=qty)
+        return bom
+
+    def _wc(self, code="ASM", capacity="8"):
+        from core.models import WorkCentre
+        return WorkCentre.objects.create(tenant=self.tenant, site=self.a, code=code, name=code,
+                                         capacity_hours_per_day=Decimal(capacity),
+                                         efficiency_percent=Decimal("100"), is_active=True)
+
+    def _routing(self, product=None):
+        from core.models import RoutingHeader
+        return RoutingHeader.objects.create(tenant=self.tenant, product=(product or self.fg),
+                                            site=self.a, routing_code="R-" + (product or self.fg).sku,
+                                            status="ACTIVE", is_default=True)
+
+    def _op(self, routing, seq=10, name="Op", wc=None, setup="0", run="0", subcon=False, supplier=None):
+        from core.models import RoutingOperation
+        return RoutingOperation.objects.create(
+            routing=routing, operation_sequence=seq, operation_name=name, work_centre=wc,
+            setup_minutes=Decimal(setup), run_minutes_per_unit=Decimal(run),
+            is_subcontract_operation=subcon, supplier=supplier)
+
+    def _sales(self, qty, product=None):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.services.mrp import next_run_number
+        o = CustomerOrder.objects.create(
+            tenant=self.tenant, customer=self.customer, site=self.a,
+            order_number="SO-" + next_run_number(self.tenant), status="CONFIRMED", order_date=self.future)
+        CustomerOrderLine.objects.create(order=o, product=(product or self.sub), qty=Decimal(qty))
+        return o
+
+    def _run(self):
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number
+        return MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant), site_scope=None,
+            planning_start_date=self.start, planning_end_date=self.end)
+
+    def _exec(self):
+        from core.services.mrp import run_mrp
+        return run_mrp(self._run(), user=self.admin)
+
+    def _mk_sub_po(self, qty="10", supplier="default", status="SUGGESTED"):
+        from core.models import MRPPlannedOrder
+        from core.services.mrp import next_planned_order_number
+        if supplier == "default":
+            supplier = self.supplier
+        run = self._run()
+        return MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.sub, site=self.a, source_type="SUBCONTRACT",
+            planned_order_number=next_planned_order_number(self.tenant),
+            quantity=Decimal(qty), required_date=self.future,
+            planned_receipt_date=self.future, planned_release_date=self.start,
+            supplier=supplier, status=status)
+
+    # =========================== Scenario A: planning ===========================
+    def test_subcontract_shortage_creates_planned_order(self):
+        self._profile(self.sub, "SUBCONTRACT")
+        self._sales(10)
+        run = self._exec()
+        pos = run.planned_orders.filter(source_type="SUBCONTRACT", product=self.sub)
+        self.assertTrue(pos.exists())
+        self.assertEqual(pos.first().quantity, Decimal("10.00"))
+
+    def test_subcontract_uses_default_supplier(self):
+        self._profile(self.sub, "SUBCONTRACT")
+        self._sales(10)
+        run = self._exec()
+        po = run.planned_orders.get(source_type="SUBCONTRACT", product=self.sub)
+        self.assertEqual(po.supplier_id, self.supplier.id)
+
+    def test_missing_subcontract_supplier_exception(self):
+        self._profile(self.sub, "SUBCONTRACT", supplier=None)
+        self._sales(10)
+        run = self._exec()
+        self.assertTrue(run.exceptions.filter(exception_code="MISSING_SUBCONTRACT_SUPPLIER").exists())
+        self.assertTrue(run.planned_orders.filter(source_type="SUBCONTRACT").exists())  # still planned
+
+    def test_missing_lead_time_exception(self):
+        self._profile(self.sub, "SUBCONTRACT", lead=0)
+        self._sales(10)
+        run = self._exec()
+        self.assertTrue(run.exceptions.filter(exception_code="MISSING_LEAD_TIME").exists())
+
+    def test_subcontract_in_run_detail(self):
+        self._profile(self.sub, "SUBCONTRACT")
+        self._sales(10)
+        run = self._exec()
+        po = run.planned_orders.get(source_type="SUBCONTRACT")
+        self.client.login(username="scadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/" % run.id)
+        self.assertContains(resp, po.planned_order_number)
+
+    def test_subcontract_in_workbench_filter(self):
+        self._profile(self.sub, "SUBCONTRACT")
+        self._sales(10)
+        run = self._exec()
+        po = run.planned_orders.get(source_type="SUBCONTRACT")
+        self.client.login(username="scadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/?source_type=SUBCONTRACT" % run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, po.planned_order_number)
+
+    # =========================== Scenario A: conversion ===========================
+    def test_subcontract_converts_to_requisition(self):
+        from core.services.mrp import conversion
+        po = self._mk_sub_po()
+        req, created, msg = conversion.convert_subcontract_to_requisition(po, self.admin)
+        self.assertTrue(created)
+        self.assertEqual(req.status, "DRAFT")
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CONVERTED")
+        self.assertEqual(po.created_purchase_requisition_id, req.id)
+
+    def test_subcontract_conversion_links_back(self):
+        from core.models import PurchaseRequisitionLine
+        from core.services.mrp import conversion
+        po = self._mk_sub_po()
+        req, _, _ = conversion.convert_subcontract_to_requisition(po, self.admin)
+        line = PurchaseRequisitionLine.objects.get(requisition=req)
+        self.assertEqual(line.mrp_planned_order_id, po.id)
+        self.assertIn("subcontract", (line.notes or "").lower())
+
+    def test_subcontract_dispatcher_routes_subcontract(self):
+        from core.services.mrp import conversion
+        po = self._mk_sub_po()
+        doc, created, _ = conversion.convert_planned_order(po, conversion.REQUISITION, self.admin)
+        self.assertTrue(created)
+        po.refresh_from_db()
+        self.assertEqual(po.created_purchase_requisition_id, doc.id)
+
+    def test_subcontract_reconvert_no_duplicate(self):
+        from core.models import PurchaseRequisition
+        from core.services.mrp import conversion
+        po = self._mk_sub_po()
+        r1, c1, _ = conversion.convert_subcontract_to_requisition(po, self.admin)
+        po.refresh_from_db()
+        r2, c2, _ = conversion.convert_subcontract_to_requisition(po, self.admin)
+        self.assertFalse(c2)
+        self.assertEqual(r1.id, r2.id)
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_subcontract_requires_supplier_on_convert(self):
+        from core.services.mrp import conversion
+        po = self._mk_sub_po(supplier=None)
+        with self.assertRaises(conversion.ConversionError) as cm:
+            conversion.convert_subcontract_to_requisition(po, self.admin)
+        self.assertEqual(cm.exception.code, conversion.MISSING_SUBCONTRACT_SUPPLIER)
+
+    def test_bulk_convert_handles_subcontract(self):
+        from core.models import PurchaseRequisition
+        from core.services.mrp import bulk
+        a = self._mk_sub_po()
+        b = self._mk_sub_po()
+        res = bulk.bulk_convert([a, b], self.admin)
+        self.assertEqual(res.success, 2)
+        # Same supplier/site -> grouped into one subcontract requisition.
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+        for p in (a, b):
+            p.refresh_from_db()
+            self.assertEqual(p.status, "CONVERTED")
+
+    def test_subcontract_conversion_no_inventory_or_gl(self):
+        from core.models import InventoryMovement, JournalEntry
+        from core.services.mrp import conversion
+        po = self._mk_sub_po()
+        conversion.convert_subcontract_to_requisition(po, self.admin)
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.tenant).count(), 0)
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.tenant).count(), 0)
+
+    # =========================== Scenario B: routing op ===========================
+    def test_subcontract_operation_excluded_from_capacity(self):
+        wc = self._wc(capacity="8")
+        self._profile(self.fg, "MAKE", supplier=None)
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        # A subcontract op with a huge run time would overload if counted.
+        self._op(r, seq=10, name="Coating", wc=wc, setup="0", run="600", subcon=True, supplier=self.supplier)
+        self._sales(10, product=self.fg)
+        run = self._exec()
+        self.assertFalse(run.exceptions.filter(exception_code="CAPACITY_OVERLOAD").exists())
+
+    def test_subcontract_operation_creates_planned_order(self):
+        wc = self._wc()
+        self._profile(self.fg, "MAKE", supplier=None)
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=10, name="Assembly", wc=wc, setup="60", run="30", subcon=False)
+        self._op(r, seq=20, name="Coating", subcon=True, supplier=self.supplier)
+        self._sales(10, product=self.fg)
+        run = self._exec()
+        make_po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        subs = run.planned_orders.filter(source_type="SUBCONTRACT", parent_planned_order=make_po)
+        self.assertTrue(subs.exists())
+        self.assertEqual(subs.first().supplier_id, self.supplier.id)
+
+    def test_subcontract_operation_supplier_missing_exception(self):
+        wc = self._wc()
+        self._profile(self.fg, "MAKE", supplier=None)
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=20, name="Coating", subcon=True, supplier=None)
+        self._sales(10, product=self.fg)
+        run = self._exec()
+        self.assertTrue(run.exceptions.filter(
+            exception_code="SUBCONTRACT_OPERATION_SUPPLIER_MISSING").exists())
+
+    def test_work_order_operations_pane_shows_subcontract(self):
+        from core.services.mrp import conversion
+        wc = self._wc()
+        self._profile(self.fg, "MAKE", supplier=None)
+        self._profile(self.rm, "BUY")
+        self._bom(self.fg, self.rm)
+        r = self._routing(self.fg)
+        self._op(r, seq=10, name="Assembly", wc=wc, setup="60", run="30", subcon=False)
+        self._op(r, seq=20, name="Coating", subcon=True, supplier=self.supplier)
+        self._sales(10, product=self.fg)
+        run = self._exec()
+        make_po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        wo, _, _ = conversion.convert_make_to_work_order(make_po, self.admin)
+        self.client.login(username="scadmin", password="pw")
+        resp = self.client.get("/work-orders/%d/" % wo.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Subcontract")
+        self.assertContains(resp, "Coating")
+
+    # =========================== permissions ===========================
+    def test_view_only_user_cannot_bulk_convert_subcontract(self):
+        from core.models import PurchaseRequisition
+        po = self._mk_sub_po()
+        self.client.login(username="scwh", password="pw")  # Warehouse: VIEW_MRP only
+        resp = self.client.post("/mrp/runs/%d/bulk/" % po.mrp_run_id,
+                                {"bulk_action": "convert", "selected": [po.id]})
+        self.assertEqual(resp.status_code, 403)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "SUGGESTED")
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 0)
+
+    def test_manage_mrp_user_can_bulk_convert_subcontract(self):
+        from core.models import PurchaseRequisition
+        po = self._mk_sub_po()
+        self.client.login(username="scmgr", password="pw")  # Manager: MANAGE_MRP
+        resp = self.client.post("/mrp/runs/%d/bulk/" % po.mrp_run_id,
+                                {"bulk_action": "convert", "selected": [po.id]})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)

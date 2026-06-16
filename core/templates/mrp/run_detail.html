@@ -114,7 +114,7 @@
               {% elif p.status == 'SUGGESTED' or p.status == 'FIRMED' %}
                 {% if 'manage_mrp' in perms %}
                 <div class="d-flex flex-wrap gap-1">
-                  {% if p.source_type == 'BUY' %}
+                  {% if p.source_type == 'BUY' or p.source_type == 'SUBCONTRACT' %}
                     <form method="post" action="{% url 'mrp_planned_order_convert' p.id %}">{% csrf_token %}<input type="hidden" name="target_type" value="REQUISITION"><button class="btn btn-sm btn-outline-primary" type="submit">→ PR</button></form>
                     <form method="post" action="{% url 'mrp_planned_order_convert' p.id %}">{% csrf_token %}<input type="hidden" name="target_type" value="PURCHASE_ORDER"><button class="btn btn-sm btn-outline-primary" type="submit">→ PO</button></form>
                   {% elif p.source_type == 'TRANSFER' %}

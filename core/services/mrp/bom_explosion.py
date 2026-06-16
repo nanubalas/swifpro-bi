@@ -207,5 +207,6 @@ def _plan_component(run, comp, site, req, required_date, nearest_po, demand,
     if profile.source_type == "MAKE":
         from core.services.mrp import routing_capacity
         routing_capacity.apply_routing_schedule(run, profile, po)
+        routing_capacity.plan_subcontract_operations(run, profile, po)
         explode_and_plan(run, comp, site, po.quantity, po.planned_release_date, po,
                          depth + 1, ancestors | {comp.id})

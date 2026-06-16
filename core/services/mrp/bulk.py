@@ -102,8 +102,11 @@ def bulk_convert(planned_orders, user, buy_target=conversion.REQUISITION):
         _group_transfer_to_orders(buckets["TRANSFER"], user, result)
     if buckets.get("MAKE"):
         _convert_make_to_work_orders(buckets["MAKE"], user, result)
-    for po in buckets.get("SUBCONTRACT", []):
-        result.skip(po, "subcontract conversion is not supported yet")
+    if buckets.get("SUBCONTRACT"):
+        if buy_target == conversion.PURCHASE_ORDER:
+            _convert_subcontract_to_purchase_orders(buckets["SUBCONTRACT"], user, result)
+        else:
+            _group_buy_to_requisitions(buckets["SUBCONTRACT"], user, result, subcontract=True)
     return result
 
 
@@ -124,41 +127,67 @@ def _eligible(po, result, already_field):
 # --------------------------------------------------------------------------- #
 # BUY -> grouped Purchase Requisitions
 # --------------------------------------------------------------------------- #
-def _group_buy_to_requisitions(orders, user, result):
+def _group_buy_to_requisitions(orders, user, result, subcontract=False):
     from core.models import PurchaseRequisition, PurchaseRequisitionLine
 
+    prefix = "SCR" if subcontract else "PR"
     groups = defaultdict(list)
     for po in orders:
         if not _eligible(po, result, "created_purchase_requisition_id"):
             continue
         if po.supplier_id is None:
-            result.fail(po, "no supplier set")
+            result.fail(po, "no subcontract supplier set" if subcontract else "no supplier set")
             continue
         groups[(po.supplier_id, po.site_id)].append(po)
 
     for gos in groups.values():
         head = gos[0]
+        kind = "Subcontract service" if subcontract else "From MRP run"
         try:
             with transaction.atomic():
                 req = PurchaseRequisition.objects.create(
                     tenant=head.tenant,
-                    req_number=_unique_number(PurchaseRequisition, "req_number", "PR", head.tenant),
+                    req_number=_unique_number(PurchaseRequisition, "req_number", prefix, head.tenant),
                     preferred_supplier=head.supplier,
                     needed_by=min(o.required_date for o in gos),
-                    justification=(f"From MRP run {head.mrp_run.run_number} "
+                    justification=(f"{kind} {head.mrp_run.run_number} "
                                    f"({len(gos)} planned order(s))."),
                     status="DRAFT", requested_by=user)
                 for o in gos:
+                    note = (f"Subcontract service - MRP {o.planned_order_number}" if subcontract
+                            else f"MRP {o.planned_order_number}")
                     PurchaseRequisitionLine.objects.create(
                         requisition=req, product=o.product, quantity=o.quantity,
-                        estimated_unit_cost=(o.product.standard_cost or None),
-                        notes=f"MRP {o.planned_order_number}", mrp_planned_order=o)
+                        estimated_unit_cost=(_sub_unit_cost(o) if subcontract
+                                             else (o.product.standard_cost or None)),
+                        notes=note, mrp_planned_order=o)
                     _mark_converted(o, user, created_purchase_requisition=req)
             result.document("Requisition", "requisition_detail", req.id, req.req_number)
             result.ok(len(gos))
         except Exception as e:  # pragma: no cover - defensive; group rolls back alone
             for o in gos:
                 result.fail(o, str(e))
+
+
+def _sub_unit_cost(po):
+    from core.services.mrp.conversion import _subcontract_unit_cost
+    return _subcontract_unit_cost(po)
+
+
+def _convert_subcontract_to_purchase_orders(orders, user, result):
+    for po in orders:
+        if not _eligible(po, result, "created_purchase_order_id"):
+            continue
+        try:
+            with transaction.atomic():
+                doc, created, _ = conversion.convert_subcontract_to_purchase_order(po, user)
+            if created:
+                result.document("Purchase order", "po_detail", doc.id, doc.po_number)
+                result.ok()
+            else:
+                result.skip(po, "already converted")
+        except ConversionError as e:
+            result.fail(po, str(e))
 
 
 # --------------------------------------------------------------------------- #
