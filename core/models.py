@@ -1126,6 +1126,11 @@ class InventoryMovement(models.Model):
         RELEASE = "RELEASE", "Release"
         WORK_ORDER_ISSUE = "WORK_ORDER_ISSUE", "Work order material issue"
         WORK_ORDER_COMPLETION = "WORK_ORDER_COMPLETION", "Work order completion"
+        # Phase 12: manufacturing correction movements (append-only).
+        WORK_ORDER_SCRAP = "WORK_ORDER_SCRAP", "Work order material scrap"
+        WORK_ORDER_ISSUE_REVERSAL = "WORK_ORDER_ISSUE_REVERSAL", "Work order issue reversal"
+        WORK_ORDER_COMPLETION_REVERSAL = "WORK_ORDER_COMPLETION_REVERSAL", "Work order completion reversal"
+        WORK_ORDER_COMPLETION_SCRAP = "WORK_ORDER_COMPLETION_SCRAP", "Work order finished-goods scrap"
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
 
@@ -1133,7 +1138,7 @@ class InventoryMovement(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     location = models.ForeignKey(Location, on_delete=models.PROTECT)
     bin = models.ForeignKey("Bin", on_delete=models.SET_NULL, null=True, blank=True, related_name="movements")
-    movement_type = models.CharField(max_length=24, choices=MovementType.choices)
+    movement_type = models.CharField(max_length=40, choices=MovementType.choices)
     # Who triggered the movement (null for system/automatic postings).
     user = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True)
     qty_delta = models.DecimalField(max_digits=12, decimal_places=2)
@@ -1151,6 +1156,14 @@ class InventoryMovement(models.Model):
     lot_code = models.CharField(max_length=50, blank=True, null=True)
     serial_number = models.CharField(max_length=100, blank=True, null=True)
     expiry_date = models.DateField(blank=True, null=True)
+    # Phase 12 correction trail (append-only). A reversal/scrap movement points at
+    # the original it corrects; the original accumulates reversed_quantity so it can
+    # never be over-reversed.
+    reversed_movement = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
+                                          related_name="reversals")
+    reversed_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    reversal_reason = models.CharField(max_length=255, blank=True, default="")
+    is_reversal = models.BooleanField(default=False)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -3255,6 +3268,9 @@ class WorkOrder(models.Model):
     # finished goods received out of WIP. GL/WIP journal posting is deferred.
     wip_material_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
     finished_goods_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    # Phase 12: accumulated correction costs (scrap moved out of WIP, value reversed).
+    scrap_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    reversal_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
     # Phase 7: WIP variance cleared to the GL on close.
     variance_journal = models.ForeignKey("JournalEntry", on_delete=models.SET_NULL, null=True, blank=True,
                                          related_name="+")
@@ -3298,6 +3314,10 @@ class WorkOrderMaterial(models.Model):
     required_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     issued_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     issued_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
+    # Phase 12: material scrapped from WIP and issue quantity reversed back to stock.
+    scrapped_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    reversed_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    scrap_cost = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0.00"))
     status = models.CharField(max_length=18, choices=Status.choices, default=Status.OPEN)
     uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, null=True, blank=True)
     required_date = models.DateField(null=True, blank=True)

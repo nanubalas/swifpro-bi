@@ -8307,3 +8307,49 @@ def work_order_complete(request, wo_id):
     except (InvalidOperation, ValueError):
         messages.error(request, "Enter a valid quantity.")
     return redirect("work_order_detail", wo_id=wo.id)
+
+
+@login_required
+@permission_required(permissions_mod.EXECUTE_WORK_ORDER)
+def work_order_correct(request, wo_id):
+    """Manufacturing corrections (Phase 12): scrap material / finished goods and
+    reverse a material issue / completion. One POST endpoint keyed by `action`."""
+    from core.models import WorkOrder, WorkOrderMaterial, InventoryMovement
+    from core.services.mrp import work_order_correction as woc
+    from core.services.mrp import work_order_execution as wox
+    tenant = _get_default_tenant(request)
+    wo = get_object_or_404(WorkOrder, id=wo_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("work_order_detail", wo_id=wo.id)
+    action = (request.POST.get("action") or "").lower()
+    reason = request.POST.get("reason") or ""
+    try:
+        qty = Decimal(request.POST.get("quantity") or "0")
+        if action == "scrap_material":
+            wom = get_object_or_404(WorkOrderMaterial, id=request.POST.get("material_id"), work_order=wo)
+            woc.scrap_work_order_material(wom, qty, request.user, reason)
+            messages.success(request, f"Scrapped {qty} of {wom.component.sku}.")
+        elif action == "scrap_fg":
+            woc.scrap_finished_goods(wo, qty, request.user, reason)
+            messages.success(request, f"Scrapped {qty} finished {wo.product.sku}.")
+        elif action in ("reverse_issue", "reverse_completion"):
+            mv = get_object_or_404(InventoryMovement, id=request.POST.get("movement_id"),
+                                   tenant=tenant, ref_id=wo.work_order_number)
+            if action == "reverse_issue":
+                woc.reverse_work_order_issue(mv, qty, request.user, reason)
+                messages.success(request, f"Reversed issue of {qty} {mv.product.sku}.")
+            else:
+                woc.reverse_work_order_completion(mv, qty, request.user, reason)
+                messages.success(request, f"Reversed completion of {qty} {mv.product.sku}.")
+        else:
+            messages.error(request, "Unknown correction action.")
+            return redirect("work_order_detail", wo_id=wo.id)
+        if getattr(wo, "_gl_warning", None):
+            messages.warning(request, wo._gl_warning)
+        log_audit(action=f"work_order_{action}", request=request, user=request.user, tenant=tenant,
+                  detail=wo.work_order_number)
+    except wox.WorkOrderError as e:
+        messages.error(request, str(e))
+    except (InvalidOperation, ValueError):
+        messages.error(request, "Enter a valid quantity.")
+    return redirect("work_order_detail", wo_id=wo.id)

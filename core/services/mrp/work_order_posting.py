@@ -24,6 +24,11 @@ ZERO = Decimal("0.00")
 REF_ISSUE = "WORK_ORDER_ISSUE"
 REF_COMPLETION = "WORK_ORDER_COMPLETION"
 REF_VARIANCE = "WORK_ORDER_VARIANCE"
+# Phase 12 correction journals (idempotent on the correction movement id).
+REF_SCRAP = "WORK_ORDER_SCRAP"
+REF_COMPLETION_SCRAP = "WORK_ORDER_COMPLETION_SCRAP"
+REF_ISSUE_REVERSAL = "WORK_ORDER_ISSUE_REVERSAL"
+REF_COMPLETION_REVERSAL = "WORK_ORDER_COMPLETION_REVERSAL"
 
 
 class MissingManufacturingAccount(Exception):
@@ -183,3 +188,73 @@ def post_work_order_close_variance(wo, user):
     wo.variance_posted_at = timezone.now()
     wo.save(update_fields=["variance_journal", "variance_posted_at"])
     return je
+
+
+# --------------------------------------------------------------------------- #
+# Corrections (Phase 12). Each is idempotent on the correction movement id and
+# links the journal to that movement. Amounts come from the correction service
+# (already non-negative). Scrap uses the manufacturing variance account when no
+# dedicated scrap-expense account exists.
+# --------------------------------------------------------------------------- #
+def _post_correction(wo, movement, amount, user, *, ref_type, debit_field, debit_label,
+                     credit_field, credit_label, memo, debit_desc, credit_desc):
+    tenant = wo.tenant
+    profile = get_profile(tenant, wo.site)
+    if profile is None:
+        return None
+    amount = Decimal(amount or ZERO).quantize(ZERO)
+    if amount <= ZERO:
+        return None
+    existing = _existing(tenant, ref_type, movement.id)
+    if existing is not None:
+        return existing
+    debit_account = _require(profile, debit_field, debit_field, debit_label)
+    credit_account = _require(profile, credit_field, credit_field, credit_label)
+    je = _post(tenant, site=wo.site, entry_date=timezone.localdate(),
+               ref_type=ref_type, ref_id=movement.id, memo=memo,
+               debit_account=debit_account, credit_account=credit_account, amount=amount,
+               user=user, debit_desc=debit_desc, credit_desc=credit_desc)
+    if movement.journal_entry_id is None:
+        movement.journal_entry = je
+        movement.save(update_fields=["journal_entry"])
+    return je
+
+
+def post_work_order_material_scrap(wo, movement, amount, user):
+    """Component scrap: DR Manufacturing Variance (scrap) / CR WIP."""
+    return _post_correction(
+        wo, movement, amount, user, ref_type=REF_SCRAP,
+        debit_field="manufacturing_variance_account", debit_label="scrap / manufacturing variance",
+        credit_field="wip_account", credit_label="WIP",
+        memo=f"WO {wo.work_order_number} material scrap",
+        debit_desc="Scrap / manufacturing variance", credit_desc="WIP - material scrapped")
+
+
+def post_work_order_completion_scrap(wo, movement, amount, user):
+    """Finished-goods scrap: DR Manufacturing Variance (scrap) / CR WIP."""
+    return _post_correction(
+        wo, movement, amount, user, ref_type=REF_COMPLETION_SCRAP,
+        debit_field="manufacturing_variance_account", debit_label="scrap / manufacturing variance",
+        credit_field="wip_account", credit_label="WIP",
+        memo=f"WO {wo.work_order_number} finished-goods scrap",
+        debit_desc="Scrap / manufacturing variance", credit_desc="WIP - finished goods scrapped")
+
+
+def post_work_order_issue_reversal(wo, movement, amount, user):
+    """Reverse a material issue: DR Raw Material Inventory / CR WIP."""
+    return _post_correction(
+        wo, movement, amount, user, ref_type=REF_ISSUE_REVERSAL,
+        debit_field="raw_material_inventory_account", debit_label="raw material inventory",
+        credit_field="wip_account", credit_label="WIP",
+        memo=f"WO {wo.work_order_number} issue reversal",
+        debit_desc="Raw material returned", credit_desc="WIP - issue reversed")
+
+
+def post_work_order_completion_reversal(wo, movement, amount, user):
+    """Reverse a completion: DR WIP / CR Finished Goods Inventory."""
+    return _post_correction(
+        wo, movement, amount, user, ref_type=REF_COMPLETION_REVERSAL,
+        debit_field="wip_account", debit_label="WIP",
+        credit_field="finished_goods_inventory_account", credit_label="finished goods inventory",
+        memo=f"WO {wo.work_order_number} completion reversal",
+        debit_desc="WIP - completion reversed", credit_desc=f"Finished goods {wo.product.sku}")
