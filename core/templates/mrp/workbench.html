@@ -23,7 +23,25 @@
     <h2 class="fw-bold mb-1"><i class="bi bi-kanban me-2"></i>Planner Workbench</h2>
     <div class="text-muted">{{ run.run_number }} &middot; {{ run.get_status_display }} &middot; {{ run.site_scope.name|default:'All sites' }}</div>
   </div>
-  <a class="btn btn-outline-secondary align-self-center" href="{% url 'mrp_run_detail' run.id %}"><i class="bi bi-card-heading me-1"></i> Run detail</a>
+  <div class="d-flex gap-2 align-self-center flex-wrap">
+    {% if wb_saved_views %}
+    <div class="dropdown">
+      <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"><i class="bi bi-bookmark me-1"></i>Load view</button>
+      <ul class="dropdown-menu">
+        {% for v in wb_saved_views %}<li><a class="dropdown-item" href="{% url 'saved_view_apply' v.id %}">{{ v.name }}{% if v.is_default %} (default){% endif %}</a></li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    <form method="post" action="{% url 'saved_view_create' %}" class="d-flex gap-1">{% csrf_token %}
+      <input type="hidden" name="report_type" value="MRP_WORKBENCH">
+      <input type="hidden" name="run" value="{{ run.id }}">
+      {% for k, v in wb_current_filters.items %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+      <input type="text" name="name" class="form-control form-control-sm" style="width:9rem" placeholder="Save view as...">
+      {% if can_manage_views %}<span class="form-check align-self-center small ms-1"><input type="checkbox" name="is_shared" class="form-check-input"> share</span>{% endif %}
+      <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+    </form>
+    <a class="btn btn-outline-secondary align-self-center" href="{% url 'mrp_run_detail' run.id %}"><i class="bi bi-card-heading me-1"></i> Run detail</a>
+  </div>
 </div>
 
 {% if capacity_exceptions %}

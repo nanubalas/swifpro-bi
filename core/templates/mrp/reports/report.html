@@ -7,12 +7,32 @@
     <h2 class="fw-bold mb-1"><i class="bi bi-file-earmark-bar-graph me-2"></i>{{ title }}</h2>
     <div class="text-muted">{{ result_count }} row(s){% if run %} &middot; run {{ run.run_number }}{% endif %}</div>
   </div>
-  {% if can_export %}
-  <div class="d-flex gap-2 align-self-center">
+  <div class="d-flex gap-2 align-self-center flex-wrap">
+    {% if report_type %}
+      {% if saved_views %}
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"><i class="bi bi-bookmark me-1"></i>Load view</button>
+        <ul class="dropdown-menu">
+          {% for v in saved_views %}<li><a class="dropdown-item" href="{% url 'saved_view_apply' v.id %}">{{ v.name }}{% if v.is_default %} (default){% endif %}{% if v.is_shared %} <span class="text-muted small">shared</span>{% endif %}</a></li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      <form method="post" action="{% url 'saved_view_create' %}" class="d-flex gap-1">{% csrf_token %}
+        <input type="hidden" name="report_type" value="{{ report_type }}">
+        {% for k, v in current_filters.items %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        <input type="text" name="name" class="form-control form-control-sm" style="width:9rem" placeholder="Save view as...">
+        {% if can_manage_views %}<span class="form-check align-self-center small ms-1" title="Share with team"><input type="checkbox" name="is_shared" class="form-check-input"> share</span>{% endif %}
+        <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+      </form>
+      {% if can_schedule %}
+      <a class="btn btn-outline-secondary btn-sm align-self-center" href="{% url 'scheduled_export_create' %}?report_type={{ report_type }}"><i class="bi bi-envelope-paper me-1"></i>Schedule</a>
+      {% endif %}
+    {% endif %}
+    {% if can_export %}
     <a class="btn btn-outline-secondary" href="?{{ export_qs }}"><i class="bi bi-filetype-csv me-1"></i> CSV</a>
     <a class="btn btn-outline-secondary" href="?{{ export_qs }}&amp;format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i> Excel</a>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
 
 {% if kpis %}

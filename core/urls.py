@@ -403,6 +403,19 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("mrp/runs/<int:run_id>/suggestions/generate/", views.mrp_generate_suggestions, name="mrp_generate_suggestions"),
     path("mrp/runs/<int:run_id>/suggestions/action/", views.mrp_suggestion_action, name="mrp_suggestion_action"),
 
+    # Planner dashboard + saved views + scheduled exports (Phase 17)
+    path("mrp/dashboard/", views.planner_dashboard, name="planner_dashboard"),
+    path("mrp/saved-views/", views.saved_views_list, name="saved_views_list"),
+    path("mrp/saved-views/create/", views.saved_view_create, name="saved_view_create"),
+    path("mrp/saved-views/<int:view_id>/apply/", views.saved_view_apply, name="saved_view_apply"),
+    path("mrp/saved-views/<int:view_id>/delete/", views.saved_view_delete, name="saved_view_delete"),
+    path("mrp/saved-views/<int:view_id>/default/", views.saved_view_set_default, name="saved_view_set_default"),
+    path("mrp/scheduled-exports/", views.scheduled_exports_list, name="scheduled_exports_list"),
+    path("mrp/scheduled-exports/new/", views.scheduled_export_create, name="scheduled_export_create"),
+    path("mrp/scheduled-exports/<int:export_id>/edit/", views.scheduled_export_edit, name="scheduled_export_edit"),
+    path("mrp/scheduled-exports/<int:export_id>/delete/", views.scheduled_export_delete, name="scheduled_export_delete"),
+    path("mrp/scheduled-exports/<int:export_id>/run/", views.scheduled_export_run_now, name="scheduled_export_run_now"),
+
     # Work orders (Phase 6)
     path("work-orders/", views.work_order_list, name="work_order_list"),
     path("work-orders/<int:wo_id>/", views.work_order_detail, name="work_order_detail"),

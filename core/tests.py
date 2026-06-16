@@ -14973,3 +14973,283 @@ class MRPPhase16RescheduleTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         sug.refresh_from_db()
         self.assertEqual(sug.status, "APPLIED")
+
+
+class MRPPhase17DashboardTests(TestCase):
+    """Phase 17: saved views, scheduled exports and the planner dashboard."""
+
+    def setUp(self):
+        import datetime
+        from django.utils import timezone as _tz
+        from core.models import (OrgMembership, Site, MRPRun, MRPPlannedOrder, MRPException,
+                                  MRPRescheduleSuggestion)
+        from core.services.mrp import next_run_number, next_planned_order_number
+        self.tenant = Tenant.objects.create(name="Dash Co")
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good")
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.admin = User.objects.create_user("dashadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.purchasing = User.objects.create_user("dashpur", password="pw")
+        OrgMembership.objects.create(user=self.purchasing, tenant=self.tenant, role="PURCHASING", is_default=True)
+        self.warehouse = User.objects.create_user("dashwh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.sales = User.objects.create_user("dashsales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+        self.today = _tz.localdate()
+
+        def run():
+            return MRPRun.objects.create(
+                tenant=self.tenant, run_number=next_run_number(self.tenant),
+                planning_start_date=self.today, planning_end_date=self.today + datetime.timedelta(days=90),
+                status="COMPLETED_WITH_EXCEPTIONS")
+        self.run1 = run()
+        self.run2 = run()  # newest
+
+        def po(run, source, product, status="SUGGESTED"):
+            return MRPPlannedOrder.objects.create(
+                mrp_run=run, tenant=self.tenant, product=product, site=self.site, source_type=source,
+                planned_order_number=next_planned_order_number(self.tenant), quantity=Decimal("10"),
+                required_date=self.today, planned_receipt_date=self.today,
+                planned_release_date=self.today - datetime.timedelta(days=3), status=status,
+                supplier=(self.supplier if source in ("BUY", "SUBCONTRACT") else None))
+        self.buy_po = po(self.run2, "BUY", self.rm)
+        self.make_po = po(self.run2, "MAKE", self.fg)
+        po(self.run1, "BUY", self.rm)
+
+        MRPException.objects.create(mrp_run=self.run2, tenant=self.tenant, product=self.fg, site=self.site,
+                                    exception_code="SHORTAGE", severity="CRITICAL",
+                                    message="Net shortage of 5 units.")
+        MRPException.objects.create(mrp_run=self.run2, tenant=self.tenant, site=self.site,
+                                    exception_code="CAPACITY_OVERLOAD", severity="WARNING",
+                                    message="Assembly overloaded by 4 hours.")
+        MRPRescheduleSuggestion.objects.create(
+            tenant=self.tenant, mrp_run=self.run2, suggestion_number="RS-D1",
+            suggestion_type="EXPEDITE", source_type="MRP_PLANNED_ORDER", severity="CRITICAL",
+            status="SUGGESTED", planned_order=self.buy_po)
+
+    def _sv(self, owner=None, report_type="PLANNED_ORDERS", name="V", filters=None, shared=False, default=False):
+        from core.models import SavedReportView
+        return SavedReportView.objects.create(
+            tenant=self.tenant, owner=(owner or self.admin), name=name, report_type=report_type,
+            filters_json=(filters or {}), is_shared=shared, is_default=default)
+
+    # =========================== dashboard ===========================
+    def test_dashboard_loads(self):
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/dashboard/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Planner Dashboard")
+
+    def test_dashboard_shows_latest_run_metrics(self):
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/dashboard/")
+        self.assertContains(resp, self.run2.run_number)
+        self.assertContains(resp, "Planned orders")
+
+    def test_dashboard_shows_critical_exceptions(self):
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/dashboard/")
+        self.assertContains(resp, "Net shortage of 5 units.")
+
+    def test_dashboard_shows_open_suggestions(self):
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/dashboard/")
+        self.assertContains(resp, "Open suggestions")
+
+    def test_dashboard_shows_capacity_overload(self):
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/dashboard/")
+        self.assertContains(resp, "Assembly overloaded by 4 hours.")
+
+    def test_dashboard_shows_cross_run_comparison(self):
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/dashboard/")
+        self.assertContains(resp, "Latest vs previous run")
+
+    def test_dashboard_permission_blocked(self):
+        self.client.login(username="dashsales", password="pw")
+        self.assertEqual(self.client.get("/mrp/dashboard/").status_code, 403)
+
+    # =========================== saved views ===========================
+    def test_saved_view_create_stores_filters(self):
+        from core.models import SavedReportView
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.post("/mrp/saved-views/create/", {
+            "report_type": "PLANNED_ORDERS", "name": "Open BUY",
+            "run": str(self.run2.id), "source_type": "BUY", "status": "SUGGESTED"})
+        self.assertEqual(resp.status_code, 302)
+        v = SavedReportView.objects.get(tenant=self.tenant, name="Open BUY")
+        self.assertEqual(v.filters_json.get("source_type"), "BUY")
+        self.assertEqual(v.filters_json.get("status"), "SUGGESTED")
+
+    def test_saved_view_apply_redirects_with_filters(self):
+        v = self._sv(report_type="PLANNED_ORDERS", name="BUYview",
+                     filters={"run": str(self.run2.id), "source_type": "BUY"})
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/saved-views/%d/apply/" % v.id)
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("source_type=BUY", resp.url)
+        self.assertIn("/mrp/reports/planned-orders/", resp.url)
+
+    def test_workbench_saved_view_applies_filters(self):
+        v = self._sv(report_type="MRP_WORKBENCH", name="WBcrit",
+                     filters={"run": str(self.run2.id), "source_type": "BUY"})
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/saved-views/%d/apply/" % v.id)
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("source_type=BUY", resp.url)
+        self.assertIn("/workbench/", resp.url)
+
+    def test_private_view_visible_only_to_owner(self):
+        self._sv(owner=self.admin, name="PrivateA", shared=False)
+        self.client.login(username="dashwh", password="pw")
+        resp = self.client.get("/mrp/saved-views/")
+        self.assertNotContains(resp, "PrivateA")
+        self.client.login(username="dashadmin", password="pw")
+        self.assertContains(self.client.get("/mrp/saved-views/"), "PrivateA")
+
+    def test_shared_view_visible_to_same_tenant(self):
+        self._sv(owner=self.admin, name="SharedA", shared=True)
+        self.client.login(username="dashwh", password="pw")
+        self.assertContains(self.client.get("/mrp/saved-views/"), "SharedA")
+
+    def test_saved_view_tenant_scoped(self):
+        from core.models import SavedReportView, OrgMembership
+        other = Tenant.objects.create(name="Other SV")
+        ou = User.objects.create_user("othersv", password="pw")
+        OrgMembership.objects.create(user=ou, tenant=other, role="ADMIN", is_default=True)
+        SavedReportView.objects.create(tenant=other, owner=ou, name="OtherTenantView",
+                                       report_type="PLANNED_ORDERS", is_shared=True)
+        self.client.login(username="dashadmin", password="pw")
+        self.assertNotContains(self.client.get("/mrp/saved-views/"), "OtherTenantView")
+
+    def test_saved_view_default(self):
+        from core.models import SavedReportView
+        a = self._sv(name="A", default=True)
+        b = self._sv(name="B")
+        self.client.login(username="dashadmin", password="pw")
+        self.client.post("/mrp/saved-views/%d/default/" % b.id)
+        a.refresh_from_db(); b.refresh_from_db()
+        self.assertFalse(a.is_default)
+        self.assertTrue(b.is_default)
+
+    def test_report_page_shows_save_toolbar(self):
+        self.client.login(username="dashadmin", password="pw")
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d" % self.run2.id)
+        self.assertContains(resp, "Save view as...")
+
+    # =========================== scheduled exports ===========================
+    def test_scheduled_export_create(self):
+        from core.models import ScheduledReportExport
+        self.client.login(username="dashpur", password="pw")
+        resp = self.client.post("/mrp/scheduled-exports/new/", {
+            "name": "Daily planned orders", "report_type": "PLANNED_ORDERS", "format": "CSV",
+            "frequency": "DAILY", "time_of_day": "06:00", "recipients": "", "is_active": "on"})
+        self.assertEqual(resp.status_code, 302)
+        e = ScheduledReportExport.objects.get(tenant=self.tenant, name="Daily planned orders")
+        self.assertIsNotNone(e.next_run_at)
+
+    def test_run_now_generates_export(self):
+        from core.models import ScheduledReportExport
+        e = ScheduledReportExport.objects.create(
+            tenant=self.tenant, name="Now", report_type="PLANNED_ORDERS", format="CSV",
+            frequency="DAILY", filters_json={"run": str(self.run2.id)}, created_by=self.admin)
+        self.client.login(username="dashpur", password="pw")
+        resp = self.client.post("/mrp/scheduled-exports/%d/run/" % e.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp["Content-Type"].startswith("text/csv"))
+        self.assertIn(self.make_po.planned_order_number, resp.content.decode())
+        e.refresh_from_db()
+        self.assertEqual(e.last_status, "SUCCESS")
+        self.assertIsNotNone(e.last_run_at)
+
+    def test_run_now_emails_recipients(self):
+        from django.core import mail
+        from core.models import ScheduledReportExport
+        e = ScheduledReportExport.objects.create(
+            tenant=self.tenant, name="Mailed", report_type="PLANNED_ORDERS", format="CSV",
+            frequency="DAILY", filters_json={"run": str(self.run2.id)},
+            recipients="planner@example.com", created_by=self.admin)
+        self.client.login(username="dashpur", password="pw")
+        self.client.post("/mrp/scheduled-exports/%d/run/" % e.id)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("planner@example.com", mail.outbox[0].to)
+
+    def test_export_respects_saved_view_filters(self):
+        from core.models import SavedReportView, ScheduledReportExport
+        from core.services.mrp import scheduled_export as se
+        sv = SavedReportView.objects.create(
+            tenant=self.tenant, owner=self.admin, name="BUYonly", report_type="PLANNED_ORDERS",
+            filters_json={"run": str(self.run2.id), "source_type": "BUY"})
+        e = ScheduledReportExport.objects.create(
+            tenant=self.tenant, name="BUY export", report_type="PLANNED_ORDERS", format="CSV",
+            frequency="DAILY", saved_view=sv, created_by=self.admin)
+        _, payload, _ = se.deliver_export(e, user=self.admin)
+        body = payload.decode()
+        self.assertIn(self.buy_po.planned_order_number, body)
+        self.assertNotIn(self.make_po.planned_order_number, body)
+
+    def test_export_tenant_scoped(self):
+        from core.models import ScheduledReportExport, MRPRun, MRPPlannedOrder, OrgMembership, Site
+        from core.services.mrp import next_run_number, next_planned_order_number, scheduled_export as se
+        other = Tenant.objects.create(name="Other Exp")
+        osite = Site.objects.filter(tenant=other).first()
+        oprod = Product.objects.create(tenant=other, sku="OX-1", name="Other")
+        orun = MRPRun.objects.create(tenant=other, run_number=next_run_number(other),
+                                     planning_start_date=self.today, planning_end_date=self.today)
+        opo = MRPPlannedOrder.objects.create(
+            mrp_run=orun, tenant=other, product=oprod, site=osite, source_type="BUY",
+            planned_order_number=next_planned_order_number(other), quantity=Decimal("1"),
+            required_date=self.today, status="SUGGESTED")
+        e = ScheduledReportExport.objects.create(
+            tenant=self.tenant, name="Scoped", report_type="PLANNED_ORDERS", format="CSV",
+            frequency="DAILY", filters_json={"run": str(self.run2.id)}, created_by=self.admin)
+        _, payload, _ = se.deliver_export(e, user=self.admin)
+        self.assertNotIn(opo.planned_order_number, payload.decode())
+
+    def test_deliver_export_handles_failure(self):
+        from unittest import mock
+        from core.models import ScheduledReportExport
+        from core.services.mrp import scheduled_export as se
+        e = ScheduledReportExport.objects.create(
+            tenant=self.tenant, name="Boom", report_type="PLANNED_ORDERS", format="CSV",
+            frequency="DAILY", created_by=self.admin)
+        with mock.patch("core.services.mrp.reports.build_report", side_effect=RuntimeError("boom")):
+            se.deliver_export(e, user=self.admin)
+        e.refresh_from_db()
+        self.assertEqual(e.last_status, "FAILED")
+        self.assertIn("boom", e.last_error)
+
+    def test_management_command_processes_due(self):
+        import datetime
+        from django.utils import timezone as _tz
+        from django.core.management import call_command
+        from core.models import ScheduledReportExport
+        e = ScheduledReportExport.objects.create(
+            tenant=self.tenant, name="Due", report_type="PLANNED_ORDERS", format="CSV",
+            frequency="DAILY", filters_json={"run": str(self.run2.id)}, created_by=self.admin,
+            is_active=True, next_run_at=_tz.now() - datetime.timedelta(hours=1))
+        call_command("run_scheduled_report_exports")
+        e.refresh_from_db()
+        self.assertEqual(e.last_status, "SUCCESS")
+        self.assertIsNotNone(e.last_run_at)
+        self.assertGreater(e.next_run_at, _tz.now())
+
+    # =========================== permissions ===========================
+    def test_unauthorised_cannot_manage_scheduled_exports(self):
+        self.client.login(username="dashwh", password="pw")  # Warehouse: no MANAGE_SCHEDULED_EXPORTS
+        resp = self.client.post("/mrp/scheduled-exports/new/", {
+            "name": "X", "report_type": "PLANNED_ORDERS", "format": "CSV", "frequency": "DAILY",
+            "time_of_day": "06:00"})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_no_export_permission_cannot_run(self):
+        from core.models import ScheduledReportExport
+        e = ScheduledReportExport.objects.create(
+            tenant=self.tenant, name="NoRun", report_type="PLANNED_ORDERS", format="CSV",
+            frequency="DAILY", created_by=self.admin)
+        self.client.login(username="dashwh", password="pw")  # Warehouse: no EXPORT_MRP_REPORTS
+        resp = self.client.post("/mrp/scheduled-exports/%d/run/" % e.id)
+        self.assertEqual(resp.status_code, 403)
