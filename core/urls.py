@@ -386,6 +386,16 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("shop-calendars/exceptions/<int:exception_id>/delete/", views.shop_calendar_exception_delete, name="shop_calendar_exception_delete"),
     path("capacity-load/", views.capacity_load, name="capacity_load"),
 
+    # MRP reports (Phase 15)
+    path("mrp/reports/", views.mrp_reports_index, name="mrp_reports_index"),
+    path("mrp/reports/planned-orders/", views.mrp_report_planned_orders, name="mrp_report_planned_orders"),
+    path("mrp/reports/demand-supply/", views.mrp_report_demand_supply, name="mrp_report_demand_supply"),
+    path("mrp/reports/shortages/", views.mrp_report_shortage, name="mrp_report_shortage"),
+    path("mrp/reports/exceptions/", views.mrp_report_exceptions, name="mrp_report_exceptions"),
+    path("mrp/reports/pegging/", views.mrp_report_pegging, name="mrp_report_pegging"),
+    path("mrp/reports/forecast-consumption/", views.mrp_report_forecast_consumption, name="mrp_report_forecast_consumption"),
+    path("mrp/reports/work-order-cost/", views.mrp_report_work_order_cost, name="mrp_report_work_order_cost"),
+
     # Work orders (Phase 6)
     path("work-orders/", views.work_order_list, name="work_order_list"),
     path("work-orders/<int:wo_id>/", views.work_order_detail, name="work_order_detail"),
