@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}MRP Health Check{% endblock %}
+{% block back_url %}{% url 'planner_dashboard' %}{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-heart-pulse me-2"></i>MRP Health Check</h2>
+    <div class="text-muted">Setup-readiness diagnostics. These are advisory and never block planning.</div>
+  </div>
+  <div class="text-end">
+    {% if issue_count == 0 %}
+      <span class="badge text-bg-success fs-6"><i class="bi bi-check2-circle me-1"></i>All checks pass</span>
+    {% else %}
+      <span class="badge text-bg-warning fs-6">{{ issue_count }} issue(s){% if critical %} &middot; {{ critical }} critical{% endif %}</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card"><div class="card-body p-0">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr>
+      <th style="width:40px"></th><th>Check</th><th>Severity</th><th class="text-end">Count</th><th>Examples</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for c in checks %}
+      <tr {% if c.ok %}class="text-muted"{% endif %}>
+        <td>{% if c.ok %}<i class="bi bi-check-circle-fill text-success"></i>{% elif c.severity == 'CRITICAL' %}<i class="bi bi-x-octagon-fill text-danger"></i>{% else %}<i class="bi bi-exclamation-triangle-fill text-warning"></i>{% endif %}</td>
+        <td class="fw-semibold">{{ c.label }}</td>
+        <td><span class="badge {% if c.severity == 'CRITICAL' %}text-bg-danger{% elif c.severity == 'WARNING' %}text-bg-warning{% else %}text-bg-light{% endif %}">{{ c.severity|title }}</span></td>
+        <td class="text-end">{{ c.count }}</td>
+        <td class="small text-muted">{% if c.examples %}{{ c.examples|join:", " }}{% if c.count > c.examples|length %} …{% endif %}{% else %}-{% endif %}</td>
+        <td class="text-end">{% if not c.ok and c.fix_url %}<a class="btn btn-sm btn-outline-primary" href="{% url c.fix_url %}">Fix</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+<div class="small text-muted mt-2"><i class="bi bi-info-circle me-1"></i> New here? Try the <a href="{% url 'mrp_setup_guide' %}">MRP Setup Guide</a> or seed a demo with <code>python manage.py seed_mrp_demo --tenant "{{ tenant.name }}"</code>.</div>
+{% endblock %}

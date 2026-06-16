@@ -405,6 +405,8 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
 
     # Planner dashboard + saved views + scheduled exports (Phase 17)
     path("mrp/dashboard/", views.planner_dashboard, name="planner_dashboard"),
+    path("mrp/health-check/", views.mrp_health_check, name="mrp_health_check"),
+    path("mrp/setup-guide/", views.mrp_setup_guide, name="mrp_setup_guide"),
     path("mrp/saved-views/", views.saved_views_list, name="saved_views_list"),
     path("mrp/saved-views/create/", views.saved_view_create, name="saved_view_create"),
     path("mrp/saved-views/<int:view_id>/apply/", views.saved_view_apply, name="saved_view_apply"),

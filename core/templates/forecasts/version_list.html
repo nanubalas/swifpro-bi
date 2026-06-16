@@ -32,7 +32,12 @@
         <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'forecast_version_detail' v.id %}">Open</a></td>
       </tr>
       {% empty %}
-      <tr><td colspan="9" class="text-center text-muted py-5">No forecast versions yet. Create one to plan against forecast demand.</td></tr>
+      <tr><td colspan="9" class="text-center text-muted py-5">
+        <div class="fw-semibold mb-1">No forecast versions yet</div>
+        <div class="small mb-2">A forecast version feeds FORECAST demand into MRP; confirmed sales orders consume it so demand is not double-counted.</div>
+        {% if 'manage_forecast' in perms %}<a class="btn btn-sm btn-primary" href="{% url 'forecast_version_create' %}">New forecast version</a>{% endif %}
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'mrp_setup_guide' %}">Setup guide</a>
+      </td></tr>
       {% endfor %}
     </tbody>
   </table>

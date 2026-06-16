@@ -15253,3 +15253,232 @@ class MRPPhase17DashboardTests(TestCase):
         self.client.login(username="dashwh", password="pw")  # Warehouse: no EXPORT_MRP_REPORTS
         resp = self.client.post("/mrp/scheduled-exports/%d/run/" % e.id)
         self.assertEqual(resp.status_code, 403)
+
+
+class MRPPhase18DemoTests(TestCase):
+    """Phase 18: demo seed, health check, setup guide, empty states + smoke test."""
+
+    def setUp(self):
+        from core.models import OrgMembership
+        self.tenant = Tenant.objects.create(name="Demo18 Co")
+        self.admin = User.objects.create_user("demo18", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+
+    def _seed(self):
+        from django.core.management import call_command
+        call_command("seed_mrp_demo", tenant="Demo18 Co")
+
+    def _demo_run(self):
+        from core.models import MRPRun
+        return MRPRun.objects.filter(tenant=self.tenant, run_number__startswith="MRP-DEMO").first()
+
+    # =========================== seed ===========================
+    def test_seed_creates_master_data(self):
+        from core.models import (Product, Site, Location, Supplier, BillOfMaterials, RoutingHeader,
+                                  ItemSitePlanning, ForecastVersion, CustomerOrder, WorkCentre, MRPRun)
+        self._seed()
+        self.assertEqual(Product.objects.filter(tenant=self.tenant).count(), 6)
+        self.assertGreaterEqual(Site.objects.filter(tenant=self.tenant).count(), 2)
+        self.assertGreaterEqual(Location.objects.filter(tenant=self.tenant, holds_stock=True).count(), 2)
+        self.assertEqual(Supplier.objects.filter(tenant=self.tenant).count(), 3)
+        self.assertEqual(BillOfMaterials.objects.filter(tenant=self.tenant, is_active=True).count(), 2)
+        self.assertGreaterEqual(RoutingHeader.objects.filter(tenant=self.tenant).count(), 1)
+        self.assertGreaterEqual(WorkCentre.objects.filter(tenant=self.tenant).count(), 2)
+        self.assertGreaterEqual(ItemSitePlanning.objects.filter(tenant=self.tenant).count(), 6)
+        self.assertEqual(ForecastVersion.objects.filter(tenant=self.tenant, status="ACTIVE").count(), 1)
+        self.assertEqual(CustomerOrder.objects.filter(tenant=self.tenant, status="CONFIRMED").count(), 1)
+        self.assertIsNotNone(self._demo_run())
+
+    def test_seed_is_idempotent(self):
+        from core.models import Product, ItemSitePlanning, MRPRun, InventoryMovement
+        self._seed()
+        p1 = Product.objects.filter(tenant=self.tenant).count()
+        i1 = ItemSitePlanning.objects.filter(tenant=self.tenant).count()
+        m1 = InventoryMovement.objects.filter(tenant=self.tenant, ref_type="MRP_DEMO_SEED").count()
+        self._seed()
+        self.assertEqual(Product.objects.filter(tenant=self.tenant).count(), p1)
+        self.assertEqual(ItemSitePlanning.objects.filter(tenant=self.tenant).count(), i1)
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.tenant, ref_type="MRP_DEMO_SEED").count(), m1)
+        self.assertEqual(MRPRun.objects.filter(tenant=self.tenant, run_number__startswith="MRP-DEMO").count(), 1)
+
+    def test_demo_run_creates_all_planned_order_types(self):
+        from core.services.mrp import run_mrp
+        self._seed()
+        run = run_mrp(self._demo_run(), user=self.admin)
+        types = set(run.planned_orders.values_list("source_type", flat=True))
+        self.assertTrue({"BUY", "MAKE", "TRANSFER", "SUBCONTRACT"}.issubset(types))
+        self.assertTrue(run.demands.filter(demand_type="FORECAST").exists())
+
+    def test_demo_workbench_loads(self):
+        from core.services.mrp import run_mrp
+        self._seed()
+        run = run_mrp(self._demo_run(), user=self.admin)
+        self.client.login(username="demo18", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "FG-ALPHA")
+
+    def test_demo_reports_load(self):
+        from core.services.mrp import run_mrp
+        self._seed()
+        run = run_mrp(self._demo_run(), user=self.admin)
+        self.client.login(username="demo18", password="pw")
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d" % run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "FG-ALPHA")
+
+    def test_quarantine_stock_excluded(self):
+        # RM-BOARD has 20 in quarantine; MRP must still plan a transfer for it.
+        from core.services.mrp import run_mrp
+        from core.models import Product
+        self._seed()
+        run = run_mrp(self._demo_run(), user=self.admin)
+        board = Product.objects.get(tenant=self.tenant, sku="RM-BOARD")
+        self.assertTrue(run.planned_orders.filter(product=board, source_type="TRANSFER").exists())
+
+    # =========================== health check ===========================
+    def _isp(self, sku, source, **kw):
+        from core.models import Product, Site, ItemSitePlanning
+        site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        p = Product.objects.create(tenant=self.tenant, sku=sku, name=sku)
+        defaults = dict(tenant=self.tenant, product=p, site=site, source_type=source,
+                        mrp_enabled=True, is_active=True, lead_time_days=5)
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def test_health_check_page_loads(self):
+        self.client.login(username="demo18", password="pw")
+        resp = self.client.get("/mrp/health-check/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "MRP Health Check")
+
+    def test_health_flags_missing_supplier(self):
+        from core.services.mrp import health
+        self._isp("BUY-NOSUP", "BUY", default_supplier=None)
+        checks = {c["key"]: c for c in health.run_health_checks(self.tenant)}
+        self.assertFalse(checks["buy_no_supplier"]["ok"])
+        self.assertGreaterEqual(checks["buy_no_supplier"]["count"], 1)
+
+    def test_health_flags_missing_bom(self):
+        from core.services.mrp import health
+        self._isp("MAKE-NOBOM", "MAKE")
+        checks = {c["key"]: c for c in health.run_health_checks(self.tenant)}
+        self.assertFalse(checks["make_no_bom"]["ok"])
+
+    def test_health_flags_missing_routing(self):
+        from core.services.mrp import health
+        from core.models import BillOfMaterials
+        isp = self._isp("MAKE-NORT", "MAKE")
+        BillOfMaterials.objects.create(tenant=self.tenant, product=isp.product, name="Default BOM",
+                                       output_qty=Decimal("1"), is_active=True)
+        checks = {c["key"]: c for c in health.run_health_checks(self.tenant)}
+        self.assertTrue(checks["make_no_bom"]["ok"])      # has BOM now
+        self.assertFalse(checks["make_no_routing"]["ok"])  # but no routing
+
+    def test_health_flags_missing_transfer_source(self):
+        from core.services.mrp import health
+        self._isp("TR-NOSRC", "TRANSFER", default_transfer_from_site=None)
+        checks = {c["key"]: c for c in health.run_health_checks(self.tenant)}
+        self.assertFalse(checks["transfer_no_source"]["ok"])
+
+    def test_health_flags_missing_gl_profile(self):
+        from core.services.mrp import health
+        checks = {c["key"]: c for c in health.run_health_checks(self.tenant)}
+        self.assertFalse(checks["no_gl_profile"]["ok"])  # no profile in a fresh tenant
+
+    # =========================== setup guide ===========================
+    def test_setup_guide_page_loads(self):
+        self.client.login(username="demo18", password="pw")
+        resp = self.client.get("/mrp/setup-guide/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "MRP Setup Guide")
+        self.assertContains(resp, "Item Planning")
+
+    def test_setup_guide_reflects_completion(self):
+        from core.services.mrp import health
+        steps = {s["title"]: s for s in health.setup_guide_steps(self.tenant)}
+        self.assertFalse(steps["Create products"]["done"])  # fresh tenant
+        self._seed()
+        steps = {s["title"]: s for s in health.setup_guide_steps(self.tenant)}
+        self.assertTrue(steps["Create products"]["done"])
+        self.assertTrue(steps["Create BOMs"]["done"])
+
+    # =========================== empty states ===========================
+    def test_run_list_empty_state(self):
+        self.client.login(username="demo18", password="pw")
+        resp = self.client.get("/mrp/runs/")
+        self.assertContains(resp, "No MRP runs yet")
+        self.assertContains(resp, "Setup guide")
+
+    def test_work_order_empty_state(self):
+        self.client.login(username="demo18", password="pw")
+        resp = self.client.get("/work-orders/")
+        self.assertContains(resp, "No work orders yet")
+
+    def test_forecast_empty_state(self):
+        self.client.login(username="demo18", password="pw")
+        resp = self.client.get("/forecasts/")
+        self.assertContains(resp, "No forecast versions yet")
+
+    # =========================== navigation ===========================
+    def test_planning_nav_links(self):
+        from core import roles
+        planning = next(items for title, items in roles.NAV if title == "Planning")
+        labels = {item[0] for item in planning}
+        expected = {"Planner Dashboard", "MRP Setup Guide", "MRP Health Check", "Item Planning",
+                    "Forecasts", "MRP Runs", "Reschedule Suggestions", "Work Orders", "Work Centres",
+                    "Routings", "Shop Calendars", "MRP Reports", "Saved Views", "Scheduled Exports"}
+        self.assertTrue(expected.issubset(labels))
+
+    # =========================== full smoke test ===========================
+    def test_full_demo_workflow_smoke(self):
+        from core.services.mrp import run_mrp, bulk
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp import work_order_labour as wol
+        from core.models import WorkOrder, InventoryMovement, JournalEntry, MRPPlannedOrder
+
+        self._seed()
+        run = run_mrp(self._demo_run(), user=self.admin)
+
+        # 1. planned orders of every type + forecast demand + pegging.
+        types = set(run.planned_orders.values_list("source_type", flat=True))
+        self.assertTrue({"BUY", "MAKE", "TRANSFER", "SUBCONTRACT"}.issubset(types))
+        self.assertTrue(run.demands.filter(demand_type="FORECAST").exists())
+        from core.models import MRPPegging
+        self.assertTrue(MRPPegging.objects.filter(planned_order__mrp_run=run).exists())
+
+        # 2. workbench loads (HTTP).
+        self.client.login(username="demo18", password="pw")
+        self.assertEqual(self.client.get("/mrp/runs/%d/workbench/" % run.id).status_code, 200)
+
+        # 3. bulk convert all planned orders -> PR / transfer / work order.
+        pos = list(run.planned_orders.filter(status="SUGGESTED"))
+        bulk.bulk_convert(pos, self.admin)
+        self.assertTrue(WorkOrder.objects.filter(tenant=self.tenant).exists())
+
+        # 4. execute the FG-ALPHA work order end-to-end.
+        wo = WorkOrder.objects.filter(tenant=self.tenant, product__sku="FG-ALPHA").first()
+        self.assertIsNotNone(wo)
+        wox.firm_work_order(wo, self.admin)
+        wox.release_work_order(wo, self.admin)
+        wox.issue_all_available_materials(wo, self.admin)   # issues whatever stock exists
+        # book labour + overhead on the first operation
+        op = wo.operations.exclude(work_centre__isnull=True).first()
+        if op is not None:
+            wol.book_operation_actuals(op, Decimal("2"), Decimal("2"), self.admin)
+        movement, _ = wox.complete_work_order(wo, Decimal("1"), self.admin)
+        wo.refresh_from_db()
+        self.assertGreaterEqual(wo.quantity_completed, Decimal("1"))
+
+        # 5. inventory movements + GL journals exist (GL configured by the seed).
+        self.assertTrue(InventoryMovement.objects.filter(
+            tenant=self.tenant, ref_type="WORK_ORDER", movement_type="WORK_ORDER_COMPLETION").exists())
+        self.assertTrue(JournalEntry.objects.filter(
+            tenant=self.tenant, ref_type="WORK_ORDER_COMPLETION").exists())
+        self.assertTrue(wo.cost_bookings.exists())  # labour/overhead booked
+
+        # 6. reports + dashboard load.
+        self.assertEqual(self.client.get("/mrp/reports/planned-orders/?run=%d" % run.id).status_code, 200)
+        self.assertEqual(self.client.get("/mrp/reports/work-order-cost/").status_code, 200)
+        self.assertEqual(self.client.get("/mrp/dashboard/").status_code, 200)
+        self.assertEqual(self.client.get("/mrp/health-check/").status_code, 200)
