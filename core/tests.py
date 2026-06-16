@@ -13349,3 +13349,364 @@ class MRPPhase11SubcontractTests(TestCase):
                                 {"bulk_action": "convert", "selected": [po.id]})
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+
+
+class MRPPhase12CorrectionTests(TestCase):
+    """Phase 12: scrap and reversal controls for work orders (append-only
+    inventory + GL/WIP corrections)."""
+
+    def setUp(self):
+        import datetime
+        from core.models import (OrgMembership, Location, Product, Supplier,
+                                  ManufacturingAccountingProfile, GLAccount)
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="Corr Co")
+        from core.models import Site
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.loc = Location.objects.filter(tenant=self.tenant, site=self.site).order_by("id").first()
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("4.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material",
+                                         standard_cost=Decimal("2.00"))
+        self.admin = User.objects.create_user("coadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.warehouse = User.objects.create_user("cowh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.sales = User.objects.create_user("cosales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+
+        def acc(code):
+            return GLAccount.objects.get(tenant=self.tenant, code=code)
+        self.profile = ManufacturingAccountingProfile.objects.create(
+            tenant=self.tenant, site=None, is_default=True, is_active=True,
+            raw_material_inventory_account=acc("1020"), wip_account=acc("1030"),
+            finished_goods_inventory_account=acc("1040"), manufacturing_variance_account=acc("5300"))
+
+        # Seed RM stock @ cost 2.
+        apply_movement(tenant=self.tenant, product=self.rm, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("100"), ref_type="SEED",
+                       ref_id="seed", unit_cost=Decimal("2.00"), user=self.admin)
+        self.today = datetime.date(2026, 6, 16)
+
+    # --- helpers ---
+    def _wo(self, plan="10", req="20"):
+        from core.models import WorkOrder, WorkOrderMaterial
+        from core.services.mrp.numbering import next_planned_order_number
+        from core.services.mrp import work_order_execution as wox
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.site, product=self.fg, quantity=Decimal(plan), status="PLANNED",
+            required_date=self.today, created_by=self.admin)
+        wom = WorkOrderMaterial.objects.create(
+            work_order=wo, component=self.rm, required_quantity=Decimal(req))
+        wox.release_work_order(wo, self.admin)
+        return wo, wom
+
+    def _issued_wo(self, plan="10", req="20", issue="20"):
+        from core.services.mrp import work_order_execution as wox
+        wo, wom = self._wo(plan, req)
+        wox.issue_material(wom, Decimal(issue), self.admin)
+        wom.refresh_from_db(); wo.refresh_from_db()
+        return wo, wom
+
+    def _on_hand(self, product):
+        from core.models import InventoryBalance
+        b = InventoryBalance.objects.filter(tenant=self.tenant, product=product, location=self.loc).first()
+        return (b.on_hand if b else Decimal("0.00")) or Decimal("0.00")
+
+    def _issue_movement(self, wo):
+        from core.models import InventoryMovement
+        return InventoryMovement.objects.filter(
+            tenant=self.tenant, ref_id=wo.work_order_number, movement_type="WORK_ORDER_ISSUE").first()
+
+    def _completion_movement(self, wo):
+        from core.models import InventoryMovement
+        return InventoryMovement.objects.filter(
+            tenant=self.tenant, ref_id=wo.work_order_number, movement_type="WORK_ORDER_COMPLETION").first()
+
+    def _je(self, ref_type, ref_id):
+        from core.models import JournalEntry
+        return JournalEntry.objects.filter(tenant=self.tenant, ref_type=ref_type, ref_id=str(ref_id)).first()
+
+    def _dr_cr_codes(self, je):
+        dr = [l.account.code for l in je.lines.all() if l.debit and l.debit > 0]
+        cr = [l.account.code for l in je.lines.all() if l.credit and l.credit > 0]
+        return dr, cr
+
+    # =========================== component scrap ===========================
+    def test_component_scrap_creates_movement(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo()
+        woc.scrap_work_order_material(wom, Decimal("3"), self.admin, "defective")
+        self.assertTrue(InventoryMovement.objects.filter(
+            tenant=self.tenant, ref_id=wo.work_order_number, movement_type="WORK_ORDER_SCRAP").exists())
+
+    def test_component_scrap_reduces_wip(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo()  # wip 40
+        woc.scrap_work_order_material(wom, Decimal("3"), self.admin, "defective")
+        wo.refresh_from_db(); wom.refresh_from_db()
+        self.assertEqual(wom.scrapped_quantity, Decimal("3.00"))
+        self.assertEqual(wo.scrap_cost, Decimal("6.00"))         # 3 @ 2
+        self.assertEqual(wo.wip_material_cost, Decimal("34.00"))  # 40 - 6
+
+    def test_component_scrap_posts_gl(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo()
+        woc.scrap_work_order_material(wom, Decimal("3"), self.admin, "defective")
+        mv = InventoryMovement.objects.get(tenant=self.tenant, ref_id=wo.work_order_number,
+                                           movement_type="WORK_ORDER_SCRAP")
+        je = self._je("WORK_ORDER_SCRAP", mv.id)
+        self.assertIsNotNone(je)
+        dr, cr = self._dr_cr_codes(je)
+        self.assertIn("5300", dr)   # Manufacturing variance / scrap
+        self.assertIn("1030", cr)   # WIP
+
+    def test_cannot_scrap_more_than_issued(self):
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo, wom = self._issued_wo(issue="20")
+        with self.assertRaises(WorkOrderError) as cm:
+            woc.scrap_work_order_material(wom, Decimal("25"), self.admin, "too much")
+        self.assertEqual(cm.exception.code, woc.OVER_SCRAP)
+
+    def test_cannot_scrap_on_planned(self):
+        from core.models import WorkOrder, WorkOrderMaterial
+        from core.services.mrp.numbering import next_planned_order_number
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.site, product=self.fg, quantity=Decimal("10"), status="PLANNED",
+            required_date=self.today)
+        wom = WorkOrderMaterial.objects.create(work_order=wo, component=self.rm,
+                                               required_quantity=Decimal("20"))
+        with self.assertRaises(WorkOrderError) as cm:
+            woc.scrap_work_order_material(wom, Decimal("1"), self.admin, "x")
+        self.assertEqual(cm.exception.code, woc.NOT_OPERATIONAL)
+
+    def test_scrap_requires_reason(self):
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo, wom = self._issued_wo()
+        with self.assertRaises(WorkOrderError) as cm:
+            woc.scrap_work_order_material(wom, Decimal("1"), self.admin, "  ")
+        self.assertEqual(cm.exception.code, woc.MISSING_REASON)
+
+    # =========================== finished-goods scrap ===========================
+    def test_fg_scrap_updates_scrapped_qty(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo()
+        woc.scrap_finished_goods(wo, Decimal("2"), self.admin, "qc fail")
+        wo.refresh_from_db()
+        self.assertEqual(wo.quantity_scrapped, Decimal("2.00"))
+
+    def test_fg_scrap_does_not_increase_inventory(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo()
+        before = self._on_hand(self.fg)
+        woc.scrap_finished_goods(wo, Decimal("2"), self.admin, "qc fail")
+        self.assertEqual(self._on_hand(self.fg), before)  # FG never entered stock
+
+    def test_fg_scrap_posts_gl(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo()
+        woc.scrap_finished_goods(wo, Decimal("2"), self.admin, "qc fail")
+        mv = InventoryMovement.objects.get(tenant=self.tenant, ref_id=wo.work_order_number,
+                                           movement_type="WORK_ORDER_COMPLETION_SCRAP")
+        je = self._je("WORK_ORDER_COMPLETION_SCRAP", mv.id)
+        self.assertIsNotNone(je)
+        dr, cr = self._dr_cr_codes(je)
+        self.assertIn("5300", dr)
+        self.assertIn("1030", cr)
+
+    def test_fg_scrap_cannot_exceed_planned(self):
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo, wom = self._issued_wo(plan="10")
+        with self.assertRaises(WorkOrderError) as cm:
+            woc.scrap_finished_goods(wo, Decimal("11"), self.admin, "x")
+        self.assertEqual(cm.exception.code, woc.OVER_SCRAP_COMPLETION)
+
+    # =========================== reverse issue ===========================
+    def test_reverse_issue_increases_component_inventory(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo(issue="20")  # rm on hand 80
+        before = self._on_hand(self.rm)
+        woc.reverse_work_order_issue(self._issue_movement(wo), Decimal("5"), self.admin, "wrong qty")
+        self.assertEqual(self._on_hand(self.rm), before + Decimal("5"))
+
+    def test_reverse_issue_decreases_issued_quantity(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo(issue="20")
+        woc.reverse_work_order_issue(self._issue_movement(wo), Decimal("5"), self.admin, "wrong qty")
+        wom.refresh_from_db(); wo.refresh_from_db()
+        self.assertEqual(wom.issued_quantity, Decimal("15.00"))
+        self.assertEqual(wom.reversed_quantity, Decimal("5.00"))
+        self.assertEqual(wo.wip_material_cost, Decimal("30.00"))  # 40 - 10
+
+    def test_reverse_issue_posts_gl(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo(issue="20")
+        mv = woc.reverse_work_order_issue(self._issue_movement(wo), Decimal("5"), self.admin, "x")
+        je = self._je("WORK_ORDER_ISSUE_REVERSAL", mv.id)
+        self.assertIsNotNone(je)
+        dr, cr = self._dr_cr_codes(je)
+        self.assertIn("1020", dr)   # Raw material inventory
+        self.assertIn("1030", cr)   # WIP
+
+    def test_reverse_issue_cannot_exceed_remaining(self):
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo, wom = self._issued_wo(issue="20")
+        orig = self._issue_movement(wo)
+        woc.reverse_work_order_issue(orig, Decimal("15"), self.admin, "x")
+        with self.assertRaises(WorkOrderError) as cm:
+            woc.reverse_work_order_issue(orig, Decimal("10"), self.admin, "x")  # only 5 left
+        self.assertEqual(cm.exception.code, woc.OVER_REVERSAL)
+
+    def test_reverse_issue_links_to_original(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo(issue="20")
+        orig = self._issue_movement(wo)
+        mv = woc.reverse_work_order_issue(orig, Decimal("5"), self.admin, "x")
+        self.assertEqual(mv.reversed_movement_id, orig.id)
+        self.assertTrue(mv.is_reversal)
+        orig.refresh_from_db()
+        self.assertEqual(orig.reversed_quantity, Decimal("5.00"))
+
+    # =========================== reverse completion ===========================
+    def _completed_wo(self, plan="10", issue="20", complete="10"):
+        from core.services.mrp import work_order_execution as wox
+        wo, wom = self._issued_wo(plan=plan, issue=issue)
+        wox.complete_work_order(wo, Decimal(complete), self.admin)
+        wo.refresh_from_db()
+        return wo
+
+    def test_reverse_completion_decreases_fg_inventory(self):
+        from core.services.mrp import work_order_correction as woc
+        wo = self._completed_wo()
+        before = self._on_hand(self.fg)  # 10
+        woc.reverse_work_order_completion(self._completion_movement(wo), Decimal("2"), self.admin, "rework")
+        self.assertEqual(self._on_hand(self.fg), before - Decimal("2"))
+
+    def test_reverse_completion_decreases_completed_qty(self):
+        from core.services.mrp import work_order_correction as woc
+        wo = self._completed_wo()
+        woc.reverse_work_order_completion(self._completion_movement(wo), Decimal("2"), self.admin, "rework")
+        wo.refresh_from_db()
+        self.assertEqual(wo.quantity_completed, Decimal("8.00"))
+        self.assertEqual(wo.status, "PARTIALLY_COMPLETED")  # back from COMPLETED
+
+    def test_reverse_completion_posts_gl(self):
+        from core.services.mrp import work_order_correction as woc
+        wo = self._completed_wo()
+        mv = woc.reverse_work_order_completion(self._completion_movement(wo), Decimal("2"), self.admin, "x")
+        je = self._je("WORK_ORDER_COMPLETION_REVERSAL", mv.id)
+        self.assertIsNotNone(je)
+        dr, cr = self._dr_cr_codes(je)
+        self.assertIn("1030", dr)   # WIP
+        self.assertIn("1040", cr)   # Finished goods
+
+    def test_reverse_completion_blocked_when_fg_consumed(self):
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp.work_order_execution import WorkOrderError
+        from core.services.inventory import apply_movement
+        wo = self._completed_wo()
+        # Ship the finished goods out of the completion location.
+        apply_movement(tenant=self.tenant, product=self.fg, location=self.loc,
+                       movement_type="SALE", qty_delta=Decimal("-10"), ref_type="SO", ref_id="ship",
+                       user=self.admin)
+        with self.assertRaises(WorkOrderError) as cm:
+            woc.reverse_work_order_completion(self._completion_movement(wo), Decimal("2"), self.admin, "x")
+        self.assertEqual(cm.exception.code, woc.FG_NOT_AVAILABLE)
+
+    # =========================== status guards ===========================
+    def test_closed_work_order_blocks_corrections(self):
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo = self._completed_wo()
+        comp = self._completion_movement(wo)
+        wox.close_work_order(wo, self.admin)
+        wo.refresh_from_db()
+        self.assertEqual(wo.status, "CLOSED")
+        with self.assertRaises(WorkOrderError) as cm:
+            woc.reverse_work_order_completion(comp, Decimal("1"), self.admin, "x")
+        self.assertEqual(cm.exception.code, woc.WO_CLOSED)
+
+    def test_cancelled_work_order_blocks_corrections(self):
+        from core.models import WorkOrder, WorkOrderMaterial
+        from core.services.mrp.numbering import next_planned_order_number
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp import work_order_execution as wox
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.site, product=self.fg, quantity=Decimal("10"), status="PLANNED",
+            required_date=self.today)
+        wom = WorkOrderMaterial.objects.create(work_order=wo, component=self.rm,
+                                               required_quantity=Decimal("20"))
+        wox.cancel_work_order(wo, self.admin)
+        with self.assertRaises(WorkOrderError) as cm:
+            woc.scrap_work_order_material(wom, Decimal("1"), self.admin, "x")
+        self.assertEqual(cm.exception.code, woc.WO_CANCELLED)
+
+    def test_repeated_reversal_capped(self):
+        from core.models import InventoryMovement
+        from core.services.mrp import work_order_correction as woc
+        from core.services.mrp.work_order_execution import WorkOrderError
+        wo, wom = self._issued_wo(issue="10")
+        orig = self._issue_movement(wo)
+        woc.reverse_work_order_issue(orig, Decimal("4"), self.admin, "x")
+        woc.reverse_work_order_issue(orig, Decimal("6"), self.admin, "x")  # total 10
+        with self.assertRaises(WorkOrderError):
+            woc.reverse_work_order_issue(orig, Decimal("1"), self.admin, "x")
+        reversals = InventoryMovement.objects.filter(
+            tenant=self.tenant, ref_id=wo.work_order_number, movement_type="WORK_ORDER_ISSUE_REVERSAL")
+        self.assertEqual(reversals.count(), 2)
+
+    # =========================== missing GL / safety ===========================
+    def test_missing_gl_account_does_not_crash(self):
+        from core.models import InventoryMovement, JournalEntry
+        from core.services.mrp import work_order_correction as woc
+        self.profile.is_active = False  # no manufacturing profile resolves now
+        self.profile.save()
+        wo, wom = self._issued_wo()
+        mv = woc.scrap_work_order_material(wom, Decimal("3"), self.admin, "defective")
+        self.assertIsNotNone(mv)  # inventory/cost correction still recorded
+        self.assertIsNone(self._je("WORK_ORDER_SCRAP", mv.id))  # GL skipped, no crash
+        wo.refresh_from_db()
+        self.assertEqual(wo.scrap_cost, Decimal("6.00"))
+
+    # =========================== UI / permissions ===========================
+    def test_detail_shows_correction_movement(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo()
+        woc.scrap_work_order_material(wom, Decimal("3"), self.admin, "defective")
+        self.client.login(username="coadmin", password="pw")
+        resp = self.client.get("/work-orders/%d/" % wo.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Work order material scrap")
+
+    def test_correction_via_view(self):
+        from core.services.mrp import work_order_correction as woc
+        wo, wom = self._issued_wo()
+        self.client.login(username="cowh", password="pw")  # Warehouse: EXECUTE_WORK_ORDER
+        resp = self.client.post("/work-orders/%d/correct/" % wo.id, {
+            "action": "scrap_material", "material_id": wom.id, "quantity": "3", "reason": "defective"})
+        self.assertEqual(resp.status_code, 302)
+        wom.refresh_from_db()
+        self.assertEqual(wom.scrapped_quantity, Decimal("3.00"))
+
+    def test_permissions_block_unauthorised_correction(self):
+        wo, wom = self._issued_wo()
+        self.client.login(username="cosales", password="pw")  # Sales: no work-order perms
+        resp = self.client.post("/work-orders/%d/correct/" % wo.id, {
+            "action": "scrap_material", "material_id": wom.id, "quantity": "3", "reason": "x"})
+        self.assertEqual(resp.status_code, 403)
+        wom.refresh_from_db()
+        self.assertEqual(wom.scrapped_quantity, Decimal("0.00"))

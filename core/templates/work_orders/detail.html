@@ -56,27 +56,41 @@
       <div class="wo-pane" id="wo-pane-materials" hidden>
         <h5 class="fw-semibold mb-3">Materials</h5>
         <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
-          <th>Component</th><th class="text-end">Required</th><th class="text-end">Issued</th><th class="text-end">Remaining</th><th>Status</th>
-          {% if 'execute_work_order' in perms %}<th>Issue</th>{% endif %}
+          <th>Component</th><th class="text-end">Required</th><th class="text-end">Issued</th>
+          <th class="text-end">Scrapped</th><th class="text-end">Reversed</th><th class="text-end">Remaining</th><th>Status</th>
+          {% if 'execute_work_order' in perms %}<th>Actions</th>{% endif %}
         </tr></thead><tbody>
           {% for m in materials %}<tr>
             <td class="fw-semibold">{{ m.component.sku }}<div class="small text-muted">{{ m.component.name }}</div></td>
             <td class="text-end">{{ m.required_quantity }}</td>
             <td class="text-end">{{ m.issued_quantity }}</td>
+            <td class="text-end">{{ m.scrapped_quantity }}</td>
+            <td class="text-end">{{ m.reversed_quantity }}</td>
             <td class="text-end">{{ m.remaining_quantity }}</td>
             <td><span class="badge text-bg-light">{{ m.get_status_display }}</span></td>
             {% if 'execute_work_order' in perms %}
             <td>
-              {% if wo.status == 'RELEASED' or wo.status == 'PARTIALLY_COMPLETED' %}{% if m.remaining_quantity > 0 %}
-              <form method="post" action="{% url 'work_order_issue' wo.id %}" class="d-flex gap-1">{% csrf_token %}
+              {% if wo.status == 'RELEASED' or wo.status == 'PARTIALLY_COMPLETED' %}
+              {% if m.remaining_quantity > 0 %}
+              <form method="post" action="{% url 'work_order_issue' wo.id %}" class="d-flex gap-1 mb-1">{% csrf_token %}
                 <input type="hidden" name="material_id" value="{{ m.id }}">
-                <input type="number" step="0.01" min="0" name="quantity" value="{{ m.remaining_quantity }}" class="form-control form-control-sm" style="width:6rem">
+                <input type="number" step="0.01" min="0" name="quantity" value="{{ m.remaining_quantity }}" class="form-control form-control-sm" style="width:5rem">
                 <button class="btn btn-sm btn-outline-primary" type="submit">Issue</button>
               </form>
-              {% endif %}{% else %}<span class="text-muted small">Release first</span>{% endif %}
+              {% endif %}
+              {% if m.issued_quantity > m.scrapped_quantity %}
+              <form method="post" action="{% url 'work_order_correct' wo.id %}" class="d-flex gap-1">{% csrf_token %}
+                <input type="hidden" name="action" value="scrap_material">
+                <input type="hidden" name="material_id" value="{{ m.id }}">
+                <input type="number" step="0.01" min="0" name="quantity" placeholder="qty" class="form-control form-control-sm" style="width:5rem">
+                <input type="text" name="reason" placeholder="reason" class="form-control form-control-sm" style="width:7rem">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Scrap</button>
+              </form>
+              {% endif %}
+              {% else %}<span class="text-muted small">Release first</span>{% endif %}
             </td>
             {% endif %}
-          </tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No material lines.</td></tr>{% endfor %}
+          </tr>{% empty %}<tr><td colspan="8" class="text-center text-muted py-4">No material lines.</td></tr>{% endfor %}
         </tbody></table>
         {% if 'execute_work_order' in perms and wo.status == 'RELEASED' %}
         <form method="post" action="{% url 'work_order_issue' wo.id %}">{% csrf_token %}<input type="hidden" name="action" value="issue_all"><button class="btn btn-outline-primary btn-sm"><i class="bi bi-box-arrow-in-down me-1"></i> Issue all available</button></form>
@@ -122,7 +136,8 @@
       <div class="wo-pane" id="wo-pane-movements" hidden>
         <h5 class="fw-semibold mb-3">Inventory Movements</h5>
         <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
-          <th>When</th><th>Type</th><th>Item</th><th>Location</th><th class="text-end">Qty</th><th class="text-end">Value</th><th>Journal</th></tr></thead><tbody>
+          <th>When</th><th>Type</th><th>Item</th><th>Location</th><th class="text-end">Qty</th><th class="text-end">Value</th><th>Journal</th><th>Correction</th>
+          {% if 'execute_work_order' in perms %}<th>Reverse</th>{% endif %}</tr></thead><tbody>
           {% for mv in movements %}<tr>
             <td class="small">{{ mv.created_at|date:"d M Y H:i" }}</td>
             <td class="small">{{ mv.get_movement_type_display }}</td>
@@ -131,8 +146,29 @@
             <td class="text-end">{{ mv.qty_delta }}</td>
             <td class="text-end">{{ mv.value }}</td>
             <td class="small">{% if mv.journal_entry_id %}<i class="bi bi-journal-text me-1"></i>JE {{ mv.journal_entry_id }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
-          </tr>{% empty %}<tr><td colspan="7" class="text-center text-muted py-4">No movements yet.</td></tr>{% endfor %}
+            <td class="small">
+              {% if mv.is_reversal %}<span class="badge text-bg-secondary">reverses #{{ mv.reversed_movement_id }}</span>
+              {% elif mv.reversed_quantity > 0 %}<span class="text-muted">reversed {{ mv.reversed_quantity }}</span>
+              {% else %}-{% endif %}
+            </td>
+            {% if 'execute_work_order' in perms %}
+            <td>
+              {% if wo.status != 'CLOSED' and wo.status != 'CANCELLED' %}
+                {% if mv.movement_type == 'WORK_ORDER_ISSUE' or mv.movement_type == 'WORK_ORDER_COMPLETION' %}
+                <form method="post" action="{% url 'work_order_correct' wo.id %}" class="d-flex gap-1">{% csrf_token %}
+                  <input type="hidden" name="action" value="{% if mv.movement_type == 'WORK_ORDER_ISSUE' %}reverse_issue{% else %}reverse_completion{% endif %}">
+                  <input type="hidden" name="movement_id" value="{{ mv.id }}">
+                  <input type="number" step="0.01" min="0" name="quantity" placeholder="qty" class="form-control form-control-sm" style="width:5rem">
+                  <input type="text" name="reason" placeholder="reason" class="form-control form-control-sm" style="width:7rem">
+                  <button class="btn btn-sm btn-outline-warning" type="submit">Reverse</button>
+                </form>
+                {% endif %}
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>{% empty %}<tr><td colspan="9" class="text-center text-muted py-4">No movements yet.</td></tr>{% endfor %}
         </tbody></table>
+        <div class="small text-muted"><i class="bi bi-info-circle me-1"></i> Corrections are append-only: reversals and scrap add new movements; originals are never edited or deleted.</div>
       </div>
 
       <div class="wo-pane" id="wo-pane-costing" hidden>
@@ -143,6 +179,8 @@
         <dl class="row mb-3 small">
           <dt class="col-sm-4 text-muted">WIP material cost</dt><dd class="col-sm-8">{{ wo.wip_material_cost }}</dd>
           <dt class="col-sm-4 text-muted">Finished goods cost</dt><dd class="col-sm-8">{{ wo.finished_goods_cost }}</dd>
+          <dt class="col-sm-4 text-muted">Scrap cost</dt><dd class="col-sm-8">{{ wo.scrap_cost }}</dd>
+          <dt class="col-sm-4 text-muted">Reversal cost</dt><dd class="col-sm-8">{{ wo.reversal_cost }}</dd>
           <dt class="col-sm-4 text-muted">Remaining WIP</dt><dd class="col-sm-8">{{ remaining_wip }}</dd>
           <dt class="col-sm-4 text-muted">Variance journal</dt><dd class="col-sm-8">{% if wo.variance_journal_id %}JE {{ wo.variance_journal_id }}{% else %}<span class="text-muted">-</span>{% endif %}</dd>
         </dl>
@@ -183,7 +221,21 @@
           <input type="number" step="0.01" min="0" name="quantity" value="{{ wo.quantity_remaining }}" class="form-control form-control-sm"></div>
           <button class="btn btn-success btn-sm" type="submit"><i class="bi bi-check-lg me-1"></i> Complete</button>
         </form>
+
+        <hr>
+        <h6 class="fw-semibold">Scrap finished goods</h6>
+        <form method="post" action="{% url 'work_order_correct' wo.id %}" class="d-flex gap-2 align-items-end flex-wrap" style="max-width:32rem">{% csrf_token %}
+          <input type="hidden" name="action" value="scrap_fg">
+          <div><label class="form-label small mb-1">Quantity</label>
+          <input type="number" step="0.01" min="0" name="quantity" class="form-control form-control-sm"></div>
+          <div><label class="form-label small mb-1">Reason</label>
+          <input type="text" name="reason" class="form-control form-control-sm"></div>
+          <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash me-1"></i> Scrap FG</button>
+        </form>
         {% endif %}{% endif %}
+        {% if wo.status == 'CLOSED' or wo.status == 'CANCELLED' %}
+        <div class="alert alert-secondary small mt-3 mb-0"><i class="bi bi-lock me-1"></i> This work order is {{ wo.get_status_display|lower }}; scrap and reversal corrections are disabled.</div>
+        {% endif %}
       </div>
 
     </div></div>
