@@ -54,6 +54,7 @@ def run_mrp(run, user=None):
         MRPSupply.objects.filter(mrp_run=run).delete()
         MRPDemand.objects.filter(mrp_run=run).delete()
     run._mrp_exc_seen = set()
+    run.__dict__.pop("_forecast_version_resolved", None)  # re-resolve forecast per run
     run._supply_cache = {}      # (product_id, site_id) -> [MRPSupply]; collect once per run
     run._comp_consumed = {}     # (product_id, site_id) -> Decimal consumed by dependent demand
     run._transfer_src_avail = {}  # (product_id, source_site_id) -> Decimal remaining source stock
@@ -115,10 +116,12 @@ def _plan_profile(run, profile):
             d = start
         supply_by_date[d] = supply_by_date.get(d, ZERO) + (s.available_quantity or ZERO)
 
-    # Gross demand (sales only; safety is a floor, not gross demand) by date.
+    # Gross demand (sales + forecast; safety is a floor, not gross demand) by
+    # date. Forecast rows are already net of same-bucket sales consumption, so
+    # counting both never double-counts (see forecast_consumption).
     demand_by_date = {}
     for dem in demands:
-        if dem.demand_type != "SALES_ORDER":
+        if dem.demand_type not in ("SALES_ORDER", "FORECAST"):
             continue
         d = dem.required_date
         if d < start:

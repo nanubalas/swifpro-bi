@@ -28,6 +28,8 @@ MANAGE_MRP = "manage_mrp"
 VIEW_WORK_ORDER = "view_work_order"
 MANAGE_WORK_ORDER = "manage_work_order"
 EXECUTE_WORK_ORDER = "execute_work_order"
+VIEW_FORECAST = "view_forecast"
+MANAGE_FORECAST = "manage_forecast"
 
 # Catalog: (code, label, category) - drives the matrix UI.
 PERMISSIONS = [
@@ -51,6 +53,8 @@ PERMISSIONS = [
     (VIEW_WORK_ORDER, "View work orders", "Planning"),
     (MANAGE_WORK_ORDER, "Manage work orders (firm/cancel/close)", "Planning"),
     (EXECUTE_WORK_ORDER, "Execute work orders (release/issue/complete)", "Planning"),
+    (VIEW_FORECAST, "View demand forecasts", "Planning"),
+    (MANAGE_FORECAST, "Manage demand forecasts (create/edit/lock/archive)", "Planning"),
 ]
 ALL_PERMISSIONS = {code for code, _, _ in PERMISSIONS}
 PERMISSION_LABELS = {code: label for code, label, _ in PERMISSIONS}
@@ -67,12 +71,13 @@ ROLE_PERMISSIONS = {
         MANAGE_INVENTORY, MANAGE_PURCHASE_ORDERS, VIEW_FINANCE_REPORTS,
         APPROVE_TRANSACTIONS, EXPORT_DATA, VIEW_MRP, MANAGE_MRP,
         VIEW_WORK_ORDER, MANAGE_WORK_ORDER, EXECUTE_WORK_ORDER,
+        VIEW_FORECAST, MANAGE_FORECAST,
     },
     roles.SALES: {VIEW_DASHBOARD, MANAGE_CUSTOMERS, MANAGE_INVOICES},
     roles.WAREHOUSE: {VIEW_DASHBOARD, MANAGE_INVENTORY, MANAGE_PRODUCTS, VIEW_MRP,
-                      VIEW_WORK_ORDER, EXECUTE_WORK_ORDER},
+                      VIEW_WORK_ORDER, EXECUTE_WORK_ORDER, VIEW_FORECAST},
     roles.PURCHASING: {VIEW_DASHBOARD, MANAGE_PURCHASE_ORDERS, MANAGE_SUPPLIERS, MANAGE_INVENTORY,
-                       VIEW_MRP, MANAGE_MRP, VIEW_WORK_ORDER},
+                       VIEW_MRP, MANAGE_MRP, VIEW_WORK_ORDER, VIEW_FORECAST, MANAGE_FORECAST},
     roles.FINANCE: {
         VIEW_DASHBOARD, MANAGE_CUSTOMERS, MANAGE_INVOICES, MANAGE_PAYMENTS,
         VIEW_FINANCE_REPORTS, EXPORT_DATA,

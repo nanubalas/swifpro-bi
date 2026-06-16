@@ -7575,7 +7575,7 @@ def mrp_planned_order_convert(request, po_id):
 # so the planner returns to the same filtered view.
 _WORKBENCH_FILTERS = [
     "source_type", "status", "site", "transfer_from", "supplier", "q",
-    "exception_level", "has_exception", "has_document",
+    "exception_level", "has_exception", "has_document", "demand_source", "forecast_version",
     "req_from", "req_to", "rel_from", "rel_to",
 ]
 
@@ -7642,6 +7642,11 @@ def mrp_workbench(request, run_id):
         qs = qs.filter(planned_release_date__gte=f["rel_from"])
     if f.get("rel_to"):
         qs = qs.filter(planned_release_date__lte=f["rel_to"])
+    if f.get("demand_source"):
+        qs = qs.filter(peggings__demand__demand_type=f["demand_source"]).distinct()
+    if f.get("forecast_version"):
+        qs = qs.filter(peggings__demand__demand_type="FORECAST",
+                       peggings__demand__source_document_id=f["forecast_version"]).distinct()
 
     planned_orders = list(qs.order_by("product__sku", "required_date"))
 
@@ -7662,6 +7667,12 @@ def mrp_workbench(request, run_id):
     sites = Site.objects.filter(tenant=tenant, mrp_planned_orders__mrp_run=run).distinct().order_by("name")
     suppliers = (Supplier.objects.filter(tenant=tenant, mrp_planned_orders__mrp_run=run)
                  .distinct().order_by("name"))
+    # Forecast versions referenced by this run's forecast demand (for the filter).
+    from core.models import ForecastVersion
+    fc_ids = (run.demands.filter(demand_type="FORECAST")
+              .values_list("source_document_id", flat=True).distinct())
+    fc_ids = [i for i in fc_ids if i and i.isdigit()]
+    forecast_versions = ForecastVersion.objects.filter(tenant=tenant, id__in=fc_ids).order_by("code")
 
     return render(request, "mrp/workbench.html", {
         "tenant": tenant, "run": run, "planned_orders": planned_orders,
@@ -7671,6 +7682,11 @@ def mrp_workbench(request, run_id):
         "source_types": ["BUY", "MAKE", "TRANSFER"],
         "statuses": ["SUGGESTED", "FIRMED", "CONVERTED", "IGNORED", "CANCELLED", "EXPIRED"],
         "exception_levels": ["INFO", "WARNING", "CRITICAL"],
+        "demand_sources": [
+            ("SALES_ORDER", "Sales order"), ("FORECAST", "Forecast"),
+            ("SAFETY_STOCK", "Safety stock"), ("WORK_ORDER_COMPONENT", "Work order component"),
+            ("TRANSFER_REQUEST", "Transfer request")],
+        "forecast_versions": forecast_versions,
     })
 
 
@@ -7726,6 +7742,209 @@ def mrp_bulk_action(request, run_id):
     for reason in result.reasons[:20]:
         messages.warning(request, reason)
     return _back()
+
+
+# ===========================================================================
+# Forecasting (Phase 9): forecast versions + lines for MRP demand.
+# ===========================================================================
+
+@login_required
+@permission_required(permissions_mod.VIEW_FORECAST)
+def forecast_version_list(request):
+    from core.models import ForecastVersion
+    from django.db.models import Count, Sum
+    tenant = _get_default_tenant(request)
+    versions = (ForecastVersion.objects.filter(tenant=tenant)
+                .annotate(line_count=Count("lines"), total_qty=Sum("lines__quantity"))
+                .order_by("-is_default", "-created_at"))
+    return render(request, "forecasts/version_list.html", {"tenant": tenant, "versions": versions})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_FORECAST)
+def forecast_version_create(request):
+    from core.forms import ForecastVersionForm
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "base.html", {"content": "Create a Tenant in admin first."})
+    form = ForecastVersionForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                obj = form.save(commit=False)
+                obj.tenant = tenant
+                obj.created_by = request.user
+                obj.save()
+            log_audit(action="forecast_version_create", request=request, user=request.user,
+                      tenant=tenant, detail=obj.code)
+            messages.success(request, f"Forecast version {obj.code} created.")
+            return redirect("forecast_version_detail", version_id=obj.id)
+        except IntegrityError:
+            form.add_error("code", "A forecast version with this code already exists.")
+    return render(request, "forecasts/version_form.html", {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_FORECAST)
+def forecast_version_edit(request, version_id):
+    from core.forms import ForecastVersionForm
+    from core.models import ForecastVersion
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(ForecastVersion, id=version_id, tenant=tenant)
+    if obj.status == "LOCKED" and not _can_manage_locked_forecast(request):
+        messages.error(request, "This forecast version is locked. Unlock it before editing.")
+        return redirect("forecast_version_detail", version_id=obj.id)
+    form = ForecastVersionForm(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+            messages.success(request, "Forecast version updated.")
+            return redirect("forecast_version_detail", version_id=obj.id)
+        except IntegrityError:
+            form.add_error("code", "A forecast version with this code already exists.")
+    return render(request, "forecasts/version_form.html",
+                  {"tenant": tenant, "form": form, "mode": "edit", "version": obj})
+
+
+def _can_manage_locked_forecast(request):
+    """Admins (or superusers) may edit / unlock a locked forecast version."""
+    from core.access import get_active_role
+    from core import roles as roles_mod
+    return request.user.is_superuser or get_active_role(request) == roles_mod.ADMIN
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_FORECAST)
+def forecast_version_detail(request, version_id):
+    from core.models import ForecastVersion
+    tenant = _get_default_tenant(request)
+    version = get_object_or_404(ForecastVersion, id=version_id, tenant=tenant)
+    lines = version.lines.select_related("product", "site").order_by("product__sku", "forecast_date")
+    return render(request, "forecasts/version_detail.html", {
+        "tenant": tenant, "version": version, "lines": lines,
+        "can_edit": _can_manage_locked_forecast(request) or version.status != "LOCKED",
+    })
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_FORECAST)
+def forecast_version_action(request, version_id):
+    """Lifecycle actions: activate / lock / unlock / archive / set-default."""
+    from core.models import ForecastVersion
+    tenant = _get_default_tenant(request)
+    version = get_object_or_404(ForecastVersion, id=version_id, tenant=tenant)
+    action = (request.POST.get("action") or "").lower()
+    if request.method != "POST":
+        return redirect("forecast_version_detail", version_id=version.id)
+
+    if action == "activate":
+        version.status = "ACTIVE"
+        version.save(update_fields=["status"])
+        messages.success(request, f"Forecast version {version.code} is now Active.")
+    elif action == "lock":
+        version.status = "LOCKED"
+        version.locked_by = request.user
+        version.locked_at = timezone.now()
+        version.save(update_fields=["status", "locked_by", "locked_at"])
+        messages.success(request, f"Forecast version {version.code} locked.")
+    elif action == "unlock":
+        if not _can_manage_locked_forecast(request):
+            messages.error(request, "Only an admin can unlock a forecast version.")
+            return redirect("forecast_version_detail", version_id=version.id)
+        version.status = "ACTIVE"
+        version.locked_by = None
+        version.locked_at = None
+        version.save(update_fields=["status", "locked_by", "locked_at"])
+        messages.success(request, f"Forecast version {version.code} unlocked (Active).")
+    elif action == "archive":
+        version.status = "ARCHIVED"
+        version.is_default = False
+        version.save(update_fields=["status", "is_default"])
+        messages.success(request, f"Forecast version {version.code} archived.")
+    elif action == "set_default":
+        ForecastVersion.objects.filter(tenant=tenant, is_default=True).update(is_default=False)
+        version.is_default = True
+        version.save(update_fields=["is_default"])
+        messages.success(request, f"Forecast version {version.code} is now the default.")
+    else:
+        messages.error(request, "Unknown forecast action.")
+    log_audit(action=f"forecast_version_{action}", request=request, user=request.user,
+              tenant=tenant, detail=version.code)
+    return redirect("forecast_version_detail", version_id=version.id)
+
+
+def _forecast_line_guard(request, version):
+    """Block edits to lines of a locked version (unless admin)."""
+    if version.status == "LOCKED" and not _can_manage_locked_forecast(request):
+        messages.error(request, "This forecast version is locked. Unlock it before editing lines.")
+        return False
+    if version.status == "ARCHIVED":
+        messages.error(request, "Archived forecast versions cannot be edited.")
+        return False
+    return True
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_FORECAST)
+def forecast_line_create(request, version_id):
+    from core.forms import ForecastLineForm
+    from core.models import ForecastVersion
+    tenant = _get_default_tenant(request)
+    version = get_object_or_404(ForecastVersion, id=version_id, tenant=tenant)
+    if not _forecast_line_guard(request, version):
+        return redirect("forecast_version_detail", version_id=version.id)
+    form = ForecastLineForm(request.POST or None, version=version)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            line = form.save(commit=False)
+            line.tenant = tenant
+            line.forecast_version = version
+            line.remaining_quantity = line.quantity
+            line.save()
+        log_audit(action="forecast_line_create", request=request, user=request.user, tenant=tenant,
+                  detail=f"{version.code}: {line.product.sku}")
+        messages.success(request, "Forecast line added.")
+        return redirect("forecast_version_detail", version_id=version.id)
+    return render(request, "forecasts/line_form.html",
+                  {"tenant": tenant, "form": form, "version": version, "mode": "create"})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_FORECAST)
+def forecast_line_edit(request, line_id):
+    from core.forms import ForecastLineForm
+    from core.models import ForecastLine
+    tenant = _get_default_tenant(request)
+    line = get_object_or_404(ForecastLine.objects.select_related("forecast_version"),
+                             id=line_id, tenant=tenant)
+    version = line.forecast_version
+    if not _forecast_line_guard(request, version):
+        return redirect("forecast_version_detail", version_id=version.id)
+    form = ForecastLineForm(request.POST or None, instance=line, version=version)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            obj = form.save(commit=False)
+            obj.remaining_quantity = obj.quantity - (obj.consumed_quantity or Decimal("0.00"))
+            obj.save()
+        messages.success(request, "Forecast line updated.")
+        return redirect("forecast_version_detail", version_id=version.id)
+    return render(request, "forecasts/line_form.html",
+                  {"tenant": tenant, "form": form, "version": version, "mode": "edit", "line": line})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_FORECAST)
+def forecast_line_delete(request, line_id):
+    from core.models import ForecastLine
+    tenant = _get_default_tenant(request)
+    line = get_object_or_404(ForecastLine.objects.select_related("forecast_version"),
+                             id=line_id, tenant=tenant)
+    version = line.forecast_version
+    if request.method == "POST" and _forecast_line_guard(request, version):
+        line.delete()
+        messages.success(request, "Forecast line deleted.")
+    return redirect("forecast_version_detail", version_id=version.id)
 
 
 # ===========================================================================

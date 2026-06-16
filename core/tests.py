@@ -12345,3 +12345,367 @@ class MRPPhase8WorkbenchTests(TestCase):
         for p in pos:
             p.refresh_from_db()
             self.assertEqual(p.status, "FIRMED")
+
+
+class MRPPhase9ForecastTests(TestCase):
+    """Phase 9: forecast versions/lines, forecast demand in MRP, and forecast
+    consumption by confirmed sales orders (no double-counting)."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Location, Customer
+        self.tenant = Tenant.objects.create(name="FC Co")
+        self.a = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.b = Site.objects.create(tenant=self.tenant, name="Depot")
+        self.loc_b = Location.objects.create(tenant=self.tenant, site=self.b, name="B-WH",
+                                             type="WAREHOUSE", holds_stock=True)
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material",
+                                         standard_cost=Decimal("1.00"))
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.admin = User.objects.create_user("fcadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.manager = User.objects.create_user("fcmgr", password="pw")
+        OrgMembership.objects.create(user=self.manager, tenant=self.tenant, role="MANAGER", is_default=True)
+        self.warehouse = User.objects.create_user("fcwh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.sales = User.objects.create_user("fcsales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+        self.start = datetime.date(2026, 6, 1)
+        self.end = datetime.date(2026, 8, 31)
+        self.june = datetime.date(2026, 6, 15)
+
+    # --- helpers ---
+    def _version(self, status="ACTIVE", method="SAME_BUCKET", code="JUNE", name="June Baseline"):
+        from core.models import ForecastVersion
+        return ForecastVersion.objects.create(
+            tenant=self.tenant, code=code, name=name, status=status,
+            consumption_method=method, start_date=self.start, end_date=self.end)
+
+    def _line(self, version, product=None, site=None, date=None, bucket="MONTHLY", qty="100"):
+        from core.models import ForecastLine
+        return ForecastLine.objects.create(
+            tenant=self.tenant, forecast_version=version, product=(product or self.fg),
+            site=(site or self.a), forecast_date=(date or self.june),
+            bucket_type=bucket, quantity=Decimal(qty), remaining_quantity=Decimal(qty))
+
+    def _profile(self, product=None, site=None, source_type="BUY", transfer_from=None,
+                 supplier="default", include_forecast=True, **kw):
+        from core.models import ItemSitePlanning
+        if supplier == "default":
+            supplier = self.supplier if source_type == "BUY" else None
+        defaults = dict(
+            tenant=self.tenant, product=(product or self.fg), site=(site or self.a),
+            source_type=source_type, default_supplier=supplier,
+            default_transfer_from_site=transfer_from,
+            safety_stock_qty=Decimal("0"), min_order_qty=Decimal("0"), max_order_qty=Decimal("0"),
+            order_multiple=Decimal("0"),
+            lead_time_days={"BUY": 7, "MAKE": 5, "TRANSFER": 2}.get(source_type, 0),
+            lot_sizing_method="LOT_FOR_LOT", include_forecast=include_forecast)
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def _bom(self, parent, component, qty=Decimal("1")):
+        from core.models import BillOfMaterials, BillOfMaterialsLine
+        bom = BillOfMaterials.objects.create(tenant=self.tenant, product=parent, name="BOM",
+                                             output_qty=Decimal("1"))
+        BillOfMaterialsLine.objects.create(bom=bom, line_no=10, component=component, qty=qty)
+        return bom
+
+    def _sales(self, qty, date, product=None, site=None):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.services.mrp import next_run_number
+        o = CustomerOrder.objects.create(
+            tenant=self.tenant, customer=self.customer, site=(site or self.a),
+            order_number="SO-" + next_run_number(self.tenant), status="CONFIRMED", order_date=date)
+        CustomerOrderLine.objects.create(order=o, product=(product or self.fg), qty=Decimal(qty))
+        return o
+
+    def _run(self, include_forecast=True, version=None):
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number
+        return MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant), site_scope=None,
+            planning_start_date=self.start, planning_end_date=self.end,
+            include_forecast=include_forecast,
+            forecast_version=(str(version.id) if version else ""))
+
+    def _exec(self, run):
+        from core.services.mrp import run_mrp
+        return run_mrp(run, user=self.admin)
+
+    # =========================== version / line CRUD ===========================
+    def test_version_list_and_detail_load(self):
+        v = self._version()
+        self.client.login(username="fcadmin", password="pw")
+        self.assertEqual(self.client.get("/forecasts/").status_code, 200)
+        resp = self.client.get("/forecasts/%d/" % v.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "June Baseline")
+
+    def test_manage_forecast_user_can_create_version(self):
+        from core.models import ForecastVersion
+        self.client.login(username="fcmgr", password="pw")
+        resp = self.client.post("/forecasts/new/", {
+            "name": "Q3", "code": "Q3", "status": "DRAFT", "forecast_type": "BASELINE",
+            "consumption_method": "SAME_BUCKET"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(ForecastVersion.objects.filter(tenant=self.tenant, code="Q3").exists())
+
+    def test_line_can_be_added(self):
+        from core.models import ForecastLine
+        v = self._version(status="DRAFT")
+        self.client.login(username="fcadmin", password="pw")
+        resp = self.client.post("/forecasts/%d/lines/new/" % v.id, {
+            "product": self.fg.id, "site": self.a.id, "forecast_date": "2026-06-15",
+            "bucket_type": "MONTHLY", "quantity": "100", "source": "MANUAL"})
+        self.assertEqual(resp.status_code, 302)
+        line = ForecastLine.objects.get(forecast_version=v)
+        self.assertEqual(line.quantity, Decimal("100.00"))
+        self.assertEqual(line.remaining_quantity, Decimal("100.00"))
+
+    def test_line_quantity_validation(self):
+        from core.models import ForecastLine
+        v = self._version(status="DRAFT")
+        self.client.login(username="fcadmin", password="pw")
+        resp = self.client.post("/forecasts/%d/lines/new/" % v.id, {
+            "product": self.fg.id, "site": self.a.id, "forecast_date": "2026-06-15",
+            "bucket_type": "MONTHLY", "quantity": "-5", "source": "MANUAL"})
+        self.assertEqual(resp.status_code, 200)  # re-rendered with error
+        self.assertEqual(ForecastLine.objects.filter(forecast_version=v).count(), 0)
+
+    # =========================== demand collection ===========================
+    def test_active_version_collects_forecast_demand(self):
+        v = self._version()
+        self._line(v, qty="100")
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(version=v))
+        fc_demand = run.demands.filter(demand_type="FORECAST")
+        self.assertEqual(fc_demand.count(), 1)
+        d = fc_demand.first()
+        self.assertEqual(d.open_quantity, Decimal("100.00"))
+        self.assertEqual(d.source_document_type, "ForecastVersion")
+        self.assertEqual(d.source_document_id, str(v.id))
+
+    def test_archived_version_not_used(self):
+        v = self._version(status="ARCHIVED")
+        self._line(v, qty="100")
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(version=v))
+        self.assertEqual(run.demands.filter(demand_type="FORECAST").count(), 0)
+        self.assertTrue(run.exceptions.filter(exception_code="FORECAST_VERSION_INVALID").exists())
+
+    def test_include_forecast_false_ignores_forecast(self):
+        v = self._version()
+        self._line(v, qty="100")
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(include_forecast=False, version=v))
+        self.assertEqual(run.demands.filter(demand_type="FORECAST").count(), 0)
+
+    def test_forecast_creates_buy_planned_order(self):
+        v = self._version()
+        self._line(v, qty="100")
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(version=v))
+        pos = run.planned_orders.filter(source_type="BUY")
+        self.assertTrue(pos.exists())
+        self.assertEqual(pos.first().quantity, Decimal("100.00"))
+
+    def test_forecast_creates_make_planned_order(self):
+        v = self._version()
+        self._line(v, product=self.fg, qty="10")
+        self._profile(product=self.fg, source_type="MAKE")
+        self._profile(product=self.rm, source_type="BUY")
+        self._bom(self.fg, self.rm, qty=Decimal("2"))
+        run = self._exec(self._run(version=v))
+        self.assertTrue(run.planned_orders.filter(source_type="MAKE", product=self.fg).exists())
+
+    def test_forecast_creates_transfer_planned_order(self):
+        v = self._version()
+        self._line(v, product=self.fg, site=self.a, qty="10")
+        self._profile(product=self.fg, site=self.a, source_type="TRANSFER", transfer_from=self.b)
+        run = self._exec(self._run(version=v))
+        self.assertTrue(run.planned_orders.filter(source_type="TRANSFER", product=self.fg).exists())
+
+    # =========================== consumption (unit) ===========================
+    def test_consume_same_daily_bucket(self):
+        from core.services.mrp import forecast_consumption as fc
+        v = self._version(method="SAME_BUCKET")
+        line = self._line(v, date=self.june, bucket="DAILY", qty="100")
+        self._sales(40, self.june)
+        out = fc.consume(self.tenant, self.fg, self.a, [line], "SAME_BUCKET", self.start)
+        _, remaining, consumed = out[0]
+        self.assertEqual(consumed, Decimal("40.00"))
+        self.assertEqual(remaining, Decimal("60.00"))
+
+    def test_consume_daily_bucket_different_day_not_consumed(self):
+        import datetime
+        from core.services.mrp import forecast_consumption as fc
+        v = self._version(method="SAME_BUCKET")
+        line = self._line(v, date=self.june, bucket="DAILY", qty="100")
+        self._sales(40, self.june + datetime.timedelta(days=1))
+        out = fc.consume(self.tenant, self.fg, self.a, [line], "SAME_BUCKET", self.start)
+        self.assertEqual(out[0][2], Decimal("0.00"))
+
+    def test_consume_same_weekly_bucket(self):
+        import datetime
+        from core.services.mrp import forecast_consumption as fc
+        monday = self.june - datetime.timedelta(days=self.june.weekday())
+        v = self._version(method="SAME_BUCKET")
+        line = self._line(v, date=monday, bucket="WEEKLY", qty="100")
+        self._sales(30, monday + datetime.timedelta(days=2))            # same ISO week
+        self._sales(50, monday + datetime.timedelta(days=7))            # next week
+        out = fc.consume(self.tenant, self.fg, self.a, [line], "SAME_BUCKET", self.start)
+        self.assertEqual(out[0][2], Decimal("30.00"))
+        self.assertEqual(out[0][1], Decimal("70.00"))
+
+    def test_consume_same_monthly_bucket(self):
+        import datetime
+        from core.services.mrp import forecast_consumption as fc
+        v = self._version(method="SAME_BUCKET")
+        line = self._line(v, date=self.june, bucket="MONTHLY", qty="100")
+        self._sales(70, datetime.date(2026, 6, 28))                     # same month
+        self._sales(20, datetime.date(2026, 7, 5))                      # different month
+        out = fc.consume(self.tenant, self.fg, self.a, [line], "SAME_BUCKET", self.start)
+        self.assertEqual(out[0][2], Decimal("70.00"))
+        self.assertEqual(out[0][1], Decimal("30.00"))
+
+    def test_sales_exceeds_forecast_leaves_zero(self):
+        from core.services.mrp import forecast_consumption as fc
+        v = self._version(method="SAME_BUCKET")
+        line = self._line(v, bucket="MONTHLY", qty="100")
+        self._sales(130, self.june)
+        out = fc.consume(self.tenant, self.fg, self.a, [line], "SAME_BUCKET", self.start)
+        self.assertEqual(out[0][1], Decimal("0.00"))
+
+    def test_method_none_does_not_reduce(self):
+        from core.services.mrp import forecast_consumption as fc
+        v = self._version(method="NONE")
+        line = self._line(v, bucket="MONTHLY", qty="100")
+        self._sales(70, self.june)
+        out = fc.consume(self.tenant, self.fg, self.a, [line], "NONE", self.start)
+        self.assertEqual(out[0][1], Decimal("100.00"))
+        self.assertEqual(out[0][2], Decimal("0.00"))
+
+    # =========================== consumption (in MRP) ===========================
+    def test_no_double_counting_partial(self):
+        v = self._version(method="SAME_BUCKET")
+        self._line(v, bucket="MONTHLY", qty="100")
+        self._profile(source_type="BUY")
+        self._sales(70, self.june)
+        run = self._exec(self._run(version=v))
+        sales_total = sum(d.open_quantity for d in run.demands.filter(demand_type="SALES_ORDER"))
+        fc_total = sum(d.open_quantity for d in run.demands.filter(demand_type="FORECAST"))
+        self.assertEqual(sales_total, Decimal("70.00"))
+        self.assertEqual(fc_total, Decimal("30.00"))
+        self.assertEqual(sales_total + fc_total, Decimal("100.00"))
+
+    def test_no_double_counting_sales_exceeds(self):
+        v = self._version(method="SAME_BUCKET")
+        self._line(v, bucket="MONTHLY", qty="100")
+        self._profile(source_type="BUY")
+        self._sales(130, self.june)
+        run = self._exec(self._run(version=v))
+        sales_total = sum(d.open_quantity for d in run.demands.filter(demand_type="SALES_ORDER"))
+        fc_total = sum(d.open_quantity for d in run.demands.filter(demand_type="FORECAST"))
+        self.assertEqual(sales_total, Decimal("130.00"))
+        self.assertEqual(fc_total, Decimal("0.00"))
+
+    def test_unsupported_method_creates_exception(self):
+        v = self._version(method="FORWARD_BACKWARD_DAYS")
+        self._line(v, bucket="MONTHLY", qty="100")
+        self._profile(source_type="BUY")
+        self._sales(70, self.june)
+        run = self._exec(self._run(version=v))
+        self.assertTrue(run.exceptions.filter(
+            exception_code="UNSUPPORTED_FORECAST_CONSUMPTION_METHOD").exists())
+        # Falls back to NONE: full forecast remains (no consumption).
+        fc_total = sum(d.open_quantity for d in run.demands.filter(demand_type="FORECAST"))
+        self.assertEqual(fc_total, Decimal("100.00"))
+
+    def test_missing_version_creates_exception(self):
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(include_forecast=True, version=None))
+        self.assertTrue(run.exceptions.filter(exception_code="FORECAST_VERSION_MISSING").exists())
+
+    def test_invalid_version_creates_exception(self):
+        v = self._version(status="DRAFT")  # not selectable
+        self._line(v, qty="100")
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(version=v))
+        self.assertTrue(run.exceptions.filter(exception_code="FORECAST_VERSION_INVALID").exists())
+        self.assertEqual(run.demands.filter(demand_type="FORECAST").count(), 0)
+
+    # =========================== pegging ===========================
+    def test_pegging_links_planned_order_to_forecast(self):
+        from core.models import MRPPegging
+        v = self._version()
+        self._line(v, qty="100")
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(version=v))
+        po = run.planned_orders.get(source_type="BUY")
+        self.assertTrue(MRPPegging.objects.filter(
+            planned_order=po, demand__demand_type="FORECAST").exists())
+
+    def test_pegging_prefers_sales_before_forecast(self):
+        v = self._version(method="NONE")  # keep both demands distinct (no consumption)
+        self._line(v, bucket="MONTHLY", qty="100")
+        self._profile(source_type="BUY")
+        self._sales(40, self.june)
+        run = self._exec(self._run(version=v))
+        # The first planned order (earliest) should peg the sales demand first.
+        from core.models import MRPPegging
+        sales_peg = MRPPegging.objects.filter(demand__demand_type="SALES_ORDER", planned_order__mrp_run=run)
+        self.assertTrue(sales_peg.exists())
+        # Sales demand fully covered.
+        self.assertEqual(sum(p.pegged_quantity for p in sales_peg), Decimal("40.00"))
+
+    # =========================== UI ===========================
+    def test_run_detail_shows_forecast_demand(self):
+        v = self._version()
+        self._line(v, qty="100")
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(version=v))
+        self.client.login(username="fcadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/" % run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Forecast")
+
+    def test_workbench_trace_shows_forecast(self):
+        v = self._version()
+        self._line(v, qty="100")
+        self._profile(source_type="BUY")
+        run = self._exec(self._run(version=v))
+        self.client.login(username="fcadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Forecast")
+
+    # =========================== permissions ===========================
+    def test_view_only_user_cannot_edit_forecast(self):
+        from core.models import ForecastLine
+        v = self._version(status="DRAFT")
+        self.client.login(username="fcwh", password="pw")  # Warehouse: VIEW_FORECAST only
+        self.assertEqual(self.client.get("/forecasts/").status_code, 200)
+        resp = self.client.post("/forecasts/%d/lines/new/" % v.id, {
+            "product": self.fg.id, "site": self.a.id, "forecast_date": "2026-06-15",
+            "bucket_type": "MONTHLY", "quantity": "10", "source": "MANUAL"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(ForecastLine.objects.filter(forecast_version=v).count(), 0)
+
+    def test_no_forecast_permission_blocks_view(self):
+        self.client.login(username="fcsales", password="pw")  # Sales: no forecast perms
+        self.assertEqual(self.client.get("/forecasts/").status_code, 403)
+
+    def test_locked_version_blocks_non_admin_edit(self):
+        v = self._version(status="LOCKED")
+        self.client.login(username="fcmgr", password="pw")  # Manager has MANAGE_FORECAST, not admin
+        resp = self.client.post("/forecasts/%d/lines/new/" % v.id, {
+            "product": self.fg.id, "site": self.a.id, "forecast_date": "2026-06-15",
+            "bucket_type": "MONTHLY", "quantity": "10", "source": "MANUAL"})
+        # Guard redirects (does not create) for a locked version edited by a non-admin.
+        self.assertEqual(resp.status_code, 302)
+        from core.models import ForecastLine
+        self.assertEqual(ForecastLine.objects.filter(forecast_version=v).count(), 0)

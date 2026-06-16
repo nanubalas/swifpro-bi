@@ -353,6 +353,16 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("mrp/planned-orders/<int:po_id>/action/", views.mrp_planned_order_action, name="mrp_planned_order_action"),
     path("mrp/planned-orders/<int:po_id>/convert/", views.mrp_planned_order_convert, name="mrp_planned_order_convert"),
 
+    # Forecasting (Phase 9)
+    path("forecasts/", views.forecast_version_list, name="forecast_version_list"),
+    path("forecasts/new/", views.forecast_version_create, name="forecast_version_create"),
+    path("forecasts/<int:version_id>/", views.forecast_version_detail, name="forecast_version_detail"),
+    path("forecasts/<int:version_id>/edit/", views.forecast_version_edit, name="forecast_version_edit"),
+    path("forecasts/<int:version_id>/action/", views.forecast_version_action, name="forecast_version_action"),
+    path("forecasts/<int:version_id>/lines/new/", views.forecast_line_create, name="forecast_line_create"),
+    path("forecasts/lines/<int:line_id>/edit/", views.forecast_line_edit, name="forecast_line_edit"),
+    path("forecasts/lines/<int:line_id>/delete/", views.forecast_line_delete, name="forecast_line_delete"),
+
     # Work orders (Phase 6)
     path("work-orders/", views.work_order_list, name="work_order_list"),
     path("work-orders/<int:wo_id>/", views.work_order_detail, name="work_order_detail"),

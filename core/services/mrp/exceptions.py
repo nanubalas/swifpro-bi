@@ -39,6 +39,14 @@ _REGISTRY = {
     "TRANSFER_LOOP_DETECTED": ("CRITICAL", "Break the circular transfer sourcing between sites."),
     "TRANSFER_MAX_DEPTH_EXCEEDED": ("CRITICAL", "Transfer sourcing chain is too deep; review the network."),
     "INBOUND_TRANSFER_DUE_DATE_MISSING": ("INFO", "Transfer has no due date; planning start date was used."),
+    # Phase 9 (forecast + consumption)
+    "FORECAST_VERSION_MISSING": ("WARNING", "Select a forecast version on the MRP run."),
+    "FORECAST_VERSION_INVALID": ("WARNING", "Choose an Active or Locked forecast version."),
+    "FORECAST_LINE_OUTSIDE_HORIZON": ("INFO", "Forecast line falls outside the planning window; ignored."),
+    "FORECAST_LINE_INVALID_QTY": ("WARNING", "Fix the forecast line quantity (must be >= 0)."),
+    "UNSUPPORTED_FORECAST_CONSUMPTION_METHOD": ("INFO", "Consumption method not supported yet; forecast not consumed."),
+    "FORECAST_UOM_CONVERSION_MISSING": ("WARNING", "Add the missing forecast UOM conversion."),
+    "FORECAST_SITE_MISSING": ("WARNING", "Set a site on the forecast line."),
 }
 
 
