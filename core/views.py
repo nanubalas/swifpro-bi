@@ -7569,6 +7569,165 @@ def mrp_planned_order_convert(request, po_id):
     return redirect("mrp_run_detail", run_id=po.mrp_run_id)
 
 
+# --- MRP planner workbench + bulk / grouped actions (Phase 8) ---
+
+# Filter keys carried in the query string; preserved across the bulk-action POST
+# so the planner returns to the same filtered view.
+_WORKBENCH_FILTERS = [
+    "source_type", "status", "site", "transfer_from", "supplier", "q",
+    "exception_level", "has_exception", "has_document",
+    "req_from", "req_to", "rel_from", "rel_to",
+]
+
+
+def _workbench_querystring(get):
+    from urllib.parse import urlencode
+    pairs = [(k, get.get(k)) for k in _WORKBENCH_FILTERS if (get.get(k) or "").strip()]
+    return urlencode(pairs)
+
+
+@login_required
+@role_required(_MRP_READ)
+def mrp_workbench(request, run_id):
+    """Planner workbench: every planned order from a run, with filters, summary
+    cards, pegging / exception visibility, and bulk-action controls."""
+    from django.db.models import Count, Sum, Q, Prefetch
+    from core.models import MRPRun, MRPPegging, Site, Supplier
+    tenant = _get_default_tenant(request)
+    run = get_object_or_404(MRPRun.objects.select_related("site_scope", "started_by"),
+                            id=run_id, tenant=tenant)
+    today = timezone.localdate()
+
+    base = run.planned_orders.select_related(
+        "product", "site", "supplier", "transfer_from_site",
+        "created_purchase_requisition", "created_purchase_order",
+        "created_transfer_order", "created_work_order")
+
+    f = request.GET
+    qs = base.prefetch_related(
+        Prefetch("peggings", queryset=MRPPegging.objects.select_related("demand", "demand__product")),
+        "exceptions")
+
+    if f.get("source_type"):
+        qs = qs.filter(source_type=f["source_type"])
+    if f.get("status"):
+        qs = qs.filter(status=f["status"])
+    if f.get("site"):
+        qs = qs.filter(site_id=f["site"])
+    if f.get("transfer_from"):
+        qs = qs.filter(transfer_from_site_id=f["transfer_from"])
+    if f.get("supplier"):
+        qs = qs.filter(supplier_id=f["supplier"])
+    q = (f.get("q") or "").strip()
+    if q:
+        qs = qs.filter(Q(product__sku__icontains=q) | Q(product__name__icontains=q)
+                       | Q(planned_order_number__icontains=q))
+    if f.get("exception_level"):
+        qs = qs.filter(exception_level=f["exception_level"])
+    if f.get("has_exception") == "yes":
+        qs = qs.exclude(exception_level="NONE")
+    elif f.get("has_exception") == "no":
+        qs = qs.filter(exception_level="NONE")
+    has_doc = Q(created_purchase_requisition__isnull=False) | Q(created_purchase_order__isnull=False) \
+        | Q(created_transfer_order__isnull=False) | Q(created_work_order__isnull=False)
+    if f.get("has_document") == "yes":
+        qs = qs.filter(has_doc)
+    elif f.get("has_document") == "no":
+        qs = qs.exclude(has_doc)
+    if f.get("req_from"):
+        qs = qs.filter(required_date__gte=f["req_from"])
+    if f.get("req_to"):
+        qs = qs.filter(required_date__lte=f["req_to"])
+    if f.get("rel_from"):
+        qs = qs.filter(planned_release_date__gte=f["rel_from"])
+    if f.get("rel_to"):
+        qs = qs.filter(planned_release_date__lte=f["rel_to"])
+
+    planned_orders = list(qs.order_by("product__sku", "required_date"))
+
+    cards = base.aggregate(
+        total=Count("id"),
+        suggested=Count("id", filter=Q(status="SUGGESTED")),
+        firmed=Count("id", filter=Q(status="FIRMED")),
+        converted=Count("id", filter=Q(status="CONVERTED")),
+        critical=Count("id", filter=Q(exception_level="CRITICAL")),
+        buy=Count("id", filter=Q(source_type="BUY")),
+        make=Count("id", filter=Q(source_type="MAKE")),
+        transfer=Count("id", filter=Q(source_type="TRANSFER")),
+        total_qty=Sum("quantity"),
+        past_due=Count("id", filter=Q(planned_release_date__lt=today,
+                                       status__in=["SUGGESTED", "FIRMED"])),
+    )
+
+    sites = Site.objects.filter(tenant=tenant, mrp_planned_orders__mrp_run=run).distinct().order_by("name")
+    suppliers = (Supplier.objects.filter(tenant=tenant, mrp_planned_orders__mrp_run=run)
+                 .distinct().order_by("name"))
+
+    return render(request, "mrp/workbench.html", {
+        "tenant": tenant, "run": run, "planned_orders": planned_orders,
+        "cards": cards, "sites": sites, "suppliers": suppliers, "today": today,
+        "filters": f, "result_count": len(planned_orders),
+        "querystring": _workbench_querystring(f),
+        "source_types": ["BUY", "MAKE", "TRANSFER"],
+        "statuses": ["SUGGESTED", "FIRMED", "CONVERTED", "IGNORED", "CANCELLED", "EXPIRED"],
+        "exception_levels": ["INFO", "WARNING", "CRITICAL"],
+    })
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_MRP)
+def mrp_bulk_action(request, run_id):
+    """Apply a bulk action (firm / ignore / cancel / convert) to the selected
+    planned orders of a run. One invalid order never aborts the batch."""
+    from core.models import MRPRun, MRPPlannedOrder
+    from core.services.mrp import bulk
+    tenant = _get_default_tenant(request)
+    run = get_object_or_404(MRPRun, id=run_id, tenant=tenant)
+
+    def _back():
+        qs = _workbench_querystring(request.POST)
+        url = reverse("mrp_workbench", args=[run.id])
+        return redirect(f"{url}?{qs}" if qs else url)
+
+    if request.method != "POST":
+        return _back()
+
+    action = (request.POST.get("bulk_action") or "").lower()
+    ids = request.POST.getlist("selected")
+    if not ids:
+        messages.info(request, "Select at least one planned order first.")
+        return _back()
+
+    orders = list(MRPPlannedOrder.objects.filter(tenant=tenant, mrp_run=run, id__in=ids)
+                  .select_related("product", "site", "supplier", "transfer_from_site", "mrp_run"))
+    if not orders:
+        messages.info(request, "No matching planned orders were found.")
+        return _back()
+
+    if action in bulk.STATUS_ACTIONS:
+        result = bulk.bulk_status_action(orders, action, request.user)
+    elif action == "convert":
+        buy_target = (request.POST.get("buy_target") or "REQUISITION").upper()
+        result = bulk.bulk_convert(orders, request.user, buy_target=buy_target)
+    else:
+        messages.error(request, "Unknown bulk action.")
+        return _back()
+
+    log_audit(action=f"mrp_bulk_{action}", request=request, user=request.user, tenant=tenant,
+              detail=f"{run.run_number}: {result.summary}")
+
+    level = messages.success if result.success and not result.failed else (
+        messages.error if result.failed and not result.success else messages.warning)
+    if result.success == 0 and result.failed == 0 and result.skipped:
+        level = messages.info
+    level(request, f"Bulk {action}: {result.summary}")
+    for kind, _url, _id, number in result.documents:
+        messages.info(request, f"{kind} {number} created.")
+    for reason in result.reasons[:20]:
+        messages.warning(request, reason)
+    return _back()
+
+
 # ===========================================================================
 # Work Order execution (Phase 6)
 # ===========================================================================

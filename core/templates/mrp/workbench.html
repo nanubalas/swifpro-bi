@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}{{ run.run_number }} - Planner Workbench{% endblock %}
+{% block back_url %}{% url 'mrp_run_detail' run.id %}{% endblock %}
+{% block body %}
+<style>
+  .wb-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .6rem; }
+  .wb-card { border: 1px solid var(--bs-border-color); border-radius: 10px; padding: .6rem .8rem; background: #fff; }
+  .wb-card .v { font-size: 1.4rem; font-weight: 700; line-height: 1.1; }
+  .wb-card .l { font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; color: var(--bs-secondary-color); }
+  .wb-card.crit .v { color: #b02a37; }
+  .wb-card.due .v { color: #997404; }
+  .wb-table-wrap { max-height: calc(100vh - 180px); overflow: auto; }
+  .wb-table thead th { position: sticky; top: 0; z-index: 2; background: var(--bs-light); }
+  .mrp-sev-CRITICAL { color: #b02a37; font-weight: 600; }
+  .mrp-sev-WARNING { color: #997404; font-weight: 600; }
+  .mrp-sev-INFO { color: #0a58ca; }
+  .wb-peg-row > td { background: #fbfbfd; }
+  .wb-toggle { cursor: pointer; }
+</style>
+
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-kanban me-2"></i>Planner Workbench</h2>
+    <div class="text-muted">{{ run.run_number }} &middot; {{ run.get_status_display }} &middot; {{ run.site_scope.name|default:'All sites' }}</div>
+  </div>
+  <a class="btn btn-outline-secondary align-self-center" href="{% url 'mrp_run_detail' run.id %}"><i class="bi bi-card-heading me-1"></i> Run detail</a>
+</div>
+
+<div class="wb-cards mb-3">
+  <div class="wb-card"><div class="v">{{ cards.total }}</div><div class="l">Planned orders</div></div>
+  <div class="wb-card"><div class="v">{{ cards.suggested }}</div><div class="l">Suggested</div></div>
+  <div class="wb-card"><div class="v">{{ cards.firmed }}</div><div class="l">Firmed</div></div>
+  <div class="wb-card"><div class="v">{{ cards.converted }}</div><div class="l">Converted</div></div>
+  <div class="wb-card crit"><div class="v">{{ cards.critical }}</div><div class="l">Critical exceptions</div></div>
+  <div class="wb-card"><div class="v">{{ cards.buy }}</div><div class="l">Buy</div></div>
+  <div class="wb-card"><div class="v">{{ cards.make }}</div><div class="l">Make</div></div>
+  <div class="wb-card"><div class="v">{{ cards.transfer }}</div><div class="l">Transfer</div></div>
+  <div class="wb-card"><div class="v">{{ cards.total_qty|default:0 }}</div><div class="l">Total qty</div></div>
+  <div class="wb-card due"><div class="v">{{ cards.past_due }}</div><div class="l">Past-due release</div></div>
+</div>
+
+<div class="card mb-3"><div class="card-body py-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Item search</label>
+      <input type="text" name="q" value="{{ filters.q }}" class="form-control form-control-sm" placeholder="SKU / name / order#">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Source</label>
+      <select name="source_type" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for s in source_types %}<option value="{{ s }}" {% if filters.source_type == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Status</label>
+      <select name="status" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for s in statuses %}<option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Site</label>
+      <select name="site" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for s in sites %}<option value="{{ s.id }}" {% if filters.site == s.id|stringformat:'s' %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Transfer from</label>
+      <select name="transfer_from" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for s in sites %}<option value="{{ s.id }}" {% if filters.transfer_from == s.id|stringformat:'s' %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Supplier</label>
+      <select name="supplier" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for s in suppliers %}<option value="{{ s.id }}" {% if filters.supplier == s.id|stringformat:'s' %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Exception level</label>
+      <select name="exception_level" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for s in exception_levels %}<option value="{{ s }}" {% if filters.exception_level == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Has exception</label>
+      <select name="has_exception" class="form-select form-select-sm">
+        <option value="">Any</option>
+        <option value="yes" {% if filters.has_exception == 'yes' %}selected{% endif %}>Yes</option>
+        <option value="no" {% if filters.has_exception == 'no' %}selected{% endif %}>No</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Has document</label>
+      <select name="has_document" class="form-select form-select-sm">
+        <option value="">Any</option>
+        <option value="yes" {% if filters.has_document == 'yes' %}selected{% endif %}>Yes</option>
+        <option value="no" {% if filters.has_document == 'no' %}selected{% endif %}>No</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Required from</label>
+      <input type="date" name="req_from" value="{{ filters.req_from }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Required to</label>
+      <input type="date" name="req_to" value="{{ filters.req_to }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Release from</label>
+      <input type="date" name="rel_from" value="{{ filters.rel_from }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Release to</label>
+      <input type="date" name="rel_to" value="{{ filters.rel_to }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-12 col-md-auto">
+      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply</button>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'mrp_workbench' run.id %}">Clear</a>
+    </div>
+  </form>
+</div></div>
+
+<form method="post" action="{% url 'mrp_bulk_action' run.id %}" id="wb-bulk-form">
+  {% csrf_token %}
+  {% for k, v in filters.items %}{% if v %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+
+  {% if 'manage_mrp' in perms %}
+  <div class="card mb-2"><div class="card-body py-2 d-flex flex-wrap gap-2 align-items-center">
+    <span class="small text-muted me-1"><span id="wb-count">0</span> selected</span>
+    <button class="btn btn-sm btn-outline-secondary" type="submit" name="bulk_action" value="firm"><i class="bi bi-check2-square me-1"></i>Firm</button>
+    <button class="btn btn-sm btn-outline-secondary" type="submit" name="bulk_action" value="ignore">Ignore</button>
+    <button class="btn btn-sm btn-outline-danger" type="submit" name="bulk_action" value="cancel">Cancel</button>
+    <span class="vr mx-1"></span>
+    <div class="d-flex align-items-center gap-1">
+      <label class="small text-muted">Buy as</label>
+      <select name="buy_target" class="form-select form-select-sm" style="width:auto">
+        <option value="REQUISITION">Requisition (grouped)</option>
+        <option value="PURCHASE_ORDER">Purchase order</option>
+      </select>
+    </div>
+    <button class="btn btn-sm btn-primary" type="submit" name="bulk_action" value="convert"><i class="bi bi-arrow-right-circle me-1"></i>Convert</button>
+  </div></div>
+  {% endif %}
+
+  <div class="card"><div class="wb-table-wrap">
+    <table class="table table-sm table-hover align-middle mb-0 wb-table">
+      <thead><tr>
+        {% if 'manage_mrp' in perms %}<th style="width:32px"><input type="checkbox" id="wb-all" class="form-check-input"></th>{% endif %}
+        <th>Order</th><th>Source</th><th>Item</th><th>Description</th><th>Site</th><th>From</th>
+        <th>Supplier</th><th class="text-end">Qty</th><th>Required</th><th>Receipt</th><th>Release</th>
+        <th>Status</th><th>Exception</th><th>Linked document</th><th>Actions</th>
+      </tr></thead>
+      <tbody>
+      {% for p in planned_orders %}
+        <tr>
+          {% if 'manage_mrp' in perms %}<td><input type="checkbox" class="form-check-input wb-check" name="selected" value="{{ p.id }}"></td>{% endif %}
+          <td class="small text-nowrap">{{ p.planned_order_number }}</td>
+          <td><span class="badge text-bg-light">{{ p.get_source_type_display }}</span></td>
+          <td class="fw-semibold">{{ p.product.sku }}</td>
+          <td class="small">{{ p.product.name|truncatechars:32 }}</td>
+          <td class="small">{{ p.site.name }}</td>
+          <td class="small">{% if p.source_type == 'TRANSFER' %}{{ p.transfer_from_site.name|default:'?' }}{% else %}-{% endif %}</td>
+          <td class="small">{{ p.supplier.name|default:'-' }}</td>
+          <td class="text-end">{{ p.quantity }}</td>
+          <td class="small text-nowrap">{{ p.required_date }}</td>
+          <td class="small text-nowrap">{{ p.planned_receipt_date|default:'-' }}</td>
+          <td class="small text-nowrap {% if p.planned_release_date and p.planned_release_date < today and p.status == 'SUGGESTED' or p.planned_release_date and p.planned_release_date < today and p.status == 'FIRMED' %}mrp-sev-WARNING{% endif %}">{{ p.planned_release_date|default:'-' }}</td>
+          <td><span class="badge text-bg-light">{{ p.get_status_display }}</span></td>
+          <td class="small {% if p.exception_level != 'NONE' %}mrp-sev-{{ p.exception_level }}{% endif %}">{{ p.get_exception_level_display }}</td>
+          <td class="small text-nowrap">
+            {% if p.created_purchase_requisition_id %}<a href="{% url 'requisition_detail' p.created_purchase_requisition_id %}"><i class="bi bi-card-checklist me-1"></i>{{ p.created_purchase_requisition.req_number }}</a>
+            {% elif p.created_purchase_order_id %}<a href="{% url 'po_detail' p.created_purchase_order_id %}"><i class="bi bi-file-earmark-text me-1"></i>{{ p.created_purchase_order.po_number }}</a>
+            {% elif p.created_transfer_order_id %}<a href="{% url 'transfer_detail' p.created_transfer_order_id %}"><i class="bi bi-arrow-left-right me-1"></i>{{ p.created_transfer_order.transfer_number }}</a>
+            {% elif p.created_work_order_id %}<a href="{% url 'work_order_detail' p.created_work_order_id %}"><i class="bi bi-tools me-1"></i>{{ p.created_work_order.work_order_number }}</a>
+            {% else %}<span class="text-muted">-</span>{% endif %}
+          </td>
+          <td class="text-nowrap">
+            <span class="wb-toggle small text-decoration-underline" data-target="wb-peg-{{ p.id }}"><i class="bi bi-diagram-3 me-1"></i>Trace</span>
+            {% if 'manage_mrp' in perms and p.status == 'SUGGESTED' or 'manage_mrp' in perms and p.status == 'FIRMED' %}
+              <span class="text-muted mx-1">|</span>
+              {% if p.status == 'SUGGESTED' %}<button class="btn btn-link btn-sm p-0 align-baseline" type="submit" name="bulk_action" value="firm" formnovalidate onclick="wbOne(this,{{ p.id }})">Firm</button> {% endif %}
+              <button class="btn btn-link btn-sm p-0 align-baseline" type="submit" name="bulk_action" value="convert" onclick="wbOne(this,{{ p.id }})">Convert</button>
+            {% endif %}
+          </td>
+        </tr>
+        <tr class="wb-peg-row" id="wb-peg-{{ p.id }}" hidden>
+          <td colspan="{% if 'manage_mrp' in perms %}17{% else %}16{% endif %}">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <div class="small fw-semibold mb-1"><i class="bi bi-link-45deg me-1"></i>Pegging (demand covered)</div>
+                {% for g in p.peggings.all %}
+                  <div class="small">{{ g.demand.get_demand_type_display }} {{ g.demand.source_document_id }} &rarr; <strong>{{ p.planned_order_number }}</strong> &middot; {{ g.pegged_quantity }} due {{ g.required_date|default:'-' }}</div>
+                {% empty %}<div class="small text-muted">No pegging links.</div>{% endfor %}
+                {% if p.parent_planned_order_id %}<div class="small text-muted mt-1">Component of planned order {{ p.parent_planned_order.planned_order_number }}.</div>{% endif %}
+              </div>
+              <div class="col-md-6">
+                <div class="small fw-semibold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions</div>
+                {% for e in p.exceptions.all %}
+                  <div class="small mrp-sev-{{ e.severity }}">{{ e.get_severity_display }}: {{ e.message }}{% if e.recommended_action %} <span class="text-muted">({{ e.recommended_action }})</span>{% endif %}</div>
+                {% empty %}<div class="small text-muted">No exceptions.</div>{% endfor %}
+              </div>
+            </div>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="17" class="text-center text-muted py-4">No planned orders match these filters.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div></div>
+  <div class="small text-muted mt-2">{{ result_count }} planned order(s) shown.</div>
+</form>
+
+<script>
+  (function () {
+    var all = document.getElementById("wb-all");
+    var boxes = Array.prototype.slice.call(document.querySelectorAll(".wb-check"));
+    var count = document.getElementById("wb-count");
+    function refresh() {
+      if (count) count.textContent = boxes.filter(function (b) { return b.checked; }).length;
+    }
+    if (all) all.addEventListener("change", function () {
+      boxes.forEach(function (b) { b.checked = all.checked; });
+      refresh();
+    });
+    boxes.forEach(function (b) { b.addEventListener("change", refresh); });
+    refresh();
+    document.querySelectorAll(".wb-toggle").forEach(function (t) {
+      t.addEventListener("click", function () {
+        var row = document.getElementById(t.getAttribute("data-target"));
+        if (row) row.hidden = !row.hidden;
+      });
+    });
+  })();
+  // Single-row action: tick only this order's checkbox before the form submits.
+  function wbOne(btn, id) {
+    document.querySelectorAll(".wb-check").forEach(function (b) { b.checked = (b.value === String(id)); });
+  }
+</script>
+{% endblock %}

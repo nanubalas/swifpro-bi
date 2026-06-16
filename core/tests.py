@@ -11972,3 +11972,376 @@ class MRPPhase7WorkOrderGLTests(TestCase):
         self.assertTrue(jes.exists())
         for je in jes:
             self.assertEqual(je.total_debit, je.total_credit)
+
+
+class MRPPhase8WorkbenchTests(TestCase):
+    """Phase 8: planner workbench - filters, summary, bulk/grouped actions,
+    pegging/exception visibility, permissions, and idempotent conversion."""
+
+    def setUp(self):
+        import datetime
+        from core.models import OrgMembership, Site, Location
+        self.tenant = Tenant.objects.create(name="WB Co")
+        # The post_save signal seeds a default "Main Site" + "Main Location".
+        self.a = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.b = Site.objects.create(tenant=self.tenant, name="Depot")
+        self.loc_b = Location.objects.create(tenant=self.tenant, site=self.b, name="B-WH",
+                                             type="WAREHOUSE", holds_stock=True)
+        self.p1 = Product.objects.create(tenant=self.tenant, sku="P1", name="Widget one",
+                                         standard_cost=Decimal("2.00"))
+        self.p2 = Product.objects.create(tenant=self.tenant, sku="P2", name="Widget two",
+                                         standard_cost=Decimal("3.00"))
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM", name="Raw material")
+        self.sup1 = Supplier.objects.create(tenant=self.tenant, name="Supplier One")
+        self.sup2 = Supplier.objects.create(tenant=self.tenant, name="Supplier Two")
+        self.admin = User.objects.create_user("wbadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.manager = User.objects.create_user("wbmgr", password="pw")
+        OrgMembership.objects.create(user=self.manager, tenant=self.tenant, role="MANAGER", is_default=True)
+        self.warehouse = User.objects.create_user("wbwh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.start = datetime.date(2026, 6, 15)
+        self.future = self.start + datetime.timedelta(days=30)
+
+    # --- helpers ---
+    def _run(self):
+        import datetime
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number
+        return MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant), site_scope=None,
+            planning_start_date=self.start, planning_end_date=self.start + datetime.timedelta(days=120))
+
+    def _po(self, run, source_type="BUY", product=None, qty=Decimal("10"),
+            supplier=None, site=None, transfer_from=None, status="SUGGESTED"):
+        from core.models import MRPPlannedOrder
+        from core.services.mrp import next_planned_order_number
+        return MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=self.tenant, product=(product or self.p1),
+            site=(site or self.a), source_type=source_type,
+            planned_order_number=next_planned_order_number(self.tenant),
+            quantity=qty, required_date=self.future,
+            planned_receipt_date=self.future, planned_release_date=self.start,
+            supplier=supplier, transfer_from_site=transfer_from, status=status)
+
+    # =========================== workbench view ===========================
+    def test_workbench_loads_with_planned_orders(self):
+        run = self._run()
+        po = self._po(run, "BUY", supplier=self.sup1)
+        self.client.login(username="wbadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, po.planned_order_number)
+        self.assertContains(resp, "Planner Workbench")
+
+    def test_workbench_filter_by_source_type(self):
+        run = self._run()
+        buy = self._po(run, "BUY", supplier=self.sup1)
+        make = self._po(run, "MAKE", product=self.fg)
+        self.client.login(username="wbadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/?source_type=BUY" % run.id)
+        self.assertContains(resp, buy.planned_order_number)
+        self.assertNotContains(resp, make.planned_order_number)
+
+    def test_workbench_filter_by_status(self):
+        run = self._run()
+        sug = self._po(run, "BUY", supplier=self.sup1, status="SUGGESTED")
+        firmed = self._po(run, "BUY", supplier=self.sup1, status="FIRMED")
+        self.client.login(username="wbadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/?status=FIRMED" % run.id)
+        self.assertContains(resp, firmed.planned_order_number)
+        self.assertNotContains(resp, sug.planned_order_number)
+
+    def test_workbench_filter_by_site(self):
+        run = self._run()
+        at_a = self._po(run, "BUY", supplier=self.sup1, site=self.a)
+        at_b = self._po(run, "BUY", supplier=self.sup1, site=self.b)
+        self.client.login(username="wbadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/?site=%d" % (run.id, self.b.id))
+        self.assertContains(resp, at_b.planned_order_number)
+        self.assertNotContains(resp, at_a.planned_order_number)
+
+    def test_workbench_filter_by_supplier(self):
+        run = self._run()
+        s1 = self._po(run, "BUY", supplier=self.sup1)
+        s2 = self._po(run, "BUY", supplier=self.sup2)
+        self.client.login(username="wbadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/?supplier=%d" % (run.id, self.sup2.id))
+        self.assertContains(resp, s2.planned_order_number)
+        self.assertNotContains(resp, s1.planned_order_number)
+
+    def test_workbench_filter_by_item_search(self):
+        run = self._run()
+        a = self._po(run, "BUY", product=self.p1, supplier=self.sup1)
+        b = self._po(run, "BUY", product=self.p2, supplier=self.sup1)
+        self.client.login(username="wbadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/?q=P2" % run.id)
+        self.assertContains(resp, b.planned_order_number)
+        self.assertNotContains(resp, a.planned_order_number)
+
+    # =========================== bulk status ===========================
+    def test_bulk_firm_updates_many(self):
+        from core.services.mrp import bulk
+        run = self._run()
+        pos = [self._po(run, "BUY", supplier=self.sup1) for _ in range(3)]
+        res = bulk.bulk_status_action(pos, "firm", self.admin)
+        self.assertEqual(res.success, 3)
+        for p in pos:
+            p.refresh_from_db()
+            self.assertEqual(p.status, "FIRMED")
+
+    def test_bulk_ignore_updates_many(self):
+        from core.services.mrp import bulk
+        run = self._run()
+        pos = [self._po(run, "BUY", supplier=self.sup1) for _ in range(2)]
+        res = bulk.bulk_status_action(pos, "ignore", self.admin)
+        self.assertEqual(res.success, 2)
+        for p in pos:
+            p.refresh_from_db()
+            self.assertEqual(p.status, "IGNORED")
+
+    def test_bulk_cancel_updates_many(self):
+        from core.services.mrp import bulk
+        run = self._run()
+        pos = [self._po(run, "BUY", supplier=self.sup1) for _ in range(2)]
+        res = bulk.bulk_status_action(pos, "cancel", self.admin)
+        self.assertEqual(res.success, 2)
+        for p in pos:
+            p.refresh_from_db()
+            self.assertEqual(p.status, "CANCELLED")
+
+    def test_bulk_status_skips_non_changeable(self):
+        from core.services.mrp import bulk
+        run = self._run()
+        ok = self._po(run, "BUY", supplier=self.sup1, status="SUGGESTED")
+        done = self._po(run, "BUY", supplier=self.sup1, status="CONVERTED")
+        res = bulk.bulk_status_action([ok, done], "firm", self.admin)
+        self.assertEqual(res.success, 1)
+        self.assertEqual(res.skipped, 1)
+
+    # =========================== grouped BUY ===========================
+    def test_bulk_convert_buy_creates_requisitions(self):
+        from core.models import PurchaseRequisition
+        from core.services.mrp import bulk
+        run = self._run()
+        pos = [self._po(run, "BUY", product=self.p1, supplier=self.sup1),
+               self._po(run, "BUY", product=self.p2, supplier=self.sup1)]
+        res = bulk.bulk_convert(pos, self.admin)
+        self.assertEqual(res.success, 2)
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+        for p in pos:
+            p.refresh_from_db()
+            self.assertEqual(p.status, "CONVERTED")
+            self.assertIsNotNone(p.created_purchase_requisition_id)
+
+    def test_bulk_convert_buy_groups_by_supplier(self):
+        from core.models import PurchaseRequisition, PurchaseRequisitionLine
+        from core.services.mrp import bulk
+        run = self._run()
+        a = self._po(run, "BUY", product=self.p1, supplier=self.sup1)
+        b = self._po(run, "BUY", product=self.p2, supplier=self.sup1)
+        c = self._po(run, "BUY", product=self.p1, supplier=self.sup2)
+        res = bulk.bulk_convert([a, b, c], self.admin)
+        self.assertEqual(res.success, 3)
+        # One PR for sup1 (2 lines), one PR for sup2 (1 line).
+        reqs = PurchaseRequisition.objects.filter(tenant=self.tenant)
+        self.assertEqual(reqs.count(), 2)
+        sup1_req = reqs.get(preferred_supplier=self.sup1)
+        self.assertEqual(sup1_req.lines.count(), 2)
+        # Lines link back to their planned orders.
+        a.refresh_from_db()
+        line = PurchaseRequisitionLine.objects.get(mrp_planned_order=a)
+        self.assertEqual(line.requisition_id, sup1_req.id)
+
+    def test_bulk_convert_buy_no_duplicate_on_repeat(self):
+        from core.models import PurchaseRequisition
+        from core.services.mrp import bulk
+        run = self._run()
+        pos = [self._po(run, "BUY", product=self.p1, supplier=self.sup1),
+               self._po(run, "BUY", product=self.p2, supplier=self.sup1)]
+        bulk.bulk_convert(pos, self.admin)
+        for p in pos:
+            p.refresh_from_db()
+        res2 = bulk.bulk_convert(pos, self.admin)
+        self.assertEqual(res2.success, 0)
+        self.assertEqual(res2.skipped, 2)
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_bulk_convert_buy_missing_supplier_fails_only_that_order(self):
+        from core.models import PurchaseRequisition
+        from core.services.mrp import bulk
+        run = self._run()
+        good = self._po(run, "BUY", product=self.p1, supplier=self.sup1)
+        bad = self._po(run, "BUY", product=self.p2, supplier=None)
+        res = bulk.bulk_convert([good, bad], self.admin)
+        self.assertEqual(res.success, 1)
+        self.assertEqual(res.failed, 1)
+        self.assertTrue(any("no supplier" in r for r in res.reasons))
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_bulk_convert_buy_as_purchase_order(self):
+        from core.models import PurchaseOrder
+        from core.services.mrp import bulk
+        from core.services.mrp import conversion
+        run = self._run()
+        pos = [self._po(run, "BUY", product=self.p1, supplier=self.sup1),
+               self._po(run, "BUY", product=self.p2, supplier=self.sup1)]
+        res = bulk.bulk_convert(pos, self.admin, buy_target=conversion.PURCHASE_ORDER)
+        self.assertEqual(res.success, 2)
+        self.assertEqual(PurchaseOrder.objects.filter(tenant=self.tenant).count(), 2)
+
+    # =========================== grouped TRANSFER ===========================
+    def test_bulk_convert_transfer_creates_orders(self):
+        from core.models import InventoryTransfer, InventoryMovement
+        from core.services.mrp import bulk
+        run = self._run()
+        po = self._po(run, "TRANSFER", product=self.p1, site=self.a, transfer_from=self.b)
+        res = bulk.bulk_convert([po], self.admin)
+        self.assertEqual(res.success, 1)
+        self.assertEqual(InventoryTransfer.objects.filter(tenant=self.tenant).count(), 1)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "CONVERTED")
+        # No movement posted (DRAFT only).
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.tenant).count(), 0)
+
+    def test_bulk_convert_transfer_groups_by_route(self):
+        from core.models import InventoryTransfer
+        from core.services.mrp import bulk
+        run = self._run()
+        a = self._po(run, "TRANSFER", product=self.p1, site=self.a, transfer_from=self.b)
+        b = self._po(run, "TRANSFER", product=self.p2, site=self.a, transfer_from=self.b)
+        res = bulk.bulk_convert([a, b], self.admin)
+        self.assertEqual(res.success, 2)
+        transfers = InventoryTransfer.objects.filter(tenant=self.tenant)
+        self.assertEqual(transfers.count(), 1)
+        self.assertEqual(transfers.first().lines.count(), 2)
+        a.refresh_from_db(); b.refresh_from_db()
+        self.assertEqual(a.created_transfer_order_id, b.created_transfer_order_id)
+
+    def test_bulk_convert_transfer_no_duplicate_on_repeat(self):
+        from core.models import InventoryTransfer
+        from core.services.mrp import bulk
+        run = self._run()
+        pos = [self._po(run, "TRANSFER", product=self.p1, site=self.a, transfer_from=self.b),
+               self._po(run, "TRANSFER", product=self.p2, site=self.a, transfer_from=self.b)]
+        bulk.bulk_convert(pos, self.admin)
+        for p in pos:
+            p.refresh_from_db()
+        res2 = bulk.bulk_convert(pos, self.admin)
+        self.assertEqual(res2.skipped, 2)
+        self.assertEqual(InventoryTransfer.objects.filter(tenant=self.tenant).count(), 1)
+
+    # =========================== MAKE ===========================
+    def test_bulk_convert_make_creates_work_orders(self):
+        from core.models import WorkOrder, InventoryMovement, JournalEntry
+        from core.services.mrp import bulk
+        run = self._run()
+        po = self._po(run, "MAKE", product=self.fg)
+        res = bulk.bulk_convert([po], self.admin)
+        self.assertEqual(res.success, 1)
+        wo = WorkOrder.objects.get(tenant=self.tenant)
+        self.assertEqual(wo.status, "PLANNED")
+        po.refresh_from_db()
+        self.assertEqual(po.created_work_order_id, wo.id)
+        # No execution side effects.
+        self.assertEqual(InventoryMovement.objects.filter(tenant=self.tenant).count(), 0)
+        self.assertEqual(JournalEntry.objects.filter(tenant=self.tenant).count(), 0)
+
+    def test_bulk_convert_mixed_and_skip_converted(self):
+        from core.services.mrp import bulk
+        run = self._run()
+        buy = self._po(run, "BUY", product=self.p1, supplier=self.sup1)
+        make = self._po(run, "MAKE", product=self.fg)
+        done = self._po(run, "BUY", product=self.p2, supplier=self.sup1, status="IGNORED")
+        res = bulk.bulk_convert([buy, make, done], self.admin)
+        self.assertEqual(res.success, 2)
+        self.assertEqual(res.skipped, 1)
+        self.assertTrue(any("skipped" in r for r in res.reasons))
+
+    def test_bulk_convert_reports_failed_reasons(self):
+        from core.services.mrp import bulk
+        run = self._run()
+        bad = self._po(run, "TRANSFER", product=self.p1, site=self.a, transfer_from=None)
+        res = bulk.bulk_convert([bad], self.admin)
+        self.assertEqual(res.failed, 1)
+        self.assertTrue(any("source site" in r for r in res.reasons))
+
+    # =========================== visibility in UI ===========================
+    def test_linked_document_displays(self):
+        from core.services.mrp import bulk
+        run = self._run()
+        po = self._po(run, "BUY", product=self.p1, supplier=self.sup1)
+        bulk.bulk_convert([po], self.admin)
+        po.refresh_from_db()
+        self.client.login(username="wbadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % run.id)
+        self.assertContains(resp, po.created_purchase_requisition.req_number)
+
+    def test_pegging_and_exception_display(self):
+        from core.models import MRPDemand, MRPPegging, MRPException
+        run = self._run()
+        po = self._po(run, "BUY", product=self.p1, supplier=self.sup1)
+        po.exception_level = "CRITICAL"
+        po.save(update_fields=["exception_level"])
+        demand = MRPDemand.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.p1, site=self.a,
+            demand_type="SALES_ORDER", source_document_id="SO-9", required_date=self.future,
+            quantity=Decimal("10"), open_quantity=Decimal("10"))
+        MRPPegging.objects.create(tenant=self.tenant, planned_order=po, demand=demand,
+                                  pegged_quantity=Decimal("10"), required_date=self.future)
+        MRPException.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.p1, site=self.a, planned_order=po,
+            exception_code="SHORTAGE", severity="CRITICAL", message="Net shortage of 10.")
+        self.client.login(username="wbadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % run.id)
+        self.assertContains(resp, "SO-9")
+        self.assertContains(resp, "Net shortage of 10.")
+        self.assertContains(resp, "Critical")
+
+    # =========================== permissions ===========================
+    def test_view_mrp_user_cannot_bulk_convert(self):
+        from core.models import PurchaseRequisition
+        run = self._run()
+        po = self._po(run, "BUY", product=self.p1, supplier=self.sup1)
+        self.client.login(username="wbwh", password="pw")  # Warehouse: VIEW_MRP only
+        resp = self.client.post("/mrp/runs/%d/bulk/" % run.id,
+                                {"bulk_action": "convert", "selected": [po.id]})
+        self.assertEqual(resp.status_code, 403)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "SUGGESTED")
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 0)
+
+    def test_view_mrp_user_can_view_workbench(self):
+        run = self._run()
+        self._po(run, "BUY", product=self.p1, supplier=self.sup1)
+        self.client.login(username="wbwh", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % run.id)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_manage_mrp_user_can_bulk_convert(self):
+        from core.models import PurchaseRequisition
+        run = self._run()
+        pos = [self._po(run, "BUY", product=self.p1, supplier=self.sup1),
+               self._po(run, "BUY", product=self.p2, supplier=self.sup1)]
+        self.client.login(username="wbmgr", password="pw")  # Manager: MANAGE_MRP
+        resp = self.client.post("/mrp/runs/%d/bulk/" % run.id,
+                                {"bulk_action": "convert", "selected": [p.id for p in pos]})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 1)
+        for p in pos:
+            p.refresh_from_db()
+            self.assertEqual(p.status, "CONVERTED")
+
+    def test_bulk_firm_via_view(self):
+        run = self._run()
+        pos = [self._po(run, "BUY", product=self.p1, supplier=self.sup1),
+               self._po(run, "BUY", product=self.p2, supplier=self.sup1)]
+        self.client.login(username="wbmgr", password="pw")
+        resp = self.client.post("/mrp/runs/%d/bulk/" % run.id,
+                                {"bulk_action": "firm", "selected": [p.id for p in pos]})
+        self.assertEqual(resp.status_code, 302)
+        for p in pos:
+            p.refresh_from_db()
+            self.assertEqual(p.status, "FIRMED")
