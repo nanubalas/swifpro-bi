@@ -63,7 +63,7 @@
             <td class="text-end">{{ op.setup_minutes }}</td><td class="text-end">{{ op.run_minutes_per_unit }}</td>
             <td class="text-end">{{ op.queue_minutes }}</td><td class="text-end">{{ op.move_minutes }}</td>
             <td class="text-end">{{ op.yield_percent }}%</td>
-            <td>{% if op.is_subcontract_operation %}<span class="badge text-bg-warning">Yes</span>{% else %}-{% endif %}</td>
+            <td>{% if op.is_subcontract_operation %}<span class="badge text-bg-warning">Yes</span>{% if op.supplier %}<div class="small text-muted">{{ op.supplier.name }}</div>{% endif %}{% else %}-{% endif %}</td>
             <td class="text-end text-nowrap">
               {% if 'manage_routing' in perms %}
               <a class="btn btn-sm btn-outline-primary" href="{% url 'routing_operation_edit' op.id %}">Edit</a>

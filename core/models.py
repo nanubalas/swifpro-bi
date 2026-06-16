@@ -3053,6 +3053,13 @@ class MRPException(models.Model):
         INVALID_WORK_CENTRE = "INVALID_WORK_CENTRE", "Invalid / inactive work centre"
         SUBCONTRACT_OPERATION_NOT_SUPPORTED = "SUBCONTRACT_OPERATION_NOT_SUPPORTED", "Subcontract operation not supported"
         ROUTING_DURATION_INVALID = "ROUTING_DURATION_INVALID", "Routing duration invalid"
+        # Phase 11 additions (subcontracting)
+        MISSING_SUBCONTRACT_SUPPLIER = "MISSING_SUBCONTRACT_SUPPLIER", "Missing subcontract supplier"
+        SUBCONTRACT_OPERATION_SUPPLIER_MISSING = "SUBCONTRACT_OPERATION_SUPPLIER_MISSING", "Subcontract operation supplier missing"
+        SUBCONTRACT_CONVERSION_FAILED = "SUBCONTRACT_CONVERSION_FAILED", "Subcontract conversion failed"
+        SUBCONTRACT_RECEIPT_UNSUPPORTED = "SUBCONTRACT_RECEIPT_UNSUPPORTED", "Subcontract receipt unsupported"
+        SUBCONTRACT_COST_MISSING = "SUBCONTRACT_COST_MISSING", "Subcontract cost missing"
+        SUBCONTRACT_ORDER_ALREADY_CONVERTED = "SUBCONTRACT_ORDER_ALREADY_CONVERTED", "Subcontract order already converted"
         # Phase 3 additions (BOM / MAKE planning)
         INVALID_BOM = "INVALID_BOM", "Invalid BOM"
         BOM_NOT_APPROVED = "BOM_NOT_APPROVED", "BOM not approved"
@@ -3400,6 +3407,12 @@ class RoutingOperation(models.Model):
     move_minutes = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
     yield_percent = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("100.00"))
     is_subcontract_operation = models.BooleanField(default=False)
+    # Subcontract supplier for an external operation (Phase 11). Falls back to the
+    # item planning profile's default supplier when blank.
+    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="routing_operations")
+    subcontract_unit_cost = models.DecimalField(max_digits=12, decimal_places=4, default=Decimal("0.00"),
+                                                help_text="Service cost per unit for a subcontract operation")
     notes = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:

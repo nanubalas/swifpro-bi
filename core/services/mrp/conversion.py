@@ -31,6 +31,7 @@ WORK_ORDER = "WORK_ORDER"
 ALREADY_CONVERTED = "PLANNED_ORDER_ALREADY_CONVERTED"
 NOT_CONVERTIBLE = "PLANNED_ORDER_NOT_CONVERTIBLE"
 MISSING_SUPPLIER = "CONVERSION_MISSING_SUPPLIER"
+MISSING_SUBCONTRACT_SUPPLIER = "CONVERSION_MISSING_SUBCONTRACT_SUPPLIER"
 MISSING_TRANSFER_SOURCE = "CONVERSION_MISSING_TRANSFER_SOURCE"
 INVALID_TRANSFER_SOURCE = "CONVERSION_INVALID_TRANSFER_SOURCE"
 INVALID_QUANTITY = "CONVERSION_INVALID_QUANTITY"
@@ -88,17 +89,20 @@ def _guard_status(planned_order):
 def convert_planned_order(planned_order, target_type, user):
     """Convert ``planned_order`` to ``target_type``. Returns
     ``(document, created, message)``. Raises ConversionError on validation
-    failure."""
-    handlers = {
-        REQUISITION: convert_buy_to_requisition,
-        PURCHASE_ORDER: convert_buy_to_purchase_order,
-        TRANSFER_ORDER: convert_transfer_to_transfer_order,
-        WORK_ORDER: convert_make_to_work_order,
-    }
-    handler = handlers.get(target_type)
-    if handler is None:
-        raise ConversionError(WRONG_TARGET, f"Unknown conversion target '{target_type}'.")
-    return handler(planned_order, user)
+    failure. SUBCONTRACT orders procure their service via a requisition / PO,
+    so they route to the subcontract-aware converters."""
+    is_subcontract = planned_order.source_type == "SUBCONTRACT"
+    if target_type == REQUISITION:
+        return (convert_subcontract_to_requisition if is_subcontract
+                else convert_buy_to_requisition)(planned_order, user)
+    if target_type == PURCHASE_ORDER:
+        return (convert_subcontract_to_purchase_order if is_subcontract
+                else convert_buy_to_purchase_order)(planned_order, user)
+    if target_type == TRANSFER_ORDER:
+        return convert_transfer_to_transfer_order(planned_order, user)
+    if target_type == WORK_ORDER:
+        return convert_make_to_work_order(planned_order, user)
+    raise ConversionError(WRONG_TARGET, f"Unknown conversion target '{target_type}'.")
 
 
 # --------------------------------------------------------------------------- #
@@ -170,6 +174,80 @@ def convert_buy_to_purchase_order(po, user):
             po=order, product=po.product, ordered_qty=po.quantity, unit_cost=_buy_unit_cost(po))
         _mark_converted(po, user, created_purchase_order=order)
     return order, True, f"Draft purchase order {order.po_number} created."
+
+
+# --------------------------------------------------------------------------- #
+# SUBCONTRACT -> Purchase Requisition / Purchase Order (procures the service)
+# --------------------------------------------------------------------------- #
+def _subcontract_unit_cost(po):
+    """Service cost per unit: the routing subcontract operation's rate when this
+    order came from one, else the item's standard cost."""
+    from core.models import RoutingOperation
+    parent = po.parent_planned_order
+    if parent is not None:
+        op = (RoutingOperation.objects
+              .filter(routing__product=po.product, routing__status="ACTIVE",
+                      is_subcontract_operation=True, subcontract_unit_cost__gt=ZERO)
+              .order_by("operation_sequence").first())
+        if op is not None and op.subcontract_unit_cost:
+            return Decimal(op.subcontract_unit_cost)
+    return Decimal(po.product.standard_cost or ZERO)
+
+
+def convert_subcontract_to_requisition(po, user):
+    from core.models import PurchaseRequisition, PurchaseRequisitionLine
+
+    if po.source_type != "SUBCONTRACT":
+        raise ConversionError(WRONG_TARGET, "Only SUBCONTRACT planned orders convert to a subcontract requisition.")
+    if po.created_purchase_requisition_id:
+        return po.created_purchase_requisition, False, "Requisition already created for this subcontract order."
+    _guard_status(po)
+    if po.supplier_id is None:
+        raise ConversionError(MISSING_SUBCONTRACT_SUPPLIER,
+                              "Set a subcontract supplier on the planned order before converting.")
+    if (po.quantity or ZERO) <= ZERO:
+        raise ConversionError(INVALID_QUANTITY, "Planned order quantity must be greater than zero.")
+
+    with transaction.atomic():
+        req = PurchaseRequisition.objects.create(
+            tenant=po.tenant,
+            req_number=_unique_number(PurchaseRequisition, "req_number", "SCR", po.tenant),
+            preferred_supplier=po.supplier, needed_by=po.required_date,
+            justification=f"Subcontract service from MRP planned order {po.planned_order_number}.",
+            status="DRAFT", requested_by=user)
+        PurchaseRequisitionLine.objects.create(
+            requisition=req, product=po.product, quantity=po.quantity,
+            estimated_unit_cost=_subcontract_unit_cost(po),
+            notes=f"Subcontract service - MRP {po.planned_order_number}", mrp_planned_order=po)
+        _mark_converted(po, user, created_purchase_requisition=req)
+    return req, True, f"Subcontract requisition {req.req_number} created."
+
+
+def convert_subcontract_to_purchase_order(po, user):
+    from core.models import PurchaseOrder, PurchaseOrderLine
+
+    if po.source_type != "SUBCONTRACT":
+        raise ConversionError(WRONG_TARGET, "Only SUBCONTRACT planned orders convert to a subcontract PO.")
+    if po.created_purchase_order_id:
+        return po.created_purchase_order, False, "Purchase order already created for this subcontract order."
+    _guard_status(po)
+    if po.supplier_id is None:
+        raise ConversionError(MISSING_SUBCONTRACT_SUPPLIER,
+                              "Set a subcontract supplier on the planned order before converting.")
+    if (po.quantity or ZERO) <= ZERO:
+        raise ConversionError(INVALID_QUANTITY, "Planned order quantity must be greater than zero.")
+
+    with transaction.atomic():
+        order = PurchaseOrder.objects.create(
+            tenant=po.tenant,
+            po_number=_unique_number(PurchaseOrder, "po_number", "SCPO", po.tenant),
+            supplier=po.supplier, site=po.site, status="DRAFT",
+            expected_date=po.required_date,
+            notes=f"Subcontract service from MRP planned order {po.planned_order_number}.")
+        PurchaseOrderLine.objects.create(
+            po=order, product=po.product, ordered_qty=po.quantity, unit_cost=_subcontract_unit_cost(po))
+        _mark_converted(po, user, created_purchase_order=order)
+    return order, True, f"Draft subcontract purchase order {order.po_number} created."
 
 
 # --------------------------------------------------------------------------- #

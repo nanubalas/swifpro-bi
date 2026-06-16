@@ -1117,15 +1117,24 @@ class RoutingOperationForm(TenantModelForm):
         fields = [
             "operation_sequence", "operation_name", "work_centre",
             "setup_minutes", "run_minutes_per_unit", "queue_minutes", "move_minutes",
-            "yield_percent", "is_subcontract_operation", "notes",
+            "yield_percent", "is_subcontract_operation", "supplier", "subcontract_unit_cost",
+            "notes",
         ]
 
     def __init__(self, *args, routing=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._routing = routing
+        # Optional subcontract fields: blank is allowed (defaults to none / 0).
+        self.fields["supplier"].required = False
+        self.fields["subcontract_unit_cost"].required = False
 
     def clean_yield_percent(self):
         v = self.cleaned_data.get("yield_percent")
         if v is not None and v <= 0:
             raise forms.ValidationError("Yield percent must be greater than zero.")
         return v
+
+    def clean_subcontract_unit_cost(self):
+        from decimal import Decimal as _D
+        v = self.cleaned_data.get("subcontract_unit_cost")
+        return v if v is not None else _D("0.00")

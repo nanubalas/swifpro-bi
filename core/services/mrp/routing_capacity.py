@@ -168,12 +168,11 @@ def apply_routing_schedule(run, profile, po):
 def _validate_operations(run, routing, profile, po, ops):
     product, site = profile.product, profile.site
     for op in ops:
+        # Subcontract operations are planned as procurement (see
+        # plan_subcontract_operations) and excluded from internal capacity, so
+        # they need no work-centre validation here.
         if op.is_subcontract_operation:
-            mrp_exc.raise_exception(
-                run, "SUBCONTRACT_OPERATION_NOT_SUPPORTED",
-                f"Operation {op.operation_sequence} of {product.sku} is a subcontract step; "
-                f"not scheduled this phase.",
-                product=product, site=site, planned_order=po, dedupe_key=("subop", op.id))
+            continue
         wc = op.work_centre
         if wc is None:
             mrp_exc.raise_exception(
@@ -211,6 +210,8 @@ def calculate_work_centre_load(run):
         if day is None:
             continue
         for op in routing.operations.select_related("work_centre").all():
+            if op.is_subcontract_operation:
+                continue  # external work never loads an internal work centre
             wc = op.work_centre
             if wc is None or not wc.is_active:
                 continue
@@ -292,4 +293,46 @@ def create_work_order_operations(work_order, routing):
             setup_minutes=op.setup_minutes, run_minutes_per_unit=op.run_minutes_per_unit,
             planned_hours=hours, planned_start=start, planned_end=end,
             status="PLANNED", source_routing_operation=op, notes=op.notes))
+    return created
+
+
+# --------------------------------------------------------------------------- #
+# Subcontract routing operations (Phase 11, Scenario B)
+# --------------------------------------------------------------------------- #
+def plan_subcontract_operations(run, profile, parent_po):
+    """For each subcontract operation on a MAKE item's active routing, create a
+    linked SUBCONTRACT planned order (the external service to procure). Supplier
+    comes from the operation, falling back to the planning profile's default; a
+    missing supplier is reported, never fatal. Returns the created orders."""
+    from core.models import MRPPlannedOrder
+    from core.services.mrp.numbering import next_planned_order_number
+
+    routing = find_active_routing(profile.product, profile.site, parent_po.required_date)
+    if routing is None:
+        return []
+
+    created = []
+    for op in routing.operations.select_related("supplier").order_by("operation_sequence"):
+        if not op.is_subcontract_operation:
+            continue
+        supplier = op.supplier or profile.default_supplier
+        required = parent_po.planned_release_date or parent_po.required_date
+        sub_po = MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=run.tenant, product=profile.product, site=profile.site,
+            source_type="SUBCONTRACT",
+            planned_order_number=next_planned_order_number(run.tenant),
+            quantity=parent_po.quantity, required_date=required,
+            planned_receipt_date=required, planned_release_date=required,
+            supplier=supplier, parent_planned_order=parent_po,
+            status="SUGGESTED", action_type="CREATE", exception_level="NONE",
+            created_by=run.started_by)
+        if supplier is None:
+            mrp_exc.raise_exception(
+                run, "SUBCONTRACT_OPERATION_SUPPLIER_MISSING",
+                f"Subcontract operation {op.operation_sequence} of {profile.product.sku} has no "
+                f"supplier (set one on the operation or as the item's default supplier).",
+                product=profile.product, site=profile.site, planned_order=sub_po,
+                dedupe_key=("subop_supplier", op.id))
+            mrp_exc.bump_level(sub_po, "WARNING")
+        created.append(sub_po)
     return created

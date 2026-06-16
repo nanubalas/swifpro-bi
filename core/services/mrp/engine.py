@@ -30,7 +30,9 @@ from core.services.mrp.numbering import next_planned_order_number
 
 ZERO = Decimal("0.00")
 _MAX_ORDERS_PER_BUCKET = 200  # guard against runaway loops when max cap is tiny
-_PLANNABLE_SOURCE_TYPES = ["BUY", "MAKE", "TRANSFER"]  # PHANTOM is only planned as a component
+# PHANTOM is only planned as a component; SUBCONTRACT is procured like BUY but
+# converts to a subcontract requisition/PO (Phase 11).
+_PLANNABLE_SOURCE_TYPES = ["BUY", "MAKE", "TRANSFER", "SUBCONTRACT"]
 
 
 def run_mrp(run, user=None):
@@ -172,6 +174,7 @@ def _plan_profile(run, profile):
             if profile.source_type == "MAKE":
                 from core.services.mrp import routing_capacity
                 routing_capacity.apply_routing_schedule(run, profile, po)
+                routing_capacity.plan_subcontract_operations(run, profile, po)
                 bom_explosion.explode_and_plan(
                     run, product, site, po.quantity, po.planned_release_date, po,
                     depth=0, ancestors=frozenset({product.id}))
@@ -215,7 +218,7 @@ def create_planned_order(run, profile, qty, required_date, lead, source_type,
         planned_order_number=next_planned_order_number(run.tenant),
         quantity=qty, required_date=required_date,
         planned_receipt_date=receipt, planned_release_date=release,
-        supplier=(profile.default_supplier if source_type == "BUY" else None),
+        supplier=(profile.default_supplier if source_type in ("BUY", "SUBCONTRACT") else None),
         transfer_from_site=transfer_from_site,
         parent_planned_order=parent_po,
         status="SUGGESTED", action_type="CREATE", exception_level="NONE",
@@ -226,12 +229,18 @@ def create_planned_order(run, profile, qty, required_date, lead, source_type,
 def order_exceptions(run, profile, po, start):
     product, site = profile.product, profile.site
 
-    # A supplier is only relevant for BUY orders.
+    # A supplier is only relevant for BUY / SUBCONTRACT orders.
     if po.source_type == "BUY" and profile.default_supplier_id is None:
         mrp_exc.raise_exception(
             run, "MISSING_SUPPLIER",
             f"No default supplier for {product.sku} at {site.name}; planner must choose one.",
             product=product, site=site, planned_order=po, dedupe_key=("supplier", profile.id))
+        mrp_exc.bump_level(po, "WARNING")
+    if po.source_type == "SUBCONTRACT" and profile.default_supplier_id is None:
+        mrp_exc.raise_exception(
+            run, "MISSING_SUBCONTRACT_SUPPLIER",
+            f"No subcontract supplier for {product.sku} at {site.name}; planner must choose one.",
+            product=product, site=site, planned_order=po, dedupe_key=("subsupplier", profile.id))
         mrp_exc.bump_level(po, "WARNING")
 
     if (profile.lead_time_days or 0) == 0:

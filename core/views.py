@@ -7683,7 +7683,7 @@ def mrp_workbench(request, run_id):
         "cards": cards, "sites": sites, "suppliers": suppliers, "today": today,
         "filters": f, "result_count": len(planned_orders),
         "querystring": _workbench_querystring(f),
-        "source_types": ["BUY", "MAKE", "TRANSFER"],
+        "source_types": ["BUY", "MAKE", "TRANSFER", "SUBCONTRACT"],
         "statuses": ["SUGGESTED", "FIRMED", "CONVERTED", "IGNORED", "CANCELLED", "EXPIRED"],
         "exception_levels": ["INFO", "WARNING", "CRITICAL"],
         "demand_sources": [
@@ -8180,7 +8180,15 @@ def work_order_detail(request, wo_id):
                                          "released_by", "closed_by"),
         id=wo_id, tenant=tenant)
     materials = wo.materials.select_related("component", "source_location", "bom_line").all()
-    operations = wo.operations.select_related("work_centre").order_by("operation_sequence")
+    operations = wo.operations.select_related("work_centre", "source_routing_operation").order_by("operation_sequence")
+    # Subcontract planned orders linked to this work order's source MRP order, with
+    # any PR/PO they were converted into (Phase 11).
+    subcontract_links = []
+    if wo.source_mrp_planned_order_id:
+        from core.models import MRPPlannedOrder
+        subcontract_links = list(MRPPlannedOrder.objects.filter(
+            parent_planned_order_id=wo.source_mrp_planned_order_id, source_type="SUBCONTRACT")
+            .select_related("supplier", "created_purchase_requisition", "created_purchase_order"))
     movements = list(InventoryMovement.objects
                      .filter(tenant=tenant, ref_type="WORK_ORDER", ref_id=wo.work_order_number)
                      .select_related("product", "location", "journal_entry").order_by("created_at"))
@@ -8195,6 +8203,7 @@ def work_order_detail(request, wo_id):
     gl_configured = wop.get_profile(tenant, wo.site) is not None
     return render(request, "work_orders/detail.html", {
         "tenant": tenant, "wo": wo, "materials": materials, "operations": operations,
+        "subcontract_links": subcontract_links,
         "movements": movements, "journals": journals, "remaining_wip": remaining_wip,
         "gl_configured": gl_configured,
     })
