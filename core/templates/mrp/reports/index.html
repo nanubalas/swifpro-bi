@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}MRP Reports{% endblock %}
+{% block back_url %}{% url 'dashboard' %}{% endblock %}
+{% block body %}
+<div class="mb-4">
+  <h2 class="fw-bold mb-1"><i class="bi bi-file-earmark-bar-graph me-2"></i>MRP Reports</h2>
+  <div class="text-muted">Planning, forecast, capacity and work-order reports with CSV / Excel export.</div>
+</div>
+
+{% if summary %}
+<h5 class="fw-semibold mb-2">Latest run &middot; {{ latest.run_number }}</h5>
+<div class="row g-2 mb-4">
+  {% with s=summary %}
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Planned</div><div class="fs-5 fw-bold">{{ s.total_planned }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Buy</div><div class="fs-5 fw-bold">{{ s.buy }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Make</div><div class="fs-5 fw-bold">{{ s.make }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Transfer</div><div class="fs-5 fw-bold">{{ s.transfer }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Subcontract</div><div class="fs-5 fw-bold">{{ s.subcontract }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Converted</div><div class="fs-5 fw-bold">{{ s.converted }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Critical exc.</div><div class="fs-5 fw-bold text-danger">{{ s.critical_exceptions }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Past-due rel.</div><div class="fs-5 fw-bold">{{ s.past_due_releases }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Capacity overload</div><div class="fs-5 fw-bold">{{ s.capacity_overload_count }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Forecast dmd</div><div class="fs-5 fw-bold">{{ s.forecast_demand_qty }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Sales dmd</div><div class="fs-5 fw-bold">{{ s.sales_demand_qty }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Shortage qty</div><div class="fs-5 fw-bold">{{ s.shortage_qty }}</div></div></div></div>
+  {% endwith %}
+</div>
+{% endif %}
+
+<div class="row g-3">
+  {% with rid=latest.id %}
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_planned_orders' %}{% if rid %}?run={{ rid }}{% endif %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-clipboard-plus me-2"></i>Planned Orders</h6><div class="small text-muted">All planned orders with source type, status and linked documents.</div></div></a></div>
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_demand_supply' %}{% if rid %}?run={{ rid }}{% endif %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-graph-up me-2"></i>Demand vs Supply</h6><div class="small text-muted">Time-phased demand, supply and projected availability.</div></div></a></div>
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_shortage' %}{% if rid %}?run={{ rid }}{% endif %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-exclamation-octagon me-2"></i>Shortages</h6><div class="small text-muted">Shortage and past-due exceptions with suggested actions.</div></div></a></div>
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_exceptions' %}{% if rid %}?run={{ rid }}{% endif %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-exclamation-triangle me-2"></i>Exceptions</h6><div class="small text-muted">Every run exception by severity and code.</div></div></a></div>
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_pegging' %}{% if rid %}?run={{ rid }}{% endif %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-link-45deg me-2"></i>Pegging</h6><div class="small text-muted">Demand-to-planned-order supply chains.</div></div></a></div>
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_forecast_consumption' %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-graph-up-arrow me-2"></i>Forecast Consumption</h6><div class="small text-muted">Forecast, consumed and remaining quantity by version.</div></div></a></div>
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'capacity_load' %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-bar-chart-steps me-2"></i>Capacity Load</h6><div class="small text-muted">Work-centre available vs scheduled hours by day.</div></div></a></div>
+  <div class="col-md-4"><a class="card text-decoration-none h-100" href="{% url 'mrp_report_work_order_cost' %}"><div class="card-body"><h6 class="fw-semibold"><i class="bi bi-cash-coin me-2"></i>Work Order Cost</h6><div class="small text-muted">Material, labour, overhead, scrap, FG and variance cost.</div></div></a></div>
+  {% endwith %}
+</div>
+{% endblock %}

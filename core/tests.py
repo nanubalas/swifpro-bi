@@ -14357,3 +14357,279 @@ class MRPPhase14SchedulingTests(TestCase):
         resp = self.client.post("/shop-calendars/new/", {"code": "MGR", "name": "Manager cal"})
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(ShopCalendar.objects.filter(tenant=self.tenant, code="MGR").exists())
+
+
+class MRPPhase15ReportsTests(TestCase):
+    """Phase 15: MRP / planning reports, CSV exports and analytics."""
+
+    def setUp(self):
+        import datetime
+        from core.models import (OrgMembership, Site, Customer, MRPRun, MRPDemand, MRPSupply,
+                                  MRPPlannedOrder, MRPPegging, MRPException, PurchaseRequisition,
+                                  WorkOrder, ForecastVersion, ForecastLine, CustomerOrder,
+                                  CustomerOrderLine)
+        from core.services.mrp import next_run_number, next_planned_order_number
+        self.tenant = Tenant.objects.create(name="Rep Co")
+        self.a = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.b = Site.objects.create(tenant=self.tenant, name="Depot")
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material")
+        self.sub = Product.objects.create(tenant=self.tenant, sku="SUB-001", name="Subcontracted")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.admin = User.objects.create_user("repadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.purchasing = User.objects.create_user("reppur", password="pw")
+        OrgMembership.objects.create(user=self.purchasing, tenant=self.tenant, role="PURCHASING", is_default=True)
+        self.warehouse = User.objects.create_user("repwh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.sales = User.objects.create_user("repsales", password="pw")
+        OrgMembership.objects.create(user=self.sales, tenant=self.tenant, role="SALES", is_default=True)
+
+        self.req = datetime.date(2026, 7, 15)
+        self.run = MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant), site_scope=None,
+            planning_start_date=datetime.date(2026, 6, 1), planning_end_date=datetime.date(2026, 8, 31),
+            status="COMPLETED_WITH_EXCEPTIONS")
+
+        def po(source, product, supplier=None, transfer_from=None, status="SUGGESTED"):
+            return MRPPlannedOrder.objects.create(
+                mrp_run=self.run, tenant=self.tenant, product=product, site=self.a, source_type=source,
+                planned_order_number=next_planned_order_number(self.tenant), quantity=Decimal("10"),
+                required_date=self.req, planned_receipt_date=self.req, planned_release_date=self.req,
+                supplier=supplier, transfer_from_site=transfer_from, status=status)
+
+        self.buy_po = po("BUY", self.rm, supplier=self.supplier, status="CONVERTED")
+        self.make_po = po("MAKE", self.fg)
+        self.transfer_po = po("TRANSFER", self.fg, transfer_from=self.b)
+        self.sub_po = po("SUBCONTRACT", self.sub, supplier=self.supplier)
+
+        # A converted BUY order with a linked requisition.
+        self.pr = PurchaseRequisition.objects.create(
+            tenant=self.tenant, req_number="PR-REP-1", preferred_supplier=self.supplier, status="DRAFT")
+        from django.utils import timezone as _tz
+        self.buy_po.created_purchase_requisition = self.pr
+        self.buy_po.converted_by = self.admin
+        self.buy_po.converted_at = _tz.now()
+        self.buy_po.save()
+
+        # Demands of each type for FG @ site A.
+        def dem(dtype, qty, src=""):
+            return MRPDemand.objects.create(
+                mrp_run=self.run, tenant=self.tenant, product=self.fg, site=self.a, demand_type=dtype,
+                source_document_id=src, required_date=self.req, quantity=Decimal(qty),
+                open_quantity=Decimal(qty))
+        self.sales_dem = dem("SALES_ORDER", "70", "SO-1")
+        self.forecast_dem = dem("FORECAST", "30", "ForecastVersion")
+        dem("SAFETY_STOCK", "5")
+        dem("WORK_ORDER_COMPONENT", "20")
+        dem("TRANSFER_REQUEST", "8")
+
+        # Supplies of each type for FG @ site A.
+        def sup(stype, qty):
+            return MRPSupply.objects.create(
+                mrp_run=self.run, tenant=self.tenant, product=self.fg, site=self.a, supply_type=stype,
+                receipt_date=self.req, quantity=Decimal(qty), available_quantity=Decimal(qty))
+        sup("ON_HAND", "12")
+        sup("PURCHASE_ORDER", "15")
+        sup("PURCHASE_REQUISITION", "5")
+        sup("TRANSFER_ORDER", "4")
+
+        # Pegging: MAKE planned order covers sales then forecast.
+        MRPPegging.objects.create(tenant=self.tenant, planned_order=self.make_po, demand=self.sales_dem,
+                                  pegged_quantity=Decimal("70"), required_date=self.req,
+                                  supply_date=self.req, shortage_quantity=Decimal("0"))
+        MRPPegging.objects.create(tenant=self.tenant, planned_order=self.make_po, demand=self.forecast_dem,
+                                  pegged_quantity=Decimal("25"), required_date=self.req,
+                                  supply_date=self.req, shortage_quantity=Decimal("5"))
+
+        # Exceptions: one critical shortage, one warning, one capacity overload.
+        MRPException.objects.create(mrp_run=self.run, tenant=self.tenant, product=self.fg, site=self.a,
+                                    planned_order=self.make_po, exception_code="SHORTAGE",
+                                    severity="CRITICAL", message="Net shortage of 5.",
+                                    recommended_action="Expedite supply.")
+        MRPException.objects.create(mrp_run=self.run, tenant=self.tenant, product=self.rm, site=self.a,
+                                    exception_code="MISSING_LEAD_TIME", severity="WARNING",
+                                    message="No lead time.")
+        MRPException.objects.create(mrp_run=self.run, tenant=self.tenant, site=self.a,
+                                    exception_code="CAPACITY_OVERLOAD", severity="WARNING",
+                                    message="Assembly overloaded by 4 hours on 2026-07-15.")
+
+        # Forecast version + line + a confirmed sales order to consume it.
+        self.version = ForecastVersion.objects.create(
+            tenant=self.tenant, code="JUNE", name="June Baseline", status="ACTIVE",
+            consumption_method="SAME_BUCKET", start_date=datetime.date(2026, 7, 1),
+            end_date=datetime.date(2026, 7, 31))
+        ForecastLine.objects.create(tenant=self.tenant, forecast_version=self.version, product=self.fg,
+                                    site=self.a, forecast_date=self.req, bucket_type="MONTHLY",
+                                    quantity=Decimal("100"), remaining_quantity=Decimal("100"))
+        o = CustomerOrder.objects.create(tenant=self.tenant, customer=self.customer, site=self.a,
+                                         order_number="SO-FC", status="CONFIRMED",
+                                         order_date=datetime.date(2026, 7, 10))
+        CustomerOrderLine.objects.create(order=o, product=self.fg, qty=Decimal("70"))
+
+        # A completed work order with full cost breakdown.
+        self.wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-REP-1", site=self.a, product=self.fg,
+            quantity=Decimal("10"), quantity_completed=Decimal("9"), quantity_scrapped=Decimal("1"),
+            status="COMPLETED", wip_material_cost=Decimal("40"), wip_labour_cost=Decimal("120"),
+            wip_overhead_cost=Decimal("60"), scrap_cost=Decimal("6"),
+            finished_goods_cost=Decimal("214"), source_mrp_planned_order=self.make_po)
+
+    # =========================== landing + planned orders ===========================
+    def test_reports_index_loads(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "MRP Reports")
+        self.assertContains(resp, self.run.run_number)
+
+    def test_planned_orders_report_loads(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, self.make_po.planned_order_number)
+        self.assertContains(resp, self.pr.req_number)   # linked document
+
+    def test_planned_orders_filter_source_type(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d&source_type=BUY" % self.run.id)
+        self.assertContains(resp, self.buy_po.planned_order_number)
+        self.assertNotContains(resp, self.make_po.planned_order_number)
+
+    def test_planned_orders_csv_export(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d&export=1" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp["Content-Type"].startswith("text/csv"))
+        body = resp.content.decode()
+        self.assertIn(self.make_po.planned_order_number, body)
+        self.assertIn("Planned order", body)  # header
+
+    def test_planned_orders_csv_respects_filter(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d&source_type=BUY&export=1" % self.run.id)
+        body = resp.content.decode()
+        self.assertIn(self.buy_po.planned_order_number, body)
+        self.assertNotIn(self.make_po.planned_order_number, body)
+
+    # =========================== demand vs supply ===========================
+    def test_demand_supply_report_loads(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/demand-supply/?run=%d" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        for header in ["Sales", "Forecast", "Safety stock", "PO", "Transfer supply",
+                       "Planned supply", "Projected available"]:
+            self.assertContains(resp, header)
+        self.assertContains(resp, self.fg.sku)
+
+    # =========================== shortage ===========================
+    def test_shortage_report_loads_with_exception(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/shortages/?run=%d" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, self.make_po.planned_order_number)
+        self.assertContains(resp, "Expedite supply.")
+
+    # =========================== exceptions ===========================
+    def test_exception_filter_by_severity(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/exceptions/?run=%d&severity=CRITICAL" % self.run.id)
+        self.assertContains(resp, "Shortage")
+        self.assertNotContains(resp, "Missing lead time")
+
+    def test_exception_csv_export(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/exceptions/?run=%d&export=1" % self.run.id)
+        self.assertTrue(resp["Content-Type"].startswith("text/csv"))
+        self.assertIn("Net shortage of 5.", resp.content.decode())
+
+    # =========================== pegging ===========================
+    def test_pegging_report_shows_links(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/pegging/?run=%d" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, self.make_po.planned_order_number)
+        self.assertContains(resp, "Sales order")
+        self.assertContains(resp, "Forecast")
+
+    # =========================== forecast consumption ===========================
+    def test_forecast_consumption_report(self):
+        from core.services.mrp import reports as mrep
+        data = mrep.forecast_consumption_report(self.version, {})
+        # forecast 100, sales 70 same month -> consumed 70, remaining 30
+        row = data["rows"][0]
+        self.assertEqual(row[6], Decimal("70.00"))   # consumed
+        self.assertEqual(row[7], Decimal("30.00"))   # remaining
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/forecast-consumption/?version=%d" % self.version.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, self.version.code)
+
+    # =========================== capacity load ===========================
+    def test_capacity_load_csv_export(self):
+        from core.models import WorkCentre
+        WorkCentre.objects.create(tenant=self.tenant, site=self.a, code="ASM", name="Assembly",
+                                  capacity_hours_per_day=Decimal("8"), is_active=True)
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/capacity-load/?export=1&start=2026-07-13&end=2026-07-17")
+        self.assertTrue(resp["Content-Type"].startswith("text/csv"))
+        self.assertIn("ASM", resp.content.decode())
+
+    # =========================== work order cost ===========================
+    def test_work_order_cost_report(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/work-order-cost/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, self.wo.work_order_number)
+        for header in ["Material WIP", "Labour WIP", "Overhead WIP", "Scrap cost", "Finished goods cost"]:
+            self.assertContains(resp, header)
+        self.assertContains(resp, "120")  # labour cost value
+
+    def test_work_order_cost_csv_export(self):
+        self.client.login(username="repadmin", password="pw")
+        resp = self.client.get("/mrp/reports/work-order-cost/?export=1")
+        self.assertTrue(resp["Content-Type"].startswith("text/csv"))
+        self.assertIn("WO-REP-1", resp.content.decode())
+
+    # =========================== tenant scoping ===========================
+    def test_csv_respects_tenant_scoping(self):
+        from core.models import OrgMembership, MRPRun, MRPPlannedOrder
+        from core.services.mrp import next_run_number, next_planned_order_number
+        other = Tenant.objects.create(name="Other Co")
+        osite = other.sites.first() if hasattr(other, "sites") else None
+        from core.models import Site
+        osite = Site.objects.filter(tenant=other).first()
+        oprod = Product.objects.create(tenant=other, sku="OTHER-1", name="Other")
+        orun = MRPRun.objects.create(tenant=other, run_number=next_run_number(other),
+                                     planning_start_date=self.req, planning_end_date=self.req)
+        opo = MRPPlannedOrder.objects.create(
+            mrp_run=orun, tenant=other, product=oprod, site=osite, source_type="BUY",
+            planned_order_number=next_planned_order_number(other), quantity=Decimal("1"),
+            required_date=self.req, status="SUGGESTED")
+        self.client.login(username="repadmin", password="pw")  # admin of self.tenant
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d&export=1" % self.run.id)
+        self.assertNotIn(opo.planned_order_number, resp.content.decode())
+
+    # =========================== permissions ===========================
+    def test_view_only_user_can_view(self):
+        self.client.login(username="repwh", password="pw")  # Warehouse: VIEW_MRP_REPORTS
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_unauthorised_cannot_export(self):
+        self.client.login(username="repwh", password="pw")  # Warehouse: view but not export
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d&export=1" % self.run.id)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_export_user_can_export(self):
+        self.client.login(username="reppur", password="pw")  # Purchasing: VIEW + EXPORT
+        resp = self.client.get("/mrp/reports/planned-orders/?run=%d&export=1" % self.run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp["Content-Type"].startswith("text/csv"))
+
+    def test_no_perms_blocked(self):
+        self.client.login(username="repsales", password="pw")  # Sales: no MRP report perms
+        resp = self.client.get("/mrp/reports/")
+        self.assertEqual(resp.status_code, 403)

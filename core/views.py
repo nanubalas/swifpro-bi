@@ -61,6 +61,7 @@ from core.services.inventory import apply_movement, reserve_stock, release_reser
 from core.services.bom import explode_product
 from core.services.gl import post_customer_invoice, post_supplier_invoice, post_payment, post_inventory_receipt, post_cogs, post_expense, post_credit_note
 from core.services import reports as reports_service
+from core.services.mrp import reports as mrp_reports_mod
 from core.services import vat as vat_service
 from core.services import importer as importer_service
 from django.db.utils import OperationalError
@@ -8334,24 +8335,285 @@ def capacity_load(request):
         centres = centres.filter(id=wc_id)
     centres = centres.order_by("code")
 
+    # CSV / XLSX export of the load grid (gated by EXPORT_MRP_REPORTS).
+    if f.get("export"):
+        from django.core.exceptions import PermissionDenied
+        if not (request.user.is_superuser
+                or permissions_mod.EXPORT_MRP_REPORTS in _effective_perms(request)):
+            raise PermissionDenied("You do not have permission to export reports.")
+        export = mrp_reports_mod.capacity_load_export(
+            tenant, {"site": site_id, "work_centre": wc_id, "start": start, "end": end})
+        return _export_response(request, "capacity-load.csv", export["columns"], export["rows"],
+                                sheet_title="Capacity load")
+
     load = []
+    totals = {"available": Decimal("0.00"), "scheduled": Decimal("0.00"), "overload": Decimal("0.00")}
+    overloaded_days = 0
     for wc in centres:
         rows = scheduling.calculate_daily_load(wc, start, end)
         load.append({"work_centre": wc, "rows": rows,
                      "overloaded": any(r["overload"] > 0 for r in rows)})
+        for r in rows:
+            totals["available"] += r["available"]
+            totals["scheduled"] += r["scheduled"]
+            totals["overload"] += r["overload"]
+            if r["overload"] > 0:
+                overloaded_days += 1
+    avg_util = (totals["scheduled"] / totals["available"] * Decimal("100")).quantize(Decimal("0.1")) \
+        if totals["available"] > 0 else Decimal("0.0")
 
     from core.models import Site
     sites = Site.objects.filter(tenant=tenant).order_by("name")
     all_centres = WorkCentre.objects.filter(tenant=tenant, is_active=True).order_by("code")
+    from urllib.parse import urlencode
+    export_qs = urlencode({**{k: v for k, v in f.items() if k != "export"}, "export": "1"})
     return render(request, "manufacturing/capacity_load.html", {
         "tenant": tenant, "load": load, "start": start, "end": end,
         "sites": sites, "all_centres": all_centres, "filters": f,
+        "totals": totals, "avg_util": avg_util, "overloaded_days": overloaded_days,
+        "export_qs": export_qs,
+        "can_export": (request.user.is_superuser
+                       or permissions_mod.EXPORT_MRP_REPORTS in _effective_perms(request)),
     })
 
 
 def _effective_perms(request):
     from core.access import get_effective_permissions
     return get_effective_permissions(request)
+
+
+# ===========================================================================
+# MRP / planning reports + CSV export (Phase 15)
+# ===========================================================================
+
+def _latest_run(tenant, run_id=None):
+    from core.models import MRPRun
+    qs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    if run_id:
+        return qs.filter(id=run_id).first() or qs.first()
+    return qs.first()
+
+
+def _report_export_or_render(request, *, title, data, export_name, controls=None,
+                             kpis=None, run=None, runs=None):
+    """Export (CSV/XLSX) when ?export is set - gated by EXPORT_MRP_REPORTS - else
+    render the shared report template."""
+    if request.GET.get("export"):
+        from django.core.exceptions import PermissionDenied
+        if not (request.user.is_superuser
+                or permissions_mod.EXPORT_MRP_REPORTS in _effective_perms(request)):
+            raise PermissionDenied("You do not have permission to export reports.")
+        return _export_response(request, f"{export_name}.csv", data["columns"], data["rows"],
+                                sheet_title=title[:31])
+    from urllib.parse import urlencode
+    base = {k: v for k, v in request.GET.items() if k != "export"}
+    export_qs = urlencode({**base, "export": "1"})
+    return render(request, "mrp/reports/report.html", {
+        "tenant": _get_default_tenant(request), "title": title,
+        "columns": data["columns"], "rows": data["rows"],
+        "controls": controls or [], "kpis": kpis or [], "run": run, "runs": runs,
+        "export_qs": export_qs, "result_count": len(data["rows"]),
+        "can_export": (request.user.is_superuser
+                       or permissions_mod.EXPORT_MRP_REPORTS in _effective_perms(request)),
+    })
+
+
+def _site_options(tenant):
+    from core.models import Site
+    return [("", "All sites")] + [(str(s.id), s.name) for s in
+                                  Site.objects.filter(tenant=tenant).order_by("name")]
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_reports_index(request):
+    from core.models import MRPRun, ForecastVersion
+    tenant = _get_default_tenant(request)
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")[:50]
+    latest = runs[0] if runs else None
+    versions = ForecastVersion.objects.filter(tenant=tenant).order_by("-created_at")[:50]
+    summary = mrp_reports_mod.mrp_run_summary(latest) if latest else None
+    return render(request, "mrp/reports/index.html", {
+        "tenant": tenant, "runs": runs, "latest": latest, "versions": versions,
+        "summary": summary,
+    })
+
+
+def _run_controls(request, tenant, run, runs, extra=None):
+    controls = [{
+        "name": "run", "label": "MRP run", "type": "select",
+        "options": [(str(r.id), r.run_number) for r in runs], "value": str(run.id) if run else "",
+    }]
+    controls += (extra or [])
+    return controls
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_report_planned_orders(request):
+    tenant = _get_default_tenant(request)
+    from core.models import MRPRun
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    run = _latest_run(tenant, request.GET.get("run"))
+    if run is None:
+        return render(request, "mrp/reports/empty.html", {"tenant": tenant, "title": "Planned orders"})
+    f = {k: request.GET.get(k) for k in ("source_type", "status", "site", "supplier",
+                                         "exception_level", "req_from", "req_to")}
+    data = mrp_reports_mod.planned_order_report(run, f)
+    controls = _run_controls(request, tenant, run, runs, extra=[
+        {"name": "source_type", "label": "Source", "type": "select",
+         "options": [("", "All"), ("BUY", "Buy"), ("MAKE", "Make"), ("TRANSFER", "Transfer"),
+                     ("SUBCONTRACT", "Subcontract")], "value": f.get("source_type") or ""},
+        {"name": "status", "label": "Status", "type": "select",
+         "options": [("", "All")] + [(s, s.title()) for s in
+                     ["SUGGESTED", "FIRMED", "CONVERTED", "IGNORED", "CANCELLED", "EXPIRED"]],
+         "value": f.get("status") or ""},
+        {"name": "site", "label": "Site", "type": "select",
+         "options": _site_options(tenant), "value": f.get("site") or ""},
+    ])
+    return _report_export_or_render(request, title="Planned orders", data=data,
+                                    export_name="mrp-planned-orders", controls=controls,
+                                    run=run, runs=runs)
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_report_demand_supply(request):
+    tenant = _get_default_tenant(request)
+    from core.models import MRPRun
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    run = _latest_run(tenant, request.GET.get("run"))
+    if run is None:
+        return render(request, "mrp/reports/empty.html", {"tenant": tenant, "title": "Demand vs supply"})
+    f = {"site": request.GET.get("site"), "product": request.GET.get("product")}
+    data = mrp_reports_mod.demand_supply_report(run, f)
+    controls = _run_controls(request, tenant, run, runs, extra=[
+        {"name": "site", "label": "Site", "type": "select",
+         "options": _site_options(tenant), "value": f.get("site") or ""}])
+    return _report_export_or_render(request, title="Demand vs supply", data=data,
+                                    export_name="mrp-demand-supply", controls=controls,
+                                    run=run, runs=runs)
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_report_shortage(request):
+    tenant = _get_default_tenant(request)
+    from core.models import MRPRun
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    run = _latest_run(tenant, request.GET.get("run"))
+    if run is None:
+        return render(request, "mrp/reports/empty.html", {"tenant": tenant, "title": "Shortages"})
+    f = {"site": request.GET.get("site"), "product": request.GET.get("product")}
+    data = mrp_reports_mod.shortage_report(run, f)
+    controls = _run_controls(request, tenant, run, runs, extra=[
+        {"name": "site", "label": "Site", "type": "select",
+         "options": _site_options(tenant), "value": f.get("site") or ""}])
+    return _report_export_or_render(request, title="Shortages", data=data,
+                                    export_name="mrp-shortages", controls=controls,
+                                    run=run, runs=runs)
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_report_exceptions(request):
+    tenant = _get_default_tenant(request)
+    from core.models import MRPRun
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    run = _latest_run(tenant, request.GET.get("run"))
+    if run is None:
+        return render(request, "mrp/reports/empty.html", {"tenant": tenant, "title": "Exceptions"})
+    f = {k: request.GET.get(k) for k in ("severity", "exception_code", "site", "product",
+                                         "resolved", "source_type")}
+    data = mrp_reports_mod.exception_report(run, f)
+    controls = _run_controls(request, tenant, run, runs, extra=[
+        {"name": "severity", "label": "Severity", "type": "select",
+         "options": [("", "All"), ("INFO", "Info"), ("WARNING", "Warning"), ("CRITICAL", "Critical")],
+         "value": f.get("severity") or ""},
+        {"name": "resolved", "label": "Resolved", "type": "select",
+         "options": [("", "Any"), ("yes", "Resolved"), ("no", "Unresolved")],
+         "value": f.get("resolved") or ""},
+        {"name": "site", "label": "Site", "type": "select",
+         "options": _site_options(tenant), "value": f.get("site") or ""},
+    ])
+    return _report_export_or_render(request, title="Exceptions", data=data,
+                                    export_name="mrp-exceptions", controls=controls,
+                                    run=run, runs=runs)
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_report_pegging(request):
+    tenant = _get_default_tenant(request)
+    from core.models import MRPRun
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    run = _latest_run(tenant, request.GET.get("run"))
+    if run is None:
+        return render(request, "mrp/reports/empty.html", {"tenant": tenant, "title": "Pegging"})
+    f = {"site": request.GET.get("site"), "source_type": request.GET.get("source_type")}
+    data = mrp_reports_mod.pegging_report(run, f)
+    controls = _run_controls(request, tenant, run, runs, extra=[
+        {"name": "source_type", "label": "Source", "type": "select",
+         "options": [("", "All"), ("BUY", "Buy"), ("MAKE", "Make"), ("TRANSFER", "Transfer"),
+                     ("SUBCONTRACT", "Subcontract")], "value": f.get("source_type") or ""}])
+    return _report_export_or_render(request, title="Pegging", data=data,
+                                    export_name="mrp-pegging", controls=controls,
+                                    run=run, runs=runs)
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_report_forecast_consumption(request):
+    tenant = _get_default_tenant(request)
+    from core.models import ForecastVersion
+    versions = ForecastVersion.objects.filter(tenant=tenant).order_by("-created_at")
+    version = None
+    vid = request.GET.get("version")
+    if vid:
+        version = versions.filter(id=vid).first()
+    version = version or versions.first()
+    if version is None:
+        return render(request, "mrp/reports/empty.html",
+                      {"tenant": tenant, "title": "Forecast consumption"})
+    f = {"site": request.GET.get("site"), "product": request.GET.get("product")}
+    data = mrp_reports_mod.forecast_consumption_report(version, f)
+    controls = [
+        {"name": "version", "label": "Forecast version", "type": "select",
+         "options": [(str(v.id), v.code) for v in versions], "value": str(version.id)},
+        {"name": "site", "label": "Site", "type": "select",
+         "options": _site_options(tenant), "value": f.get("site") or ""},
+    ]
+    return _report_export_or_render(request, title="Forecast consumption", data=data,
+                                    export_name="forecast-consumption", controls=controls)
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_WORK_ORDER)
+def mrp_report_work_order_cost(request):
+    tenant = _get_default_tenant(request)
+    f = {k: request.GET.get(k) for k in ("site", "product", "status", "date_from", "date_to",
+                                         "has_variance", "has_scrap")}
+    data = mrp_reports_mod.work_order_cost_report(tenant, f)
+    kpis = [("Material WIP", data["kpis"].get("wip_material_cost", 0)),
+            ("Labour WIP", data["kpis"].get("wip_labour_cost", 0)),
+            ("Overhead WIP", data["kpis"].get("wip_overhead_cost", 0)),
+            ("Scrap cost", data["kpis"].get("scrap_cost", 0)),
+            ("Finished goods", data["kpis"].get("finished_goods_cost", 0))]
+    controls = [
+        {"name": "status", "label": "Status", "type": "select",
+         "options": [("", "All")] + [(s, s.replace("_", " ").title()) for s in
+                     ["PLANNED", "FIRM", "RELEASED", "PARTIALLY_COMPLETED", "COMPLETED",
+                      "CANCELLED", "CLOSED"]], "value": f.get("status") or ""},
+        {"name": "site", "label": "Site", "type": "select",
+         "options": _site_options(tenant), "value": f.get("site") or ""},
+        {"name": "has_variance", "label": "Has variance", "type": "select",
+         "options": [("", "Any"), ("yes", "Yes")], "value": f.get("has_variance") or ""},
+        {"name": "has_scrap", "label": "Has scrap", "type": "select",
+         "options": [("", "Any"), ("yes", "Yes")], "value": f.get("has_scrap") or ""},
+    ]
+    # Export gating: VIEW_WORK_ORDER can view; export still needs EXPORT_MRP_REPORTS.
+    return _report_export_or_render(request, title="Work order cost", data=data,
+                                    export_name="work-order-cost", controls=controls, kpis=kpis)
 
 
 # ===========================================================================

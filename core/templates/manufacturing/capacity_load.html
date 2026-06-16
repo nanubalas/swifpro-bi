@@ -12,6 +12,20 @@
     <h2 class="fw-bold mb-1"><i class="bi bi-bar-chart-steps me-2"></i>Capacity Load</h2>
     <div class="text-muted">Scheduled load vs available capacity per work centre and day (rough-cut finite view).</div>
   </div>
+  {% if can_export %}
+  <div class="d-flex gap-2 align-self-center">
+    <a class="btn btn-outline-secondary" href="?{{ export_qs }}"><i class="bi bi-filetype-csv me-1"></i> CSV</a>
+    <a class="btn btn-outline-secondary" href="?{{ export_qs }}&amp;format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i> Excel</a>
+  </div>
+  {% endif %}
+</div>
+
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Available h</div><div class="fs-5 fw-bold">{{ totals.available }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Scheduled h</div><div class="fs-5 fw-bold">{{ totals.scheduled }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Overload h</div><div class="fs-5 fw-bold {% if totals.overload > 0 %}text-danger{% endif %}">{{ totals.overload }}</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Avg utilisation</div><div class="fs-5 fw-bold">{{ avg_util }}%</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card"><div class="card-body py-2"><div class="small text-muted text-uppercase">Overloaded days</div><div class="fs-5 fw-bold">{{ overloaded_days }}</div></div></div></div>
 </div>
 
 <div class="card mb-3"><div class="card-body py-3">
