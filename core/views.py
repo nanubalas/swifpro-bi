@@ -8180,7 +8180,11 @@ def work_order_detail(request, wo_id):
                                          "released_by", "closed_by"),
         id=wo_id, tenant=tenant)
     materials = wo.materials.select_related("component", "source_location", "bom_line").all()
-    operations = wo.operations.select_related("work_centre", "source_routing_operation").order_by("operation_sequence")
+    operations = list(wo.operations.select_related("work_centre", "source_routing_operation")
+                      .order_by("operation_sequence"))
+    from core.services.mrp import work_order_labour as wol
+    for op in operations:
+        op.planned_cost = wol.calculate_planned_operation_cost(op)
     # Subcontract planned orders linked to this work order's source MRP order, with
     # any PR/PO they were converted into (Phase 11).
     subcontract_links = []
@@ -8197,13 +8201,16 @@ def work_order_detail(request, wo_id):
     je_ids = [m.journal_entry_id for m in movements if m.journal_entry_id]
     if wo.variance_journal_id:
         je_ids.append(wo.variance_journal_id)
+    # Labour / overhead absorption journals (Phase 13).
+    cost_bookings = list(wo.cost_bookings.select_related("operation", "journal_entry").order_by("id"))
+    je_ids += [b.journal_entry_id for b in cost_bookings if b.journal_entry_id]
     journals = (JournalEntry.objects.filter(id__in=je_ids)
                 .prefetch_related("lines__account").order_by("id"))
-    remaining_wip = (wo.wip_material_cost or Decimal("0.00")) - (wo.finished_goods_cost or Decimal("0.00"))
+    remaining_wip = (wo.total_wip_cost or Decimal("0.00")) - (wo.finished_goods_cost or Decimal("0.00"))
     gl_configured = wop.get_profile(tenant, wo.site) is not None
     return render(request, "work_orders/detail.html", {
         "tenant": tenant, "wo": wo, "materials": materials, "operations": operations,
-        "subcontract_links": subcontract_links,
+        "subcontract_links": subcontract_links, "cost_bookings": cost_bookings,
         "movements": movements, "journals": journals, "remaining_wip": remaining_wip,
         "gl_configured": gl_configured,
     })
@@ -8352,4 +8359,36 @@ def work_order_correct(request, wo_id):
         messages.error(request, str(e))
     except (InvalidOperation, ValueError):
         messages.error(request, "Enter a valid quantity.")
+    return redirect("work_order_detail", wo_id=wo.id)
+
+
+@login_required
+@permission_required(permissions_mod.EXECUTE_WORK_ORDER)
+def work_order_book(request, wo_id):
+    """Book labour and/or overhead hours against a work-order operation (Phase 13)."""
+    from core.models import WorkOrder, WorkOrderOperation
+    from core.services.mrp import work_order_labour as wol
+    from core.services.mrp import work_order_execution as wox
+    tenant = _get_default_tenant(request)
+    wo = get_object_or_404(WorkOrder, id=wo_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("work_order_detail", wo_id=wo.id)
+    op = get_object_or_404(WorkOrderOperation, id=request.POST.get("operation_id"), work_order=wo)
+    note = request.POST.get("note") or ""
+    try:
+        labour_hours = Decimal(request.POST.get("labour_hours") or "0")
+        overhead_hours = Decimal(request.POST.get("overhead_hours") or "0")
+        if labour_hours <= 0 and overhead_hours <= 0:
+            messages.info(request, "Enter labour and/or overhead hours to book.")
+            return redirect("work_order_detail", wo_id=wo.id)
+        bookings = wol.book_operation_actuals(op, labour_hours, overhead_hours, request.user, note)
+        if getattr(wo, "_gl_warning", None):
+            messages.warning(request, wo._gl_warning)
+        messages.success(request, f"Booked {len(bookings)} cost line(s) on operation {op.operation_sequence}.")
+        log_audit(action="work_order_book_cost", request=request, user=request.user, tenant=tenant,
+                  detail=f"{wo.work_order_number} op {op.operation_sequence}")
+    except wox.WorkOrderError as e:
+        messages.error(request, str(e))
+    except (InvalidOperation, ValueError):
+        messages.error(request, "Enter valid hours.")
     return redirect("work_order_detail", wo_id=wo.id)

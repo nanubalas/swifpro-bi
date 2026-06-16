@@ -1076,16 +1076,37 @@ class WorkCentreForm(TenantModelForm):
         model = WorkCentre
         fields = [
             "site", "code", "name", "description", "capacity_hours_per_day",
-            "efficiency_percent", "calendar_code", "working_days_mask",
+            "efficiency_percent", "labour_rate_per_hour", "overhead_rate_per_hour",
+            "machine_rate_per_hour", "calendar_code", "working_days_mask",
             "default_queue_hours", "default_move_hours", "is_active",
         ]
         widgets = {"description": forms.Textarea(attrs={"rows": 2})}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Cost-absorption rates are optional and default to 0 (additive, Phase 13).
+        for name in ("labour_rate_per_hour", "overhead_rate_per_hour", "machine_rate_per_hour"):
+            self.fields[name].required = False
 
     def clean_capacity_hours_per_day(self):
         v = self.cleaned_data.get("capacity_hours_per_day")
         if v is not None and v < 0:
             raise forms.ValidationError("Capacity hours cannot be negative.")
         return v
+
+    def _zero_if_blank(self, field):
+        from decimal import Decimal as _D
+        v = self.cleaned_data.get(field)
+        return v if v is not None else _D("0.00")
+
+    def clean_labour_rate_per_hour(self):
+        return self._zero_if_blank("labour_rate_per_hour")
+
+    def clean_overhead_rate_per_hour(self):
+        return self._zero_if_blank("overhead_rate_per_hour")
+
+    def clean_machine_rate_per_hour(self):
+        return self._zero_if_blank("machine_rate_per_hour")
 
 
 class RoutingHeaderForm(TenantModelForm):

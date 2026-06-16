@@ -384,4 +384,5 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     path("work-orders/<int:wo_id>/issue/", views.work_order_issue, name="work_order_issue"),
     path("work-orders/<int:wo_id>/complete/", views.work_order_complete, name="work_order_complete"),
     path("work-orders/<int:wo_id>/correct/", views.work_order_correct, name="work_order_correct"),
+    path("work-orders/<int:wo_id>/book/", views.work_order_book, name="work_order_book"),
 ]

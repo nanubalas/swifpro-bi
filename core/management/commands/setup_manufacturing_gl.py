@@ -14,6 +14,8 @@ ACCOUNTS = [
     ("1030", "Work In Progress (WIP)", "ASSET"),
     ("1040", "Finished Goods Inventory", "ASSET"),
     ("5300", "Manufacturing Variance", "EXPENSE"),
+    ("5400", "Direct Labour Absorption", "EXPENSE"),
+    ("5500", "Manufacturing Overhead Absorption", "EXPENSE"),
 ]
 
 
@@ -38,13 +40,15 @@ class Command(BaseCommand):
         profile.wip_account = accounts["1030"]
         profile.finished_goods_inventory_account = accounts["1040"]
         profile.manufacturing_variance_account = accounts["5300"]
+        profile.direct_labour_absorption_account = accounts["5400"]
+        profile.manufacturing_overhead_absorption_account = accounts["5500"]
         profile.is_default = True
         profile.is_active = True
         profile.save()
 
         self.stdout.write(self.style.SUCCESS(
             f"Manufacturing GL {'created' if created else 'updated'} for {tenant.name}: "
-            f"accounts 1020/1030/1040/5300 + default profile."))
+            f"accounts 1020/1030/1040/5300/5400/5500 + default profile."))
 
     def _resolve_tenant(self, ref):
         if str(ref).isdigit():

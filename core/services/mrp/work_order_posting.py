@@ -29,6 +29,9 @@ REF_SCRAP = "WORK_ORDER_SCRAP"
 REF_COMPLETION_SCRAP = "WORK_ORDER_COMPLETION_SCRAP"
 REF_ISSUE_REVERSAL = "WORK_ORDER_ISSUE_REVERSAL"
 REF_COMPLETION_REVERSAL = "WORK_ORDER_COMPLETION_REVERSAL"
+# Phase 13 labour / overhead absorption (idempotent on the cost-booking id).
+REF_LABOUR = "WORK_ORDER_LABOUR"
+REF_OVERHEAD = "WORK_ORDER_OVERHEAD"
 
 
 class MissingManufacturingAccount(Exception):
@@ -158,7 +161,8 @@ def post_work_order_close_variance(wo, user):
     if existing is not None:
         return existing
 
-    remaining = (wo.wip_material_cost or ZERO) - (wo.finished_goods_cost or ZERO)
+    # Remaining WIP now spans material + labour + overhead (Phase 13).
+    remaining = (wo.total_wip_cost or ZERO) - (wo.finished_goods_cost or ZERO)
     remaining = Decimal(remaining).quantize(ZERO)
     if remaining == ZERO:
         if wo.variance_posted_at is None:
@@ -258,3 +262,47 @@ def post_work_order_completion_reversal(wo, movement, amount, user):
         credit_field="finished_goods_inventory_account", credit_label="finished goods inventory",
         memo=f"WO {wo.work_order_number} completion reversal",
         debit_desc="WIP - completion reversed", credit_desc=f"Finished goods {wo.product.sku}")
+
+
+# --------------------------------------------------------------------------- #
+# Labour / overhead absorption (Phase 13). DR WIP / CR the absorption account.
+# Idempotent on the cost-booking id; links the journal to the booking.
+# --------------------------------------------------------------------------- #
+def _post_booking(booking, user, *, ref_type, credit_field, credit_label, memo, credit_desc):
+    wo = booking.work_order
+    tenant = wo.tenant
+    profile = get_profile(tenant, wo.site)
+    if profile is None:
+        return None
+    amount = Decimal(booking.amount or ZERO).quantize(ZERO)
+    if amount <= ZERO:
+        return None
+    existing = _existing(tenant, ref_type, booking.id)
+    if existing is not None:
+        return existing
+    wip = _require(profile, "wip_account", "wip", "WIP")
+    credit_account = _require(profile, credit_field, credit_field, credit_label)
+    je = _post(tenant, site=wo.site, entry_date=timezone.localdate(),
+               ref_type=ref_type, ref_id=booking.id, memo=memo,
+               debit_account=wip, credit_account=credit_account, amount=amount, user=user,
+               debit_desc="WIP - absorbed", credit_desc=credit_desc)
+    if booking.journal_entry_id is None:
+        booking.journal_entry = je
+        booking.save(update_fields=["journal_entry"])
+    return je
+
+
+def post_work_order_labour(booking, user):
+    return _post_booking(
+        booking, user, ref_type=REF_LABOUR,
+        credit_field="direct_labour_absorption_account", credit_label="direct labour absorption",
+        memo=f"WO {booking.work_order.work_order_number} labour absorption",
+        credit_desc="Direct labour absorbed")
+
+
+def post_work_order_overhead(booking, user):
+    return _post_booking(
+        booking, user, ref_type=REF_OVERHEAD,
+        credit_field="manufacturing_overhead_absorption_account", credit_label="manufacturing overhead absorption",
+        memo=f"WO {booking.work_order.work_order_number} overhead absorption",
+        credit_desc="Manufacturing overhead absorbed")
