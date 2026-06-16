@@ -27,7 +27,12 @@
         <td class="small text-muted">{{ r.created_at|date:"d M Y H:i" }}</td>
       </tr>
       {% empty %}
-      <tr><td colspan="7" class="text-center text-muted py-5">No MRP runs yet. Create one to set up planning parameters.</td></tr>
+      <tr><td colspan="7" class="text-center text-muted py-5">
+        <div class="fw-semibold mb-1">No MRP runs yet</div>
+        <div class="small mb-2">An MRP run nets demand against supply and proposes BUY / MAKE / TRANSFER / SUBCONTRACT planned orders.</div>
+        <a class="btn btn-sm btn-primary" href="{% url 'mrp_run_create' %}">Create a run</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'mrp_setup_guide' %}">Setup guide</a>
+      </td></tr>
       {% endfor %}
     </tbody>
   </table>

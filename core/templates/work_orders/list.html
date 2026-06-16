@@ -28,7 +28,12 @@
         <td class="small">{% if w.source_mrp_planned_order %}{{ w.source_mrp_planned_order.planned_order_number }}{% else %}-{% endif %}</td>
       </tr>
       {% empty %}
-      <tr><td colspan="8" class="text-center text-muted py-5">No work orders yet. Convert a MAKE planned order from an MRP run to create one.</td></tr>
+      <tr><td colspan="8" class="text-center text-muted py-5">
+        <div class="fw-semibold mb-1">No work orders yet</div>
+        <div class="small mb-2">Work orders are created by converting a MAKE planned order from an MRP run. Run MRP, then convert on the workbench.</div>
+        <a class="btn btn-sm btn-primary" href="{% url 'mrp_run_list' %}">Go to MRP Runs</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'mrp_setup_guide' %}">Setup guide</a>
+      </td></tr>
       {% endfor %}
     </tbody>
   </table>

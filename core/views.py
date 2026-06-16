@@ -7509,12 +7509,25 @@ def mrp_run_run(request, run_id):
     if run.status in ("RUNNING", "QUEUED"):
         messages.info(request, "This run is already in progress.")
         return redirect("mrp_run_detail", run_id=run.id)
+    # Guardrail: a run with no item planning profiles in scope will plan nothing.
+    from core.models import ItemSitePlanning
+    profiles = ItemSitePlanning.objects.filter(tenant=tenant, is_active=True, mrp_enabled=True,
+                                               source_type__in=["BUY", "MAKE", "TRANSFER", "SUBCONTRACT"])
+    if run.site_scope_id:
+        profiles = profiles.filter(site_id=run.site_scope_id)
+    if not profiles.exists():
+        messages.warning(request, "No active item planning profiles in scope - this run will not plan "
+                         "anything. Add profiles under Item Planning (see the MRP Setup Guide).")
     try:
         run_mrp(run, user=request.user)
         log_audit(action="mrp_run_execute", request=request, user=request.user, tenant=tenant,
                   detail=run.run_number)
         if run.status == "COMPLETED_WITH_EXCEPTIONS":
-            messages.warning(request, f"MRP run {run.run_number} completed with exceptions.")
+            messages.warning(request, f"MRP run {run.run_number} completed with exceptions - "
+                             "review the Exceptions tab and the MRP Health Check.")
+        elif run.planned_orders.count() == 0:
+            messages.info(request, f"MRP run {run.run_number} completed but produced no planned orders. "
+                          "Check that there is demand (sales orders / forecast) and stock is below requirements.")
         else:
             messages.success(request, f"MRP run {run.run_number} completed.")
     except Exception as e:
@@ -8800,6 +8813,30 @@ def planner_dashboard(request):
     tenant = _get_default_tenant(request)
     metrics = dashboard.planner_dashboard_metrics(tenant)
     return render(request, "mrp/dashboard.html", {"tenant": tenant, "m": metrics})
+
+
+@login_required
+@role_required(_MRP_READ)
+def mrp_health_check(request):
+    from core.services.mrp import health
+    tenant = _get_default_tenant(request)
+    checks = health.run_health_checks(tenant) if tenant else []
+    issues = [c for c in checks if not c["ok"]]
+    return render(request, "mrp/health_check.html", {
+        "tenant": tenant, "checks": checks, "issue_count": len(issues),
+        "critical": len([c for c in issues if c["severity"] == "CRITICAL"]),
+    })
+
+
+@login_required
+@role_required(_MRP_READ)
+def mrp_setup_guide(request):
+    from core.services.mrp import health
+    tenant = _get_default_tenant(request)
+    steps = health.setup_guide_steps(tenant) if tenant else []
+    done = len([s for s in steps if s["done"]])
+    return render(request, "mrp/setup_guide.html", {
+        "tenant": tenant, "steps": steps, "done": done, "total": len(steps)})
 
 
 @login_required
