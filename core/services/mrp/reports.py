@@ -455,3 +455,100 @@ def reschedule_suggestion_report(run, filters):
             (s.rejected_at.strftime("%Y-%m-%d %H:%M") if s.rejected_at else ""),
         ])
     return {"columns": columns, "rows": rows, "objects": list(qs)}
+
+
+# --------------------------------------------------------------------------- #
+# Report dispatcher (Phase 17): one entry point used by scheduled exports.
+# Resolves the run / version from filters and returns columns + rows + title.
+# --------------------------------------------------------------------------- #
+REPORT_TITLES = {
+    "RUN_SUMMARY": ("Run summary", "mrp-run-summary"),
+    "PLANNED_ORDERS": ("Planned orders", "mrp-planned-orders"),
+    "DEMAND_SUPPLY": ("Demand vs supply", "mrp-demand-supply"),
+    "SHORTAGES": ("Shortages", "mrp-shortages"),
+    "EXCEPTIONS": ("Exceptions", "mrp-exceptions"),
+    "PEGGING": ("Pegging", "mrp-pegging"),
+    "FORECAST_CONSUMPTION": ("Forecast consumption", "forecast-consumption"),
+    "CAPACITY_LOAD": ("Capacity load", "capacity-load"),
+    "WORK_ORDER_COST": ("Work order cost", "work-order-cost"),
+    "RESCHEDULE_SUGGESTIONS": ("Reschedule suggestions", "reschedule-suggestions"),
+    "MRP_WORKBENCH": ("Planned orders (workbench)", "mrp-workbench"),
+}
+
+_RUN_SCOPED = {"RUN_SUMMARY", "PLANNED_ORDERS", "DEMAND_SUPPLY", "SHORTAGES", "EXCEPTIONS",
+               "PEGGING", "RESCHEDULE_SUGGESTIONS", "MRP_WORKBENCH"}
+
+
+def _latest_run(tenant, filters):
+    from core.models import MRPRun
+    qs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    rid = (filters or {}).get("run")
+    return (qs.filter(id=rid).first() if rid else None) or qs.first()
+
+
+def _parse_date(value):
+    if not value:
+        return None
+    if isinstance(value, datetime.date):
+        return value
+    try:
+        return datetime.date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def build_report(tenant, report_type, filters):
+    """Return {title, filename, columns, rows} for any planning report type,
+    tenant-scoped, resolving run/version from filters. Used by report views'
+    export and by scheduled exports."""
+    filters = dict(filters or {})
+    title, filename = REPORT_TITLES.get(report_type, (report_type, report_type.lower()))
+
+    if report_type in _RUN_SCOPED:
+        run = _latest_run(tenant, filters)
+        if run is None:
+            return {"title": title, "filename": filename, "columns": ["Message"],
+                    "rows": [["No MRP runs available."]]}
+        if report_type == "RUN_SUMMARY":
+            kpis = mrp_run_summary(run)
+            cols = ["Metric", "Value"]
+            label = {
+                "total_planned": "Total planned", "buy": "Buy", "make": "Make",
+                "transfer": "Transfer", "subcontract": "Subcontract", "converted": "Converted",
+                "suggested": "Suggested", "critical_exceptions": "Critical exceptions",
+                "past_due_releases": "Past-due releases", "shortage_qty": "Shortage qty",
+                "forecast_demand_qty": "Forecast demand", "sales_demand_qty": "Sales demand",
+                "safety_demand_qty": "Safety demand", "capacity_overload_count": "Capacity overloads"}
+            rows = [[label.get(k, k), v] for k, v in kpis.items()]
+            return {"title": title, "filename": filename, "columns": cols, "rows": rows}
+        fn = {"PLANNED_ORDERS": planned_order_report, "DEMAND_SUPPLY": demand_supply_report,
+              "SHORTAGES": shortage_report, "EXCEPTIONS": exception_report,
+              "PEGGING": pegging_report, "RESCHEDULE_SUGGESTIONS": reschedule_suggestion_report,
+              "MRP_WORKBENCH": planned_order_report}[report_type]
+        data = fn(run, filters)
+        return {"title": title, "filename": filename, "columns": data["columns"], "rows": data["rows"]}
+
+    if report_type == "FORECAST_CONSUMPTION":
+        from core.models import ForecastVersion
+        vid = filters.get("version")
+        versions = ForecastVersion.objects.filter(tenant=tenant).order_by("-created_at")
+        version = (versions.filter(id=vid).first() if vid else None) or versions.first()
+        if version is None:
+            return {"title": title, "filename": filename, "columns": ["Message"],
+                    "rows": [["No forecast versions available."]]}
+        data = forecast_consumption_report(version, filters)
+        return {"title": title, "filename": filename, "columns": data["columns"], "rows": data["rows"]}
+
+    if report_type == "CAPACITY_LOAD":
+        f = dict(filters)
+        f["start"] = _parse_date(filters.get("start"))
+        f["end"] = _parse_date(filters.get("end"))
+        data = capacity_load_export(tenant, f)
+        return {"title": title, "filename": filename, "columns": data["columns"], "rows": data["rows"]}
+
+    if report_type == "WORK_ORDER_COST":
+        data = work_order_cost_report(tenant, filters)
+        return {"title": title, "filename": filename, "columns": data["columns"], "rows": data["rows"]}
+
+    return {"title": title, "filename": filename, "columns": ["Message"],
+            "rows": [[f"Unknown report type '{report_type}'."]]}

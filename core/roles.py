@@ -134,6 +134,7 @@ NAV = [
         ("UOM Conversions", "/uom-conversions/", "shuffle", {ADMIN}),
     ]),
     ("Planning", [
+        ("Planner Dashboard", "/mrp/dashboard/", "speedometer2", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("MRP Runs", "/mrp/runs/", "cpu", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Item Planning", "/mrp/item-planning/", "sliders2", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Forecasts", "/forecasts/", "graph-up-arrow", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
@@ -143,6 +144,8 @@ NAV = [
         ("Capacity Load", "/capacity-load/", "bar-chart-steps", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
         ("MRP Reports", "/mrp/reports/", "file-earmark-bar-graph", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
         ("Reschedule Suggestions", "/mrp/suggestions/", "lightbulb", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
+        ("Saved Views", "/mrp/saved-views/", "bookmarks", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
+        ("Scheduled Exports", "/mrp/scheduled-exports/", "envelope-paper", {ADMIN, MANAGER, PURCHASING}),
         ("Work Orders", "/work-orders/", "tools", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
     ]),
     ("Finance", [
@@ -322,6 +325,9 @@ NAV_META = {
     "/capacity-load/": {"desc": "Work-centre scheduled load and capacity by day.", "keywords": ["capacity", "load", "utilisation", "schedule", "finite", "overload", "levelling"]},
     "/mrp/reports/": {"desc": "MRP, planning, forecast and work-order reports with CSV export.", "keywords": ["report", "reports", "mrp report", "planned orders", "shortage", "pegging", "exception", "forecast consumption", "work order cost", "csv", "export", "analytics"]},
     "/mrp/suggestions/": {"desc": "Reschedule and capacity-levelling suggestions for planner review.", "keywords": ["suggestion", "reschedule", "levelling", "leveling", "capacity", "expedite", "reschedule in", "reschedule out", "cancel supply", "recommendation"]},
+    "/mrp/dashboard/": {"desc": "Planner dashboard: MRP KPIs, exceptions, suggestions and run comparison.", "keywords": ["dashboard", "planner", "kpi", "overview", "metrics", "comparison", "summary"]},
+    "/mrp/saved-views/": {"desc": "Saved report and workbench filter views.", "keywords": ["saved view", "saved views", "filter", "report view", "bookmark", "preset"]},
+    "/mrp/scheduled-exports/": {"desc": "Scheduled MRP report exports by email.", "keywords": ["scheduled", "export", "email", "report schedule", "csv", "xlsx", "recurring"]},
     "/work-orders/": {"desc": "Manufacturing work orders: issue materials, complete finished goods.", "keywords": ["work order", "production order", "manufacturing", "make", "issue material", "complete", "wip"]},
     "/cycle-counts/": {"desc": "Targeted spot stock counts.", "keywords": ["cycle count", "spot count"]},
     "/stock-takes/": {"desc": "Full physical count of a location or whole site.", "keywords": ["stock take", "stocktake", "physical count", "stock-take"]},

@@ -22,6 +22,7 @@ from core.models import (
     ItemSitePlanning, MRPRun, ForecastVersion, ForecastLine,
     WorkCentre, RoutingHeader, RoutingOperation,
     ShopCalendar, ShopCalendarWorkingDay, ShopCalendarException,
+    ScheduledReportExport,
 )
 
 
@@ -1192,3 +1193,21 @@ class ShopCalendarExceptionForm(forms.ModelForm):
             "start_time": forms.TimeInput(attrs={"type": "time"}),
             "end_time": forms.TimeInput(attrs={"type": "time"}),
         }
+
+
+class ScheduledReportExportForm(TenantModelForm):
+    """Create / edit a scheduled MRP report export (Phase 17)."""
+    class Meta:
+        model = ScheduledReportExport
+        fields = ["name", "report_type", "saved_view", "format", "frequency",
+                  "day_of_week", "day_of_month", "time_of_day", "recipients", "is_active"]
+        widgets = {
+            "time_of_day": forms.TimeInput(attrs={"type": "time"}),
+            "recipients": forms.Textarea(attrs={"rows": 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["saved_view"].required = False
+        self.fields["day_of_week"].required = False
+        self.fields["day_of_month"].required = False

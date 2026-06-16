@@ -1,3 +1,5 @@
+import datetime
+
 from django.db import models
 from django.utils import timezone
 from decimal import Decimal
@@ -3720,3 +3722,99 @@ class MRPRescheduleSuggestion(models.Model):
     @property
     def is_open(self):
         return self.status in (self.Status.SUGGESTED, self.Status.ACCEPTED)
+
+
+# ===========================================================================
+# Saved views + scheduled exports (Phase 17)
+# ===========================================================================
+class _PlanningReportType(models.TextChoices):
+    RUN_SUMMARY = "RUN_SUMMARY", "Run summary"
+    PLANNED_ORDERS = "PLANNED_ORDERS", "Planned orders"
+    DEMAND_SUPPLY = "DEMAND_SUPPLY", "Demand vs supply"
+    SHORTAGES = "SHORTAGES", "Shortages"
+    EXCEPTIONS = "EXCEPTIONS", "Exceptions"
+    PEGGING = "PEGGING", "Pegging"
+    FORECAST_CONSUMPTION = "FORECAST_CONSUMPTION", "Forecast consumption"
+    CAPACITY_LOAD = "CAPACITY_LOAD", "Capacity load"
+    WORK_ORDER_COST = "WORK_ORDER_COST", "Work order cost"
+    RESCHEDULE_SUGGESTIONS = "RESCHEDULE_SUGGESTIONS", "Reschedule suggestions"
+    MRP_WORKBENCH = "MRP_WORKBENCH", "MRP workbench"
+
+
+class SavedReportView(models.Model):
+    """A named, reusable set of filters (and optional columns) for an MRP report
+    or the planner workbench (Phase 17). Private to the owner unless shared with
+    the tenant. Tenant-scoped."""
+    ReportType = _PlanningReportType
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="saved_report_views")
+    name = models.CharField(max_length=120)
+    report_type = models.CharField(max_length=24, choices=_PlanningReportType.choices)
+    filters_json = models.JSONField(default=dict, blank=True)
+    columns_json = models.JSONField(null=True, blank=True)
+    is_default = models.BooleanField(default=False)
+    is_shared = models.BooleanField(default=False)
+    owner = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="saved_report_views")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["report_type", "name"]
+        indexes = [models.Index(fields=["tenant", "report_type"]),
+                   models.Index(fields=["owner", "report_type"])]
+
+    def __str__(self):
+        return f"{self.name} ({self.report_type})"
+
+
+class ScheduledReportExport(models.Model):
+    """A scheduled MRP report export (Phase 17). Generates a CSV/XLSX on a
+    cadence and emails it to recipients when an email backend is configured."""
+    ReportType = _PlanningReportType
+
+    class Format(models.TextChoices):
+        CSV = "CSV", "CSV"
+        XLSX = "XLSX", "Excel"
+
+    class Frequency(models.TextChoices):
+        DAILY = "DAILY", "Daily"
+        WEEKLY = "WEEKLY", "Weekly"
+        MONTHLY = "MONTHLY", "Monthly"
+
+    class LastStatus(models.TextChoices):
+        NEVER_RUN = "NEVER_RUN", "Never run"
+        SUCCESS = "SUCCESS", "Success"
+        FAILED = "FAILED", "Failed"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="scheduled_exports")
+    name = models.CharField(max_length=120)
+    report_type = models.CharField(max_length=24, choices=_PlanningReportType.choices)
+    saved_view = models.ForeignKey(SavedReportView, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="scheduled_exports")
+    filters_json = models.JSONField(default=dict, blank=True)
+    format = models.CharField(max_length=8, choices=Format.choices, default=Format.CSV)
+    frequency = models.CharField(max_length=8, choices=Frequency.choices, default=Frequency.DAILY)
+    day_of_week = models.PositiveSmallIntegerField(null=True, blank=True, help_text="0=Mon .. 6=Sun (weekly)")
+    day_of_month = models.PositiveSmallIntegerField(null=True, blank=True, help_text="1-28 (monthly)")
+    time_of_day = models.TimeField(default=datetime.time(6, 0))
+    recipients = models.TextField(blank=True, help_text="Comma-separated email addresses")
+    is_active = models.BooleanField(default=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    next_run_at = models.DateTimeField(null=True, blank=True)
+    last_status = models.CharField(max_length=12, choices=LastStatus.choices, default=LastStatus.NEVER_RUN)
+    last_error = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="scheduled_exports_created")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [models.Index(fields=["tenant", "is_active", "next_run_at"])]
+
+    def __str__(self):
+        return f"{self.name} ({self.report_type}, {self.frequency})"
+
+    @property
+    def recipient_list(self):
+        return [r.strip() for r in (self.recipients or "").replace(";", ",").split(",") if r.strip()]

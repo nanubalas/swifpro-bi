@@ -7684,6 +7684,13 @@ def mrp_workbench(request, run_id):
     fc_ids = [i for i in fc_ids if i and i.isdigit()]
     forecast_versions = ForecastVersion.objects.filter(tenant=tenant, id__in=fc_ids).order_by("code")
 
+    # Saved workbench views (Phase 17).
+    from core.models import SavedReportView
+    from django.db.models import Q as _Qsv
+    wb_saved_views = (SavedReportView.objects.filter(tenant=tenant, report_type="MRP_WORKBENCH")
+                      .filter(_Qsv(owner=request.user) | _Qsv(is_shared=True)).order_by("name"))
+    wb_current_filters = {k: v for k, v in f.items() if v}
+
     # Run-level capacity + scheduling exceptions - shown as a banner.
     capacity_exceptions = list(run.exceptions.filter(exception_code__in=[
         "CAPACITY_OVERLOAD", "FINITE_CAPACITY_OVERLOAD", "SCHEDULING_FAILED",
@@ -7705,6 +7712,9 @@ def mrp_workbench(request, run_id):
             ("TRANSFER_REQUEST", "Transfer request")],
         "forecast_versions": forecast_versions,
         "capacity_exceptions": capacity_exceptions,
+        "wb_saved_views": wb_saved_views, "wb_current_filters": wb_current_filters,
+        "can_manage_views": (request.user.is_superuser
+                             or permissions_mod.MANAGE_MRP_REPORTS in _effective_perms(request)),
     })
 
 
@@ -8404,9 +8414,10 @@ def _latest_run(tenant, run_id=None):
 
 
 def _report_export_or_render(request, *, title, data, export_name, controls=None,
-                             kpis=None, run=None, runs=None):
+                             kpis=None, run=None, runs=None, report_type=None):
     """Export (CSV/XLSX) when ?export is set - gated by EXPORT_MRP_REPORTS - else
-    render the shared report template."""
+    render the shared report template (with saved-view save/load when a
+    report_type is given)."""
     if request.GET.get("export"):
         from django.core.exceptions import PermissionDenied
         if not (request.user.is_superuser
@@ -8415,13 +8426,26 @@ def _report_export_or_render(request, *, title, data, export_name, controls=None
         return _export_response(request, f"{export_name}.csv", data["columns"], data["rows"],
                                 sheet_title=title[:31])
     from urllib.parse import urlencode
+    tenant = _get_default_tenant(request)
     base = {k: v for k, v in request.GET.items() if k != "export"}
     export_qs = urlencode({**base, "export": "1"})
+    saved_views = current_filters = None
+    if report_type:
+        from core.models import SavedReportView
+        from django.db.models import Q
+        saved_views = (SavedReportView.objects.filter(tenant=tenant, report_type=report_type)
+                       .filter(Q(owner=request.user) | Q(is_shared=True)).order_by("name"))
+        current_filters = base
     return render(request, "mrp/reports/report.html", {
-        "tenant": _get_default_tenant(request), "title": title,
+        "tenant": tenant, "title": title,
         "columns": data["columns"], "rows": data["rows"],
         "controls": controls or [], "kpis": kpis or [], "run": run, "runs": runs,
         "export_qs": export_qs, "result_count": len(data["rows"]),
+        "report_type": report_type, "saved_views": saved_views, "current_filters": current_filters,
+        "can_manage_views": (request.user.is_superuser
+                             or permissions_mod.MANAGE_MRP_REPORTS in _effective_perms(request)),
+        "can_schedule": (request.user.is_superuser
+                         or permissions_mod.MANAGE_SCHEDULED_EXPORTS in _effective_perms(request)),
         "can_export": (request.user.is_superuser
                        or permissions_mod.EXPORT_MRP_REPORTS in _effective_perms(request)),
     })
@@ -8482,7 +8506,7 @@ def mrp_report_planned_orders(request):
     ])
     return _report_export_or_render(request, title="Planned orders", data=data,
                                     export_name="mrp-planned-orders", controls=controls,
-                                    run=run, runs=runs)
+                                    run=run, runs=runs, report_type="PLANNED_ORDERS")
 
 
 @login_required
@@ -8501,7 +8525,7 @@ def mrp_report_demand_supply(request):
          "options": _site_options(tenant), "value": f.get("site") or ""}])
     return _report_export_or_render(request, title="Demand vs supply", data=data,
                                     export_name="mrp-demand-supply", controls=controls,
-                                    run=run, runs=runs)
+                                    run=run, runs=runs, report_type="DEMAND_SUPPLY")
 
 
 @login_required
@@ -8520,7 +8544,7 @@ def mrp_report_shortage(request):
          "options": _site_options(tenant), "value": f.get("site") or ""}])
     return _report_export_or_render(request, title="Shortages", data=data,
                                     export_name="mrp-shortages", controls=controls,
-                                    run=run, runs=runs)
+                                    run=run, runs=runs, report_type="SHORTAGES")
 
 
 @login_required
@@ -8547,7 +8571,7 @@ def mrp_report_exceptions(request):
     ])
     return _report_export_or_render(request, title="Exceptions", data=data,
                                     export_name="mrp-exceptions", controls=controls,
-                                    run=run, runs=runs)
+                                    run=run, runs=runs, report_type="EXCEPTIONS")
 
 
 @login_required
@@ -8567,7 +8591,7 @@ def mrp_report_pegging(request):
                      ("SUBCONTRACT", "Subcontract")], "value": f.get("source_type") or ""}])
     return _report_export_or_render(request, title="Pegging", data=data,
                                     export_name="mrp-pegging", controls=controls,
-                                    run=run, runs=runs)
+                                    run=run, runs=runs, report_type="PEGGING")
 
 
 @login_required
@@ -8593,7 +8617,8 @@ def mrp_report_forecast_consumption(request):
          "options": _site_options(tenant), "value": f.get("site") or ""},
     ]
     return _report_export_or_render(request, title="Forecast consumption", data=data,
-                                    export_name="forecast-consumption", controls=controls)
+                                    export_name="forecast-consumption", controls=controls,
+                                    report_type="FORECAST_CONSUMPTION")
 
 
 @login_required
@@ -8622,7 +8647,8 @@ def mrp_report_work_order_cost(request):
     ]
     # Export gating: VIEW_WORK_ORDER can view; export still needs EXPORT_MRP_REPORTS.
     return _report_export_or_render(request, title="Work order cost", data=data,
-                                    export_name="work-order-cost", controls=controls, kpis=kpis)
+                                    export_name="work-order-cost", controls=controls, kpis=kpis,
+                                    report_type="WORK_ORDER_COST")
 
 
 @login_required
@@ -8653,7 +8679,7 @@ def mrp_report_suggestions(request):
     ])
     return _report_export_or_render(request, title="Reschedule suggestions", data=data,
                                     export_name="reschedule-suggestions", controls=controls,
-                                    run=run, runs=runs)
+                                    run=run, runs=runs, report_type="RESCHEDULE_SUGGESTIONS")
 
 
 # ===========================================================================
@@ -8751,6 +8777,240 @@ def mrp_suggestion_action(request, run_id):
     log_audit(action=f"mrp_suggestion_{action}", request=request, user=request.user, tenant=tenant,
               detail=run.run_number)
     return redirect("mrp_suggestions_run", run_id=run.id)
+
+
+# ===========================================================================
+# Planner dashboard + saved views + scheduled exports (Phase 17)
+# ===========================================================================
+
+_REPORT_URL = {
+    "PLANNED_ORDERS": "mrp_report_planned_orders", "DEMAND_SUPPLY": "mrp_report_demand_supply",
+    "SHORTAGES": "mrp_report_shortage", "EXCEPTIONS": "mrp_report_exceptions",
+    "PEGGING": "mrp_report_pegging", "FORECAST_CONSUMPTION": "mrp_report_forecast_consumption",
+    "WORK_ORDER_COST": "mrp_report_work_order_cost", "RESCHEDULE_SUGGESTIONS": "mrp_report_suggestions",
+    "CAPACITY_LOAD": "capacity_load", "RUN_SUMMARY": "mrp_reports_index",
+}
+_SAVED_VIEW_CONTROL_KEYS = {"csrfmiddlewaretoken", "name", "report_type", "is_shared", "is_default"}
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_PLANNING_DASHBOARD)
+def planner_dashboard(request):
+    from core.services.mrp import dashboard
+    tenant = _get_default_tenant(request)
+    metrics = dashboard.planner_dashboard_metrics(tenant)
+    return render(request, "mrp/dashboard.html", {"tenant": tenant, "m": metrics})
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def saved_views_list(request):
+    from core.models import SavedReportView
+    from django.db.models import Q
+    tenant = _get_default_tenant(request)
+    views = (SavedReportView.objects.filter(tenant=tenant)
+             .filter(Q(owner=request.user) | Q(is_shared=True))
+             .select_related("owner").order_by("report_type", "name"))
+    return render(request, "mrp/saved_views.html", {"tenant": tenant, "views": views})
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def saved_view_create(request):
+    from core.models import SavedReportView
+    tenant = _get_default_tenant(request)
+    if request.method != "POST":
+        return redirect("saved_views_list")
+    report_type = request.POST.get("report_type") or ""
+    name = (request.POST.get("name") or "").strip()
+    valid_types = {c[0] for c in SavedReportView.ReportType.choices}
+    if report_type not in valid_types or not name:
+        messages.error(request, "A name and a valid report type are required to save a view.")
+        return redirect(request.META.get("HTTP_REFERER", reverse("saved_views_list")))
+    filters = {k: v for k, v in request.POST.items()
+               if k not in _SAVED_VIEW_CONTROL_KEYS and v not in ("", None)}
+    want_shared = request.POST.get("is_shared") == "on"
+    can_share = (request.user.is_superuser
+                 or permissions_mod.MANAGE_MRP_REPORTS in _effective_perms(request))
+    is_shared = want_shared and can_share
+    is_default = request.POST.get("is_default") == "on"
+    with transaction.atomic():
+        if is_default:
+            SavedReportView.objects.filter(tenant=tenant, owner=request.user,
+                                           report_type=report_type, is_default=True).update(is_default=False)
+        view = SavedReportView.objects.create(
+            tenant=tenant, owner=request.user, name=name, report_type=report_type,
+            filters_json=filters, is_shared=is_shared, is_default=is_default)
+    log_audit(action="saved_view_create", request=request, user=request.user, tenant=tenant,
+              detail=f"{report_type}:{name}")
+    messages.success(request, f"Saved view '{name}'."
+                     + ("" if (not want_shared or can_share) else " (kept private - sharing needs permission.)"))
+    return redirect(_saved_view_redirect(view))
+
+
+def _saved_view_redirect(view):
+    from urllib.parse import urlencode
+    filters = dict(view.filters_json or {})
+    if view.report_type == "MRP_WORKBENCH":
+        from core.models import MRPRun
+        run_id = filters.pop("run", None)
+        if not run_id:
+            run = MRPRun.objects.filter(tenant=view.tenant).order_by("-created_at").first()
+            run_id = run.id if run else None
+        if run_id is None:
+            return reverse("mrp_reports_index")
+        qs = urlencode(filters)
+        url = reverse("mrp_workbench", args=[run_id])
+        return f"{url}?{qs}" if qs else url
+    url = reverse(_REPORT_URL.get(view.report_type, "mrp_reports_index"))
+    qs = urlencode(filters)
+    return f"{url}?{qs}" if qs else url
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def saved_view_apply(request, view_id):
+    from core.models import SavedReportView
+    from django.db.models import Q
+    tenant = _get_default_tenant(request)
+    view = get_object_or_404(
+        SavedReportView.objects.filter(Q(owner=request.user) | Q(is_shared=True)),
+        id=view_id, tenant=tenant)
+    return redirect(_saved_view_redirect(view))
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def saved_view_delete(request, view_id):
+    from core.models import SavedReportView
+    tenant = _get_default_tenant(request)
+    view = get_object_or_404(SavedReportView, id=view_id, tenant=tenant)
+    can = (view.owner_id == request.user.id or request.user.is_superuser
+           or permissions_mod.MANAGE_MRP_REPORTS in _effective_perms(request))
+    if request.method == "POST" and can:
+        view.delete()
+        messages.success(request, "Saved view deleted.")
+    elif not can:
+        messages.error(request, "You can only delete your own views.")
+    return redirect("saved_views_list")
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def saved_view_set_default(request, view_id):
+    from core.models import SavedReportView
+    tenant = _get_default_tenant(request)
+    view = get_object_or_404(SavedReportView, id=view_id, tenant=tenant, owner=request.user)
+    if request.method == "POST":
+        with transaction.atomic():
+            SavedReportView.objects.filter(tenant=tenant, owner=request.user,
+                                           report_type=view.report_type).update(is_default=False)
+            view.is_default = True
+            view.save(update_fields=["is_default"])
+        messages.success(request, f"'{view.name}' is now your default for this report.")
+    return redirect("saved_views_list")
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def scheduled_exports_list(request):
+    from core.models import ScheduledReportExport
+    tenant = _get_default_tenant(request)
+    exports = (ScheduledReportExport.objects.filter(tenant=tenant)
+               .select_related("saved_view", "created_by").order_by("name"))
+    can_manage = (request.user.is_superuser
+                  or permissions_mod.MANAGE_SCHEDULED_EXPORTS in _effective_perms(request))
+    can_run = (request.user.is_superuser
+               or permissions_mod.EXPORT_MRP_REPORTS in _effective_perms(request))
+    return render(request, "mrp/scheduled_exports.html",
+                  {"tenant": tenant, "exports": exports, "can_manage": can_manage, "can_run": can_run})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SCHEDULED_EXPORTS)
+def scheduled_export_create(request):
+    from core.forms import ScheduledReportExportForm
+    from core.services.mrp import scheduled_export as se
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "base.html", {"content": "Create a Tenant in admin first."})
+    initial = {}
+    if request.method != "POST" and request.GET.get("report_type"):
+        initial["report_type"] = request.GET.get("report_type")
+    form = ScheduledReportExportForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            obj = form.save(commit=False)
+            obj.tenant = tenant
+            obj.created_by = request.user
+            if obj.saved_view_id and obj.saved_view.tenant_id == tenant.id:
+                obj.filters_json = obj.saved_view.filters_json or {}
+            obj.next_run_at = se.compute_next_run(obj)
+            obj.save()
+        log_audit(action="scheduled_export_create", request=request, user=request.user,
+                  tenant=tenant, detail=obj.name)
+        messages.success(request, f"Scheduled export '{obj.name}' created.")
+        return redirect("scheduled_exports_list")
+    return render(request, "mrp/scheduled_export_form.html",
+                  {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SCHEDULED_EXPORTS)
+def scheduled_export_edit(request, export_id):
+    from core.forms import ScheduledReportExportForm
+    from core.models import ScheduledReportExport
+    from core.services.mrp import scheduled_export as se
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(ScheduledReportExport, id=export_id, tenant=tenant)
+    form = ScheduledReportExportForm(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            obj = form.save(commit=False)
+            if obj.saved_view_id and obj.saved_view.tenant_id == tenant.id:
+                obj.filters_json = obj.saved_view.filters_json or {}
+            obj.next_run_at = se.compute_next_run(obj)
+            obj.save()
+        messages.success(request, "Scheduled export updated.")
+        return redirect("scheduled_exports_list")
+    return render(request, "mrp/scheduled_export_form.html",
+                  {"tenant": tenant, "form": form, "mode": "edit", "export": obj})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SCHEDULED_EXPORTS)
+def scheduled_export_delete(request, export_id):
+    from core.models import ScheduledReportExport
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(ScheduledReportExport, id=export_id, tenant=tenant)
+    if request.method == "POST":
+        obj.delete()
+        messages.success(request, "Scheduled export deleted.")
+    return redirect("scheduled_exports_list")
+
+
+@login_required
+@permission_required(permissions_mod.EXPORT_MRP_REPORTS)
+def scheduled_export_run_now(request, export_id):
+    from core.models import ScheduledReportExport
+    from core.services.mrp import scheduled_export as se
+    tenant = _get_default_tenant(request)
+    obj = get_object_or_404(ScheduledReportExport, id=export_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("scheduled_exports_list")
+    filename, payload, mimetype = se.deliver_export(obj, user=request.user)
+    log_audit(action="scheduled_export_run_now", request=request, user=request.user,
+              tenant=tenant, detail=f"{obj.name}: {obj.last_status}")
+    if obj.last_status == "FAILED" or payload is None:
+        messages.error(request, f"Export failed: {obj.last_error or 'unknown error'}.")
+        return redirect("scheduled_exports_list")
+    if obj.recipient_list:
+        messages.success(request, f"Export generated and emailed to {len(obj.recipient_list)} recipient(s).")
+    else:
+        messages.success(request, "Export generated (no recipients set; downloaded).")
+    resp = HttpResponse(payload, content_type=mimetype)
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
 
 
 # ===========================================================================

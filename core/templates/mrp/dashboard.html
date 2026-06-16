@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Planner Dashboard{% endblock %}
+{% block back_url %}{% url 'dashboard' %}{% endblock %}
+{% block body %}
+<style>
+  .pd-card .v { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+  .pd-card .l { font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; color: var(--bs-secondary-color); }
+  .pd-up { color: #198754; } .pd-down { color: #b02a37; }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-speedometer2 me-2"></i>Planner Dashboard</h2>
+    <div class="text-muted">{% if m.run %}Latest run {{ m.run.run_number }} &middot; {{ m.run.get_status_display }}{% else %}No MRP runs yet{% endif %}</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-primary btn-sm" href="{% url 'mrp_run_list' %}"><i class="bi bi-play me-1"></i>Run MRP</a>
+    {% if m.run %}<a class="btn btn-outline-primary btn-sm" href="{% url 'mrp_workbench' m.run.id %}"><i class="bi bi-kanban me-1"></i>Workbench</a>{% endif %}
+    <a class="btn btn-outline-primary btn-sm" href="{% url 'capacity_load' %}"><i class="bi bi-bar-chart-steps me-1"></i>Capacity</a>
+    <a class="btn btn-outline-primary btn-sm" href="{% url 'mrp_suggestions' %}"><i class="bi bi-lightbulb me-1"></i>Suggestions</a>
+    <a class="btn btn-outline-primary btn-sm" href="{% url 'mrp_reports_index' %}"><i class="bi bi-file-earmark-bar-graph me-1"></i>Reports</a>
+    <a class="btn btn-outline-primary btn-sm" href="{% url 'forecast_version_list' %}"><i class="bi bi-graph-up-arrow me-1"></i>Forecasts</a>
+  </div>
+</div>
+
+{% if m.summary %}
+<div class="row g-2 mb-4">
+  {% with s=m.summary %}
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ s.total_planned }}</div><div class="l">Planned orders</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ s.suggested }}</div><div class="l">Open suggested</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ s.converted }}</div><div class="l">Converted</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v text-danger">{{ s.critical_exceptions }}</div><div class="l">Critical exceptions</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ s.past_due_releases }}</div><div class="l">Past-due releases</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ s.capacity_overload_count }}</div><div class="l">Capacity overloads</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ m.suggestions.total }}</div><div class="l">Open suggestions</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ m.work_orders_due }}</div><div class="l">WOs due this week</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ m.forecast_vs_sales.forecast }}</div><div class="l">Forecast demand</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ m.forecast_vs_sales.sales }}</div><div class="l">Sales demand</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card pd-card"><div class="card-body py-2"><div class="v">{{ s.shortage_qty }}</div><div class="l">Shortage qty</div></div></div></div>
+  {% endwith %}
+</div>
+{% else %}
+<div class="alert alert-info">No MRP runs yet. Create and run an MRP run to populate the dashboard.</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h6 class="fw-semibold mb-3"><i class="bi bi-exclamation-triangle me-2"></i>Critical exceptions</h6>
+      <table class="table table-sm align-middle mb-0"><tbody>
+        {% for e in m.critical_exceptions %}<tr>
+          <td class="small">{{ e.get_exception_code_display }}</td>
+          <td class="small">{{ e.product.sku|default:'-' }}</td>
+          <td class="small text-muted">{{ e.message|truncatechars:50 }}</td>
+        </tr>{% empty %}<tr><td class="text-center text-muted py-3">No critical exceptions.</td></tr>{% endfor %}
+      </tbody></table>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h6 class="fw-semibold mb-3"><i class="bi bi-clock-history me-2"></i>Past-due planned releases</h6>
+      <table class="table table-sm align-middle mb-0"><tbody>
+        {% for p in m.past_due_releases %}<tr>
+          <td class="small">{{ p.planned_order_number }}</td>
+          <td class="small">{{ p.product.sku }}</td>
+          <td class="small">{{ p.get_source_type_display }}</td>
+          <td class="small text-danger">{{ p.planned_release_date }}</td>
+        </tr>{% empty %}<tr><td class="text-center text-muted py-3">No past-due releases.</td></tr>{% endfor %}
+      </tbody></table>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h6 class="fw-semibold mb-3"><i class="bi bi-bar-chart-steps me-2"></i>Capacity overloads</h6>
+      <table class="table table-sm align-middle mb-0"><tbody>
+        {% for e in m.capacity_overloads.rows %}<tr>
+          <td class="small">{{ e.get_severity_display }}</td>
+          <td class="small text-muted">{{ e.message|truncatechars:70 }}</td>
+        </tr>{% empty %}<tr><td class="text-center text-muted py-3">No capacity overloads.</td></tr>{% endfor %}
+      </tbody></table>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-body">
+      <h6 class="fw-semibold mb-3"><i class="bi bi-arrow-left-right me-2"></i>Latest vs previous run</h6>
+      {% if m.comparison %}
+      <table class="table table-sm align-middle mb-0"><thead class="table-light"><tr>
+        <th>Metric</th><th class="text-end">Latest</th><th class="text-end">Previous</th><th class="text-end">Change</th></tr></thead><tbody>
+        {% for r in m.comparison.rows %}<tr>
+          <td class="small">{{ r.label }}</td>
+          <td class="text-end">{{ r.current }}</td>
+          <td class="text-end text-muted">{{ r.previous }}</td>
+          <td class="text-end {% if r.change > 0 %}pd-down{% elif r.change < 0 %}pd-up{% endif %}">{{ r.change }}</td>
+        </tr>{% endfor %}
+      </tbody></table>
+      {% else %}<div class="text-muted small">Need at least two MRP runs to compare.</div>{% endif %}
+    </div></div>
+  </div>
+</div>
+{% endblock %}

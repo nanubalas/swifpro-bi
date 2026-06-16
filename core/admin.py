@@ -298,6 +298,26 @@ class MRPRescheduleSuggestionAdmin(admin.ModelAdmin):
                      "site", "work_centre", "created_by", "applied_by", "rejected_by")
 
 
+from core.models import SavedReportView, ScheduledReportExport
+
+
+@admin.register(SavedReportView)
+class SavedReportViewAdmin(admin.ModelAdmin):
+    list_display = ("name", "tenant", "report_type", "owner", "is_shared", "is_default", "created_at")
+    list_filter = ("report_type", "is_shared", "is_default")
+    search_fields = ("name",)
+    raw_id_fields = ("tenant", "owner")
+
+
+@admin.register(ScheduledReportExport)
+class ScheduledReportExportAdmin(admin.ModelAdmin):
+    list_display = ("name", "tenant", "report_type", "format", "frequency", "is_active",
+                    "last_status", "last_run_at", "next_run_at")
+    list_filter = ("report_type", "format", "frequency", "is_active", "last_status")
+    search_fields = ("name",)
+    raw_id_fields = ("tenant", "saved_view", "created_by")
+
+
 class RoutingOperationInline(admin.TabularInline):
     model = RoutingOperation
     extra = 0
