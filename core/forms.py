@@ -19,7 +19,7 @@ from core.models import (
     Payment, AccessRequest, Expense, CreditNote, CreditNoteLine, BankTransaction,
     SalesQuote, SalesQuoteLine, CustomerOrder, CustomerOrderLine,
     RecurringInvoice, RecurringInvoiceLine,
-    ItemSitePlanning, MRPRun,
+    ItemSitePlanning, MRPRun, ForecastVersion, ForecastLine,
 )
 
 
@@ -985,15 +985,85 @@ class ItemSitePlanningForm(TenantModelForm):
 
 class MRPRunForm(TenantModelForm):
     """Set up an MRP run's parameters. The engine (Phase 2+) consumes these."""
+    forecast_version = forms.ChoiceField(
+        required=False, label="Forecast version",
+        help_text="Active or Locked versions only. Used when 'Include forecast' is ticked.")
+
     class Meta:
         model = MRPRun
         fields = [
             "site_scope", "run_type", "planning_start_date", "planning_end_date",
-            "include_sales_orders", "include_forecast", "include_safety_stock",
-            "include_transfers", "notes",
+            "include_sales_orders", "include_forecast", "forecast_version",
+            "include_safety_stock", "include_transfers", "notes",
         ]
         widgets = {
             "planning_start_date": forms.DateInput(attrs={"type": "date"}),
             "planning_end_date": forms.DateInput(attrs={"type": "date"}),
             "notes": forms.Textarea(attrs={"rows": 2}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        tenant = get_current_tenant()
+        choices = [("", "- None -")]
+        if tenant is not None:
+            versions = ForecastVersion.objects.filter(
+                tenant=tenant, status__in=["ACTIVE", "LOCKED"]).order_by("-is_default", "code")
+            choices += [(str(v.pk), f"{v.code} - {v.name} ({v.get_status_display()})") for v in versions]
+        self.fields["forecast_version"].choices = choices
+        # Pre-select the current value when editing.
+        if self.instance and self.instance.forecast_version:
+            self.fields["forecast_version"].initial = self.instance.forecast_version
+
+
+class ForecastVersionForm(TenantModelForm):
+    """Create / edit a demand forecast version."""
+    class Meta:
+        model = ForecastVersion
+        fields = [
+            "name", "code", "description", "status", "forecast_type",
+            "consumption_method", "start_date", "end_date", "is_default",
+        ]
+        widgets = {
+            "description": forms.Textarea(attrs={"rows": 2}),
+            "start_date": forms.DateInput(attrs={"type": "date"}),
+            "end_date": forms.DateInput(attrs={"type": "date"}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get("start_date"), cleaned.get("end_date")
+        if start and end and end < start:
+            self.add_error("end_date", "End date cannot be before the start date.")
+        return cleaned
+
+
+class ForecastLineForm(TenantModelForm):
+    """Add / edit a single forecast line within a version."""
+    class Meta:
+        model = ForecastLine
+        fields = ["product", "site", "forecast_date", "bucket_type", "quantity", "source", "notes"]
+        widgets = {
+            "forecast_date": forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.TextInput(),
+        }
+
+    def __init__(self, *args, version=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._version = version
+
+    def clean_quantity(self):
+        qty = self.cleaned_data.get("quantity")
+        if qty is not None and qty < 0:
+            raise forms.ValidationError("Forecast quantity must be zero or greater.")
+        return qty
+
+    def clean_forecast_date(self):
+        d = self.cleaned_data.get("forecast_date")
+        v = self._version
+        if d and v is not None:
+            if v.start_date and d < v.start_date:
+                raise forms.ValidationError(f"Date is before the version start ({v.start_date}).")
+            if v.end_date and d > v.end_date:
+                raise forms.ValidationError(f"Date is after the version end ({v.end_date}).")
+        return d

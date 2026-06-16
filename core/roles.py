@@ -136,6 +136,7 @@ NAV = [
     ("Planning", [
         ("MRP Runs", "/mrp/runs/", "cpu", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Item Planning", "/mrp/item-planning/", "sliders2", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
+        ("Forecasts", "/forecasts/", "graph-up-arrow", {ADMIN, MANAGER, PURCHASING, WAREHOUSE}),
         ("Work Orders", "/work-orders/", "tools", {ADMIN, MANAGER, WAREHOUSE, PURCHASING}),
     ]),
     ("Finance", [
@@ -308,6 +309,7 @@ NAV_META = {
     "/transfers/": {"desc": "Move stock between locations (incl. in-transit).", "keywords": ["transfer", "in-transit", "in transit", "move stock"]},
     "/mrp/runs/": {"desc": "Material requirements planning runs and results.", "keywords": ["mrp", "material requirements planning", "planning run", "net requirement", "planned order"]},
     "/mrp/item-planning/": {"desc": "Per-item, per-site MRP planning parameters.", "keywords": ["item planning", "planning profile", "safety stock", "lead time", "moq", "lot sizing", "source type", "make buy transfer"]},
+    "/forecasts/": {"desc": "Demand forecast versions and lines for MRP.", "keywords": ["forecast", "demand forecast", "forecast version", "forecast line", "consumption", "baseline", "planning demand"]},
     "/work-orders/": {"desc": "Manufacturing work orders: issue materials, complete finished goods.", "keywords": ["work order", "production order", "manufacturing", "make", "issue material", "complete", "wip"]},
     "/cycle-counts/": {"desc": "Targeted spot stock counts.", "keywords": ["cycle count", "spot count"]},
     "/stock-takes/": {"desc": "Full physical count of a location or whole site.", "keywords": ["stock take", "stocktake", "physical count", "stock-take"]},

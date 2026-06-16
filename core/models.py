@@ -3038,6 +3038,14 @@ class MRPException(models.Model):
         PURCHASE_ORDER_DUE_DATE_MISSING = "PURCHASE_ORDER_DUE_DATE_MISSING", "Purchase order due date inferred"
         PAST_DUE_RELEASE = "PAST_DUE_RELEASE", "Planned release date is in the past"
         UNSUPPORTED_LOT_SIZING_METHOD = "UNSUPPORTED_LOT_SIZING_METHOD", "Unsupported lot sizing method"
+        # Phase 9 additions (forecast + forecast consumption)
+        FORECAST_VERSION_MISSING = "FORECAST_VERSION_MISSING", "Forecast version not selected"
+        FORECAST_VERSION_INVALID = "FORECAST_VERSION_INVALID", "Forecast version invalid for planning"
+        FORECAST_LINE_OUTSIDE_HORIZON = "FORECAST_LINE_OUTSIDE_HORIZON", "Forecast line outside planning horizon"
+        FORECAST_LINE_INVALID_QTY = "FORECAST_LINE_INVALID_QTY", "Forecast line has invalid quantity"
+        UNSUPPORTED_FORECAST_CONSUMPTION_METHOD = "UNSUPPORTED_FORECAST_CONSUMPTION_METHOD", "Unsupported forecast consumption method"
+        FORECAST_UOM_CONVERSION_MISSING = "FORECAST_UOM_CONVERSION_MISSING", "Missing forecast UOM conversion"
+        FORECAST_SITE_MISSING = "FORECAST_SITE_MISSING", "Forecast site missing"
         # Phase 3 additions (BOM / MAKE planning)
         INVALID_BOM = "INVALID_BOM", "Invalid BOM"
         BOM_NOT_APPROVED = "BOM_NOT_APPROVED", "BOM not approved"
@@ -3090,6 +3098,110 @@ class MRPException(models.Model):
 
     def __str__(self):
         return f"{self.exception_code} ({self.severity})"
+
+
+# ===========================================================================
+# Forecasting - Phase 9.
+#
+# A ForecastVersion groups demand forecast lines (per item / site / date bucket)
+# that an MRP run can include as FORECAST demand. Actual confirmed sales orders
+# consume the forecast within the same bucket so demand is not double-counted.
+# Additive and independent of the existing sales / MRP schema.
+# ===========================================================================
+class ForecastVersion(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACTIVE = "ACTIVE", "Active"
+        LOCKED = "LOCKED", "Locked"
+        ARCHIVED = "ARCHIVED", "Archived"
+
+    class ForecastType(models.TextChoices):
+        BASELINE = "BASELINE", "Baseline"
+        SALES = "SALES", "Sales"
+        CUSTOMER = "CUSTOMER", "Customer"
+        ML = "ML", "Machine learning"
+        MANUAL = "MANUAL", "Manual"
+
+    class ConsumptionMethod(models.TextChoices):
+        NONE = "NONE", "No consumption"
+        SAME_BUCKET = "SAME_BUCKET", "Same bucket"
+        FORWARD_BACKWARD_DAYS = "FORWARD_BACKWARD_DAYS", "Forward / backward days"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="forecast_versions")
+    name = models.CharField(max_length=120)
+    code = models.CharField(max_length=40)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    forecast_type = models.CharField(max_length=10, choices=ForecastType.choices,
+                                     default=ForecastType.BASELINE)
+    consumption_method = models.CharField(max_length=24, choices=ConsumptionMethod.choices,
+                                          default=ConsumptionMethod.SAME_BUCKET)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    is_default = models.BooleanField(default=False)
+
+    created_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="forecast_versions_created")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    locked_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="forecast_versions_locked")
+    locked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("tenant", "code")
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["tenant", "status"])]
+
+    def __str__(self):
+        return f"{self.code} - {self.name} ({self.status})"
+
+    @property
+    def is_selectable_for_mrp(self):
+        return self.status in (self.Status.ACTIVE, self.Status.LOCKED)
+
+    @property
+    def is_editable(self):
+        return self.status == self.Status.DRAFT
+
+
+class ForecastLine(models.Model):
+    class BucketType(models.TextChoices):
+        DAILY = "DAILY", "Daily"
+        WEEKLY = "WEEKLY", "Weekly"
+        MONTHLY = "MONTHLY", "Monthly"
+
+    class Source(models.TextChoices):
+        MANUAL = "MANUAL", "Manual"
+        CSV = "CSV", "CSV import"
+        ML = "ML", "Machine learning"
+        API = "API", "API"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="forecast_lines")
+    forecast_version = models.ForeignKey(ForecastVersion, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="forecast_lines")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="forecast_lines")
+
+    forecast_date = models.DateField()
+    bucket_type = models.CharField(max_length=8, choices=BucketType.choices, default=BucketType.MONTHLY)
+    quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    consumed_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    remaining_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    source = models.CharField(max_length=8, choices=Source.choices, default=Source.MANUAL)
+    notes = models.CharField(max_length=255, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["product__sku", "forecast_date"]
+        indexes = [
+            models.Index(fields=["forecast_version", "product", "site"]),
+            models.Index(fields=["forecast_version", "forecast_date"]),
+        ]
+
+    def __str__(self):
+        return f"{self.product.sku} {self.forecast_date} {self.quantity}"
 
 
 # ===========================================================================

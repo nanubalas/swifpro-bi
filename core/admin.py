@@ -224,3 +224,29 @@ class ManufacturingAccountingProfileAdmin(admin.ModelAdmin):
     list_filter = ("is_default", "is_active")
     raw_id_fields = ("raw_material_inventory_account", "wip_account",
                      "finished_goods_inventory_account", "manufacturing_variance_account")
+
+
+from core.models import ForecastVersion, ForecastLine
+
+
+class ForecastLineInline(admin.TabularInline):
+    model = ForecastLine
+    extra = 0
+    raw_id_fields = ("product", "site")
+
+
+@admin.register(ForecastVersion)
+class ForecastVersionAdmin(admin.ModelAdmin):
+    list_display = ("code", "name", "tenant", "status", "forecast_type",
+                    "consumption_method", "is_default", "start_date", "end_date")
+    list_filter = ("status", "forecast_type", "consumption_method", "is_default")
+    search_fields = ("code", "name")
+    inlines = [ForecastLineInline]
+
+
+@admin.register(ForecastLine)
+class ForecastLineAdmin(admin.ModelAdmin):
+    list_display = ("forecast_version", "product", "site", "forecast_date",
+                    "bucket_type", "quantity", "consumed_quantity", "remaining_quantity")
+    list_filter = ("bucket_type", "source")
+    raw_id_fields = ("product", "site", "forecast_version")

@@ -92,4 +92,106 @@ def collect(run, profile):
             priority=0,
         ))
 
+    # Forecast demand (Phase 9), net of same-bucket sales consumption.
+    if run.include_forecast and profile.include_forecast:
+        version = resolve_forecast_version(run)
+        if version is not None:
+            created.extend(_collect_forecast(run, profile, version))
+
+    return created
+
+
+def resolve_forecast_version(run):
+    """Resolve and validate the run's selected forecast version exactly once
+    (cached on the run). Raises FORECAST_VERSION_MISSING / _INVALID exceptions as
+    needed and returns the usable ForecastVersion or None. The version is never
+    fatal: the run always continues."""
+    from core.models import ForecastVersion
+
+    cached = getattr(run, "_forecast_version_resolved", "unset")
+    if cached != "unset":
+        return cached
+
+    version = None
+    if run.include_forecast:
+        ident = (run.forecast_version or "").strip()
+        if not ident:
+            mrp_exc.raise_exception(
+                run, "FORECAST_VERSION_MISSING",
+                "Forecast is included but no forecast version was selected; "
+                "forecast demand was skipped.",
+                severity="WARNING", dedupe_key=("fc_missing",))
+        else:
+            v = None
+            if ident.isdigit():
+                v = ForecastVersion.objects.filter(tenant=run.tenant, pk=int(ident)).first()
+            if v is None:
+                v = ForecastVersion.objects.filter(tenant=run.tenant, code=ident).first()
+            if v is None:
+                mrp_exc.raise_exception(
+                    run, "FORECAST_VERSION_INVALID",
+                    f"Forecast version '{ident}' was not found; forecast demand was skipped.",
+                    severity="WARNING", dedupe_key=("fc_invalid",))
+            elif not v.is_selectable_for_mrp:
+                mrp_exc.raise_exception(
+                    run, "FORECAST_VERSION_INVALID",
+                    f"Forecast version {v.code} is {v.get_status_display()} and cannot be used "
+                    f"for planning; forecast demand was skipped.",
+                    severity="WARNING", dedupe_key=("fc_invalid",))
+            else:
+                version = v
+
+    run._forecast_version_resolved = version
+    return version
+
+
+def _collect_forecast(run, profile, version):
+    """Create FORECAST MRPDemand rows for one profile from a forecast version,
+    after consuming forecast with confirmed sales orders in the same bucket."""
+    from core.models import ForecastLine, MRPDemand
+    from core.services.mrp import forecast_consumption as fc
+
+    tenant = run.tenant
+    product = profile.product
+    site = profile.site
+    start = run.planning_start_date
+    end = run.planning_end_date
+    created = []
+
+    qs = ForecastLine.objects.filter(
+        tenant=tenant, forecast_version=version, product=product, site=site,
+        forecast_date__gte=start)
+    if end:
+        qs = qs.filter(forecast_date__lte=end)
+    lines = list(qs.select_related("product"))
+    if not lines:
+        return created
+
+    method = version.consumption_method
+    if method not in fc.SUPPORTED_METHODS:
+        mrp_exc.raise_exception(
+            run, "UNSUPPORTED_FORECAST_CONSUMPTION_METHOD",
+            f"Forecast consumption method {version.get_consumption_method_display()} is not "
+            f"supported yet; forecast was not consumed by sales.",
+            product=product, site=site, dedupe_key=("fc_method", version.id))
+        method = fc.NONE
+
+    for line, remaining, consumed in fc.consume(tenant, product, site, lines, method, start):
+        if (line.quantity or ZERO) < ZERO:
+            mrp_exc.raise_exception(
+                run, "FORECAST_LINE_INVALID_QTY",
+                f"Forecast line for {product.sku} at {site.name} has a negative quantity; skipped.",
+                product=product, site=site, dedupe_key=("fc_qty", line.id))
+            continue
+        if remaining <= ZERO:
+            continue
+        created.append(MRPDemand.objects.create(
+            mrp_run=run, tenant=tenant, product=product, site=site,
+            demand_type="FORECAST",
+            source_document_type="ForecastVersion", source_document_id=str(version.id),
+            source_line_id=str(line.id),
+            required_date=line.forecast_date, quantity=remaining,
+            consumed_quantity=consumed, open_quantity=remaining,
+            priority=0,
+        ))
     return created

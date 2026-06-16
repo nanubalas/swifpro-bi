@@ -65,13 +65,16 @@
       <div class="mrp-pane" id="mrp-pane-demand" hidden>
         <h5 class="fw-semibold mb-3">Demand</h5>
         <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
-          <th>Item</th><th>Site</th><th>Type</th><th>Source</th><th>Required</th><th class="text-end">Qty</th></tr></thead><tbody>
+          <th>Item</th><th>Site</th><th>Type</th><th>Source</th><th>Required</th>
+          <th class="text-end">Consumed</th><th class="text-end">Remaining / Qty</th></tr></thead><tbody>
           {% for d in demands %}<tr>
             <td class="fw-semibold">{{ d.product.sku }}</td><td class="small">{{ d.site.name }}</td>
-            <td><span class="badge text-bg-light">{{ d.get_demand_type_display }}</span></td>
+            <td><span class="badge {% if d.demand_type == 'FORECAST' %}text-bg-info{% else %}text-bg-light{% endif %}">{{ d.get_demand_type_display }}</span></td>
             <td class="small">{{ d.source_document_id|default:'-' }}</td>
-            <td class="small">{{ d.required_date }}</td><td class="text-end">{{ d.open_quantity }}</td>
-          </tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No demand. Run MRP to populate.</td></tr>{% endfor %}
+            <td class="small">{{ d.required_date }}</td>
+            <td class="text-end small">{% if d.demand_type == 'FORECAST' %}{{ d.consumed_quantity }}{% else %}-{% endif %}</td>
+            <td class="text-end">{{ d.open_quantity }}</td>
+          </tr>{% empty %}<tr><td colspan="7" class="text-center text-muted py-4">No demand. Run MRP to populate.</td></tr>{% endfor %}
         </tbody></table>
       </div>
 

@@ -81,6 +81,22 @@
       </select>
     </div>
     <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Demand source</label>
+      <select name="demand_source" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for val, lbl in demand_sources %}<option value="{{ val }}" {% if filters.demand_source == val %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+      </select>
+    </div>
+    {% if forecast_versions %}
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">Forecast version</label>
+      <select name="forecast_version" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for v in forecast_versions %}<option value="{{ v.id }}" {% if filters.forecast_version == v.id|stringformat:'s' %}selected{% endif %}>{{ v.code }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <div class="col-6 col-md-2">
       <label class="form-label small mb-1">Exception level</label>
       <select name="exception_level" class="form-select form-select-sm">
         <option value="">All</option>
