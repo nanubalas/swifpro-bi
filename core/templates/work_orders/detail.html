@@ -98,7 +98,15 @@
       </div>
 
       <div class="wo-pane" id="wo-pane-operations" hidden>
-        <h5 class="fw-semibold mb-3">Operations</h5>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="fw-semibold mb-0">Operations</h5>
+          {% if 'manage_schedule' in perms and wo.status != 'CLOSED' and wo.status != 'CANCELLED' %}
+          <div class="d-flex gap-1">
+            <form method="post" action="{% url 'work_order_reschedule' wo.id %}">{% csrf_token %}<input type="hidden" name="mode" value="BACKWARD"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-arrow-bar-left me-1"></i>Reschedule backward</button></form>
+            <form method="post" action="{% url 'work_order_reschedule' wo.id %}">{% csrf_token %}<input type="hidden" name="mode" value="FORWARD"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-arrow-bar-right me-1"></i>Reschedule forward</button></form>
+          </div>
+          {% endif %}
+        </div>
         <table class="table table-sm table-hover align-middle"><thead class="table-light"><tr>
           <th>Seq</th><th>Operation</th><th>Type</th><th>Work centre</th><th class="text-end">Planned hrs</th>
           <th class="text-end">Labour hrs</th><th class="text-end">OH hrs</th>

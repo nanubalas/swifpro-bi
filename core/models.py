@@ -3079,6 +3079,14 @@ class MRPException(models.Model):
         SUBCONTRACT_RECEIPT_UNSUPPORTED = "SUBCONTRACT_RECEIPT_UNSUPPORTED", "Subcontract receipt unsupported"
         SUBCONTRACT_COST_MISSING = "SUBCONTRACT_COST_MISSING", "Subcontract cost missing"
         SUBCONTRACT_ORDER_ALREADY_CONVERTED = "SUBCONTRACT_ORDER_ALREADY_CONVERTED", "Subcontract order already converted"
+        # Phase 14 additions (finite scheduling + shop calendar)
+        CALENDAR_MISSING = "CALENDAR_MISSING", "Shop calendar missing"
+        NO_WORKING_CAPACITY = "NO_WORKING_CAPACITY", "No working capacity in horizon"
+        SCHEDULING_FAILED = "SCHEDULING_FAILED", "Scheduling failed"
+        CAPACITY_NOT_AVAILABLE = "CAPACITY_NOT_AVAILABLE", "Capacity not available"
+        FINITE_CAPACITY_OVERLOAD = "FINITE_CAPACITY_OVERLOAD", "Finite capacity overload"
+        WORK_CENTRE_CALENDAR_INVALID = "WORK_CENTRE_CALENDAR_INVALID", "Work centre calendar invalid"
+        OPERATION_SCHEDULE_CONFLICT = "OPERATION_SCHEDULE_CONFLICT", "Operation schedule conflict"
         # Phase 3 additions (BOM / MAKE planning)
         INVALID_BOM = "INVALID_BOM", "Invalid BOM"
         BOM_NOT_APPROVED = "BOM_NOT_APPROVED", "BOM not approved"
@@ -3365,6 +3373,80 @@ class WorkOrderMaterial(models.Model):
 # release dates and rough-cut work-centre load; conversion creates the work
 # order's operation lines. No finite scheduling, labour booking or overhead.
 # ===========================================================================
+class ShopCalendar(models.Model):
+    """A working-time calendar for finite scheduling (Phase 14). Working days set
+    the base daily availability; exceptions override specific dates (holidays,
+    shutdowns, extra shifts, reduced capacity). When a work centre has no
+    calendar the scheduler falls back to Mon-Fri at the centre's daily capacity."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="shop_calendars")
+    code = models.CharField(max_length=40)
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    # Display timezone for the calendar (scheduling itself works in dates).
+    # Defined last so it does not shadow the module-level `timezone` import above.
+    timezone = models.CharField(max_length=60, blank=True)
+
+    class Meta:
+        unique_together = ("tenant", "code")
+        ordering = ["-is_default", "code"]
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
+class ShopCalendarWorkingDay(models.Model):
+    class Weekday(models.IntegerChoices):
+        MON = 0, "Monday"
+        TUE = 1, "Tuesday"
+        WED = 2, "Wednesday"
+        THU = 3, "Thursday"
+        FRI = 4, "Friday"
+        SAT = 5, "Saturday"
+        SUN = 6, "Sunday"
+
+    calendar = models.ForeignKey(ShopCalendar, on_delete=models.CASCADE, related_name="working_days")
+    weekday = models.PositiveSmallIntegerField(choices=Weekday.choices)
+    is_working_day = models.BooleanField(default=True)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    capacity_multiplier = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("1.00"))
+
+    class Meta:
+        unique_together = ("calendar", "weekday")
+        ordering = ["weekday"]
+
+    def __str__(self):
+        return f"{self.get_weekday_display()} ({'on' if self.is_working_day else 'off'})"
+
+
+class ShopCalendarException(models.Model):
+    class Type(models.TextChoices):
+        HOLIDAY = "HOLIDAY", "Holiday"
+        SHUTDOWN = "SHUTDOWN", "Shutdown"
+        EXTRA_SHIFT = "EXTRA_SHIFT", "Extra shift"
+        REDUCED_CAPACITY = "REDUCED_CAPACITY", "Reduced capacity"
+
+    calendar = models.ForeignKey(ShopCalendar, on_delete=models.CASCADE, related_name="exceptions")
+    date = models.DateField()
+    exception_type = models.CharField(max_length=20, choices=Type.choices, default=Type.HOLIDAY)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    capacity_multiplier = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"))
+    reason = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ("calendar", "date")
+        ordering = ["date"]
+
+    def __str__(self):
+        return f"{self.date} {self.exception_type}"
+
+
 class WorkCentre(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="work_centres")
     site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="work_centres")
@@ -3382,6 +3464,12 @@ class WorkCentre(models.Model):
     labour_rate_per_hour = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     overhead_rate_per_hour = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     machine_rate_per_hour = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    # Phase 14: finite scheduling. A calendar controls which days are available;
+    # finite_capacity_enabled makes the scheduler respect existing load per day.
+    shop_calendar = models.ForeignKey(ShopCalendar, on_delete=models.SET_NULL, null=True, blank=True,
+                                      related_name="work_centres")
+    scheduling_enabled = models.BooleanField(default=True)
+    finite_capacity_enabled = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

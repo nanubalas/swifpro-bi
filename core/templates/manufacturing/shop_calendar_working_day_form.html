@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Working day - {{ calendar.code }}{% endblock %}
+{% block back_url %}{% url 'shop_calendar_detail' calendar.id %}{% endblock %}
+{% block body %}
+<div class="mb-4">
+  <h2 class="fw-bold mb-1">Working day</h2>
+  <div class="text-muted">{{ calendar.code }} - {{ working_day.get_weekday_display }}</div>
+</div>
+
+<form method="post" action="{% url 'shop_calendar_working_day_edit' calendar.id %}">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="card mb-3"><div class="card-body p-4"><div class="row g-3">
+    {% for f in form %}
+    <div class="{% if f.name == 'is_working_day' %}col-12{% else %}col-md-3{% endif %}">
+      {% if f.name == 'is_working_day' %}
+        <div class="form-check">{{ f }} <label class="form-check-label">{{ f.label }}</label></div>
+      {% else %}
+        <label class="form-label">{{ f.label }}</label>{{ f }}
+      {% endif %}
+      {% for e in f.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+    </div>
+    {% endfor %}
+  </div></div></div>
+  <div class="d-flex justify-content-end gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'shop_calendar_detail' calendar.id %}">Cancel</a>
+    <button class="btn btn-primary" type="submit">Save</button>
+  </div>
+</form>
+
+<script>
+  document.querySelectorAll("form select").forEach(el => el.classList.add("form-select"));
+  document.querySelectorAll("form input").forEach(el => {
+    if (el.type === "checkbox") el.classList.add("form-check-input");
+    else if (el.type !== "hidden") el.classList.add("form-control");
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Shop Calendars - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'dashboard' %}{% endblock %}
+{% block body %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-calendar3 me-2"></i>Shop Calendars</h2>
+    <div class="text-muted">Working-time calendars drive finite scheduling. No calendar = Mon-Fri at the work-centre capacity.</div>
+  </div>
+  {% if 'manage_shop_calendar' in perms %}
+  <a class="btn btn-primary" href="{% url 'shop_calendar_create' %}"><i class="bi bi-plus-lg me-1"></i> New calendar</a>
+  {% endif %}
+</div>
+
+<div class="card"><div class="card-body p-0">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr>
+      <th>Code</th><th>Name</th><th>Default</th><th>Active</th><th class="text-end">Work centres</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for c in calendars %}
+      <tr {% if not c.is_active %}class="text-muted"{% endif %}>
+        <td class="fw-semibold">{{ c.code }}</td><td>{{ c.name }}</td>
+        <td>{{ c.is_default|yesno:"Yes,No" }}</td>
+        <td>{% if c.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+        <td class="text-end">{{ c.wc_count }}</td>
+        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'shop_calendar_detail' c.id %}">Open</a></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="text-center text-muted py-5">No shop calendars yet. Create one for finite scheduling.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

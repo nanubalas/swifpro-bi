@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Capacity Load - SwifPro BI{% endblock %}
+{% block back_url %}{% url 'dashboard' %}{% endblock %}
+{% block body %}
+<style>
+  .cl-over { color: #b02a37; font-weight: 600; }
+  .cl-util-high { color: #997404; font-weight: 600; }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="bi bi-bar-chart-steps me-2"></i>Capacity Load</h2>
+    <div class="text-muted">Scheduled load vs available capacity per work centre and day (rough-cut finite view).</div>
+  </div>
+</div>
+
+<div class="card mb-3"><div class="card-body py-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-6 col-md-3">
+      <label class="form-label small mb-1">Site</label>
+      <select name="site" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for s in sites %}<option value="{{ s.id }}" {% if filters.site == s.id|stringformat:'s' %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label small mb-1">Work centre</label>
+      <select name="work_centre" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for wc in all_centres %}<option value="{{ wc.id }}" {% if filters.work_centre == wc.id|stringformat:'s' %}selected{% endif %}>{{ wc.code }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">From</label>
+      <input type="date" name="start" value="{{ start|date:'Y-m-d' }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label small mb-1">To</label>
+      <input type="date" name="end" value="{{ end|date:'Y-m-d' }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-12 col-md-2">
+      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply</button>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'capacity_load' %}">Clear</a>
+    </div>
+  </form>
+</div></div>
+
+{% for block in load %}
+<div class="card mb-3"><div class="card-body">
+  <h5 class="fw-semibold mb-3">
+    {{ block.work_centre.code }} - {{ block.work_centre.name }}
+    <span class="text-muted small">{{ block.work_centre.site.name }}{% if block.work_centre.finite_capacity_enabled %} &middot; finite{% endif %}{% if block.work_centre.shop_calendar %} &middot; {{ block.work_centre.shop_calendar.code }}{% endif %}</span>
+    {% if block.overloaded %}<span class="badge text-bg-danger ms-2">Overloaded</span>{% endif %}
+  </h5>
+  <table class="table table-sm table-hover align-middle mb-0"><thead class="table-light"><tr>
+    <th>Date</th><th class="text-end">Available</th><th class="text-end">Scheduled</th>
+    <th class="text-end">Remaining</th><th class="text-end">Overload</th><th class="text-end">Utilisation</th></tr></thead><tbody>
+    {% for r in block.rows %}<tr>
+      <td class="small">{{ r.date|date:'D d M' }}</td>
+      <td class="text-end">{{ r.available }}</td>
+      <td class="text-end">{{ r.scheduled }}</td>
+      <td class="text-end">{{ r.remaining }}</td>
+      <td class="text-end {% if r.overload > 0 %}cl-over{% endif %}">{{ r.overload }}</td>
+      <td class="text-end {% if r.utilisation > 100 %}cl-over{% elif r.utilisation >= 85 %}cl-util-high{% endif %}">{{ r.utilisation }}%</td>
+    </tr>{% endfor %}
+  </tbody></table>
+</div></div>
+{% empty %}
+<div class="card"><div class="card-body text-center text-muted py-5">No active work centres for these filters.</div></div>
+{% endfor %}
+{% endblock %}

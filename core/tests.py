@@ -14014,3 +14014,346 @@ class MRPPhase13LabourOverheadTests(TestCase):
             "operation_id": op.id, "labour_hours": "6"})
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(WorkOrderCostBooking.objects.filter(work_order=wo).count(), 0)
+
+
+class MRPPhase14SchedulingTests(TestCase):
+    """Phase 14: shop calendars, calendar capacity, and finite scheduling."""
+
+    def setUp(self):
+        import datetime
+        from core.models import (OrgMembership, Location, Product, Site, Customer,
+                                  ShopCalendar, ShopCalendarWorkingDay, WorkCentre, RoutingHeader,
+                                  RoutingOperation)
+        from core.services.inventory import apply_movement
+        self.tenant = Tenant.objects.create(name="Sched Co")
+        self.site = Site.objects.filter(tenant=self.tenant).order_by("id").first()
+        self.loc = Location.objects.filter(tenant=self.tenant, site=self.site).order_by("id").first()
+        self.fg = Product.objects.create(tenant=self.tenant, sku="FG-001", name="Finished good",
+                                         standard_cost=Decimal("5.00"))
+        self.rm = Product.objects.create(tenant=self.tenant, sku="RM-001", name="Raw material")
+        self.supplier = Supplier.objects.create(tenant=self.tenant, name="Sup")
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Cust")
+        self.admin = User.objects.create_user("schadmin", password="pw")
+        OrgMembership.objects.create(user=self.admin, tenant=self.tenant, role="ADMIN", is_default=True)
+        self.manager = User.objects.create_user("schmgr", password="pw")
+        OrgMembership.objects.create(user=self.manager, tenant=self.tenant, role="MANAGER", is_default=True)
+        self.warehouse = User.objects.create_user("schwh", password="pw")
+        OrgMembership.objects.create(user=self.warehouse, tenant=self.tenant, role="WAREHOUSE", is_default=True)
+        self.purchasing = User.objects.create_user("schpur", password="pw")
+        OrgMembership.objects.create(user=self.purchasing, tenant=self.tenant, role="PURCHASING", is_default=True)
+        # A known week: Monday .. Sunday and the following Monday.
+        self.monday = datetime.date(2026, 6, 15) - datetime.timedelta(days=datetime.date(2026, 6, 15).weekday())
+        self.tuesday = self.monday + datetime.timedelta(days=1)
+        self.wednesday = self.monday + datetime.timedelta(days=2)
+        self.thursday = self.monday + datetime.timedelta(days=3)
+        self.friday = self.monday + datetime.timedelta(days=4)
+        self.saturday = self.monday + datetime.timedelta(days=5)
+        self.next_monday = self.monday + datetime.timedelta(days=7)
+        apply_movement(tenant=self.tenant, product=self.rm, location=self.loc,
+                       movement_type="RECEIVE", qty_delta=Decimal("100"), ref_type="SEED",
+                       ref_id="seed", unit_cost=Decimal("1.00"), user=self.admin)
+
+    # --- helpers ---
+    def _calendar(self, code="STD", all_off=False):
+        import datetime
+        from core.models import ShopCalendar, ShopCalendarWorkingDay
+        cal = ShopCalendar.objects.create(tenant=self.tenant, code=code, name=code, is_active=True)
+        for wd in range(7):
+            working = (not all_off) and wd < 5
+            ShopCalendarWorkingDay.objects.create(
+                calendar=cal, weekday=wd, is_working_day=working,
+                start_time=datetime.time(9, 0) if working else None,
+                end_time=datetime.time(17, 0) if working else None,
+                capacity_multiplier=Decimal("1.00"))
+        return cal
+
+    def _wc(self, code="ASM", cap="8", finite=True, calendar=None):
+        from core.models import WorkCentre
+        return WorkCentre.objects.create(
+            tenant=self.tenant, site=self.site, code=code, name=code,
+            capacity_hours_per_day=Decimal(cap), efficiency_percent=Decimal("100"),
+            shop_calendar=calendar, finite_capacity_enabled=finite, is_active=True)
+
+    def _routing(self, wc, ops=2, setup="480"):
+        from core.models import RoutingHeader, RoutingOperation
+        r = RoutingHeader.objects.create(tenant=self.tenant, product=self.fg, site=self.site,
+                                         routing_code="R-FG", status="ACTIVE", is_default=True)
+        for i in range(ops):
+            RoutingOperation.objects.create(
+                routing=r, operation_sequence=(i + 1) * 10, operation_name=f"Op{(i+1)*10}",
+                work_centre=wc, setup_minutes=Decimal(setup), run_minutes_per_unit=Decimal("0"))
+        return r
+
+    def _exc(self, cal, date, etype, mult):
+        from core.models import ShopCalendarException
+        return ShopCalendarException.objects.create(
+            calendar=cal, date=date, exception_type=etype, capacity_multiplier=Decimal(mult))
+
+    # =========================== calendar capacity ===========================
+    def test_working_day_capacity(self):
+        from core.services.mrp import scheduling
+        wc = self._wc(calendar=self._calendar())
+        self.assertEqual(scheduling.get_working_capacity(wc, self.monday), Decimal("8.00"))
+        self.assertEqual(scheduling.get_working_capacity(wc, self.saturday), Decimal("0.00"))
+
+    def test_holiday_zero_capacity(self):
+        from core.services.mrp import scheduling
+        cal = self._calendar()
+        self._exc(cal, self.monday, "HOLIDAY", "0")
+        wc = self._wc(calendar=cal)
+        self.assertEqual(scheduling.get_working_capacity(wc, self.monday), Decimal("0.00"))
+
+    def test_reduced_capacity_exception(self):
+        from core.services.mrp import scheduling
+        cal = self._calendar()
+        self._exc(cal, self.monday, "REDUCED_CAPACITY", "0.5")
+        wc = self._wc(calendar=cal)
+        self.assertEqual(scheduling.get_working_capacity(wc, self.monday), Decimal("4.00"))
+
+    def test_extra_shift_exception(self):
+        from core.services.mrp import scheduling
+        cal = self._calendar()
+        self._exc(cal, self.saturday, "EXTRA_SHIFT", "1.0")
+        wc = self._wc(calendar=cal)
+        self.assertEqual(scheduling.get_working_capacity(wc, self.saturday), Decimal("8.00"))
+
+    def test_workcentre_linked_to_calendar(self):
+        cal = self._calendar()
+        wc = self._wc(calendar=cal)
+        wc.refresh_from_db()
+        self.assertEqual(wc.shop_calendar_id, cal.id)
+
+    def test_fallback_calendar_when_none(self):
+        from core.services.mrp import scheduling
+        wc = self._wc(calendar=None)
+        self.assertEqual(scheduling.get_working_capacity(wc, self.monday), Decimal("8"))
+        self.assertEqual(scheduling.get_working_capacity(wc, self.saturday), Decimal("0"))
+
+    # =========================== operation placement ===========================
+    def test_backward_skips_weekends(self):
+        from core.services.mrp import scheduling
+        wc = self._wc(calendar=self._calendar())
+        start, end = scheduling.schedule_operation_backward(wc, Decimal("16"), self.next_monday)
+        self.assertEqual(end, self.next_monday)
+        self.assertEqual(start, self.friday)  # skipped Sat/Sun
+
+    def test_forward_skips_weekends(self):
+        from core.services.mrp import scheduling
+        wc = self._wc(calendar=self._calendar())
+        start, end = scheduling.schedule_operation_forward(wc, Decimal("16"), self.friday)
+        self.assertEqual(start, self.friday)
+        self.assertEqual(end, self.next_monday)  # skipped Sat/Sun
+
+    def test_finite_respects_existing_load(self):
+        from core.models import WorkOrder, WorkOrderOperation
+        from core.services.mrp.numbering import next_planned_order_number
+        from core.services.mrp import scheduling
+        wc = self._wc(calendar=self._calendar(), finite=True)
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.site, product=self.fg, quantity=Decimal("1"), status="PLANNED",
+            required_date=self.friday)
+        WorkOrderOperation.objects.create(
+            work_order=wo, operation_sequence=10, operation_name="Busy", work_centre=wc,
+            planned_hours=Decimal("8"), planned_start=self.friday, planned_end=self.friday, status="PLANNED")
+        # Friday is full (8/8); a new 8h op backward from Friday lands on Thursday.
+        start, end = scheduling.schedule_operation_backward(wc, Decimal("8"), self.friday)
+        self.assertEqual(end, self.thursday)
+
+    def test_no_working_capacity_raises(self):
+        from core.services.mrp import scheduling
+        wc = self._wc(calendar=self._calendar(all_off=True))
+        with self.assertRaises(scheduling.SchedulingError) as cm:
+            scheduling.schedule_operation_backward(wc, Decimal("8"), self.friday)
+        self.assertEqual(cm.exception.code, "NO_WORKING_CAPACITY")
+
+    # =========================== work-order scheduling ===========================
+    def _wo_with_ops(self, wc, end_date):
+        from core.models import WorkOrder, WorkOrderOperation
+        from core.services.mrp.numbering import next_planned_order_number
+        wo = WorkOrder.objects.create(
+            tenant=self.tenant, work_order_number="WO-" + next_planned_order_number(self.tenant),
+            site=self.site, product=self.fg, quantity=Decimal("1"), status="PLANNED",
+            required_date=end_date, planned_end_date=end_date)
+        for seq in (10, 20):
+            WorkOrderOperation.objects.create(
+                work_order=wo, operation_sequence=seq, operation_name=f"Op{seq}", work_centre=wc,
+                planned_hours=Decimal("8"), status="PLANNED")
+        return wo
+
+    def test_backward_sequences_operations(self):
+        from core.services.mrp import scheduling
+        wc = self._wc(calendar=self._calendar())
+        wo = self._wo_with_ops(wc, self.friday)
+        scheduling.schedule_work_order_operations(wo, mode="BACKWARD")
+        op10 = wo.operations.get(operation_sequence=10)
+        op20 = wo.operations.get(operation_sequence=20)
+        self.assertEqual(op20.planned_end, self.friday)
+        self.assertEqual(op20.planned_start, self.friday)
+        self.assertEqual(op10.planned_end, self.thursday)
+
+    def test_forward_sequences_operations(self):
+        from core.services.mrp import scheduling
+        wc = self._wc(calendar=self._calendar())
+        wo = self._wo_with_ops(wc, self.friday)
+        wo.planned_start_date = self.monday
+        wo.save()
+        scheduling.schedule_work_order_operations(wo, mode="FORWARD")
+        op10 = wo.operations.get(operation_sequence=10)
+        op20 = wo.operations.get(operation_sequence=20)
+        self.assertEqual(op10.planned_start, self.monday)
+        self.assertEqual(op20.planned_start, self.tuesday)
+
+    # =========================== MRP integration ===========================
+    def _profile(self, product, source_type, supplier="default", **kw):
+        from core.models import ItemSitePlanning
+        if supplier == "default":
+            supplier = self.supplier if source_type == "BUY" else None
+        defaults = dict(tenant=self.tenant, product=product, site=self.site, source_type=source_type,
+                        default_supplier=supplier, safety_stock_qty=Decimal("0"),
+                        min_order_qty=Decimal("0"), max_order_qty=Decimal("0"), order_multiple=Decimal("0"),
+                        lead_time_days=3, lot_sizing_method="LOT_FOR_LOT")
+        defaults.update(kw)
+        return ItemSitePlanning.objects.create(**defaults)
+
+    def _bom(self):
+        from core.models import BillOfMaterials, BillOfMaterialsLine
+        bom = BillOfMaterials.objects.create(tenant=self.tenant, product=self.fg, name="BOM",
+                                             output_qty=Decimal("1"))
+        BillOfMaterialsLine.objects.create(bom=bom, line_no=10, component=self.rm, qty=Decimal("1"))
+        return bom
+
+    def _sales(self, qty, date):
+        from core.models import CustomerOrder, CustomerOrderLine
+        from core.services.mrp import next_run_number
+        o = CustomerOrder.objects.create(
+            tenant=self.tenant, customer=self.customer, site=self.site,
+            order_number="SO-" + next_run_number(self.tenant), status="CONFIRMED", order_date=date)
+        CustomerOrderLine.objects.create(order=o, product=self.fg, qty=Decimal(qty))
+        return o
+
+    def _run(self):
+        import datetime
+        from core.models import MRPRun
+        from core.services.mrp import next_run_number, run_mrp
+        run = MRPRun.objects.create(
+            tenant=self.tenant, run_number=next_run_number(self.tenant),
+            planning_start_date=self.monday - datetime.timedelta(days=14),
+            planning_end_date=self.next_monday + datetime.timedelta(days=14))
+        return run_mrp(run, user=self.admin)
+
+    def test_make_planned_order_uses_scheduled_release(self):
+        wc = self._wc(calendar=self._calendar())
+        self._routing(wc, ops=2)            # two 8h ops
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom()
+        self._sales(1, self.friday)
+        run = self._run()
+        po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        # op20 Friday, op10 Thursday -> release Thursday, receipt Friday.
+        self.assertEqual(po.planned_receipt_date, self.friday)
+        self.assertEqual(po.planned_release_date, self.thursday)
+
+    def test_scheduling_failure_falls_back(self):
+        wc = self._wc(calendar=self._calendar(all_off=True))
+        self._routing(wc, ops=1)
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom()
+        self._sales(1, self.friday)
+        run = self._run()
+        po = run.planned_orders.get(source_type="MAKE", product=self.fg)
+        self.assertIsNotNone(po.planned_release_date)   # rough-cut fallback still set
+        self.assertTrue(run.exceptions.filter(
+            exception_code__in=["NO_WORKING_CAPACITY", "SCHEDULING_FAILED"]).exists())
+
+    def test_conversion_creates_operation_dates(self):
+        from core.models import MRPPlannedOrder, MRPRun
+        from core.services.mrp import next_run_number, next_planned_order_number, conversion
+        wc = self._wc(calendar=self._calendar())
+        self._routing(wc, ops=2)
+        run = MRPRun.objects.create(tenant=self.tenant, run_number=next_run_number(self.tenant),
+                                    planning_start_date=self.monday, planning_end_date=self.next_monday)
+        po = MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.fg, site=self.site, source_type="MAKE",
+            planned_order_number=next_planned_order_number(self.tenant), quantity=Decimal("1"),
+            required_date=self.friday, planned_receipt_date=self.friday,
+            planned_release_date=self.monday, status="SUGGESTED")
+        wo, created, _ = conversion.convert_make_to_work_order(po, self.admin)
+        op20 = wo.operations.get(operation_sequence=20)
+        op10 = wo.operations.get(operation_sequence=10)
+        self.assertEqual(op20.planned_end, self.friday)
+        self.assertEqual(op10.planned_end, self.thursday)
+
+    # =========================== views ===========================
+    def test_shop_calendar_crud_loads(self):
+        cal = self._calendar()
+        self.client.login(username="schadmin", password="pw")
+        self.assertEqual(self.client.get("/shop-calendars/").status_code, 200)
+        self.assertEqual(self.client.get("/shop-calendars/%d/" % cal.id).status_code, 200)
+        resp = self.client.post("/shop-calendars/new/", {"code": "WK2", "name": "Week 2"})
+        self.assertEqual(resp.status_code, 302)
+        from core.models import ShopCalendar, ShopCalendarWorkingDay
+        new = ShopCalendar.objects.get(tenant=self.tenant, code="WK2")
+        self.assertEqual(ShopCalendarWorkingDay.objects.filter(calendar=new).count(), 7)  # seeded
+
+    def test_capacity_load_page(self):
+        wc = self._wc(calendar=self._calendar())
+        self.client.login(username="schadmin", password="pw")
+        resp = self.client.get("/capacity-load/?start=%s&end=%s" % (self.monday, self.friday))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, wc.code)
+        self.assertContains(resp, "Utilisation")
+
+    def test_workbench_shows_scheduling_exception(self):
+        wc = self._wc(calendar=self._calendar(all_off=True))
+        self._routing(wc, ops=1)
+        self._profile(self.fg, "MAKE")
+        self._profile(self.rm, "BUY")
+        self._bom()
+        self._sales(1, self.friday)
+        run = self._run()
+        self.client.login(username="schadmin", password="pw")
+        resp = self.client.get("/mrp/runs/%d/workbench/" % run.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "could not complete")
+
+    # =========================== permissions ===========================
+    def test_reschedule_permission(self):
+        from core.models import MRPPlannedOrder, MRPRun
+        from core.services.mrp import next_run_number, next_planned_order_number, conversion
+        wc = self._wc(calendar=self._calendar())
+        self._routing(wc, ops=2)
+        run = MRPRun.objects.create(tenant=self.tenant, run_number=next_run_number(self.tenant),
+                                    planning_start_date=self.monday, planning_end_date=self.next_monday)
+        po = MRPPlannedOrder.objects.create(
+            mrp_run=run, tenant=self.tenant, product=self.fg, site=self.site, source_type="MAKE",
+            planned_order_number=next_planned_order_number(self.tenant), quantity=Decimal("1"),
+            required_date=self.friday, planned_receipt_date=self.friday,
+            planned_release_date=self.monday, status="SUGGESTED")
+        wo, _, _ = conversion.convert_make_to_work_order(po, self.admin)
+
+        # Purchasing has VIEW_SCHEDULE but not MANAGE_SCHEDULE -> blocked.
+        self.client.login(username="schpur", password="pw")
+        resp = self.client.post("/work-orders/%d/reschedule/" % wo.id, {"mode": "BACKWARD"})
+        self.assertEqual(resp.status_code, 403)
+
+        # Warehouse has MANAGE_SCHEDULE -> allowed.
+        self.client.login(username="schwh", password="pw")
+        resp = self.client.post("/work-orders/%d/reschedule/" % wo.id, {"mode": "BACKWARD"})
+        self.assertEqual(resp.status_code, 302)
+
+    def test_shop_calendar_manage_permission(self):
+        from core.models import ShopCalendar
+        # Warehouse can view but not create calendars.
+        self.client.login(username="schwh", password="pw")
+        self.assertEqual(self.client.get("/shop-calendars/").status_code, 200)
+        resp = self.client.post("/shop-calendars/new/", {"code": "NOPE", "name": "x"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(ShopCalendar.objects.filter(tenant=self.tenant, code="NOPE").exists())
+        # Manager can create.
+        self.client.login(username="schmgr", password="pw")
+        resp = self.client.post("/shop-calendars/new/", {"code": "MGR", "name": "Manager cal"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(ShopCalendar.objects.filter(tenant=self.tenant, code="MGR").exists())

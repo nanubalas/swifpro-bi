@@ -7674,9 +7674,12 @@ def mrp_workbench(request, run_id):
     fc_ids = [i for i in fc_ids if i and i.isdigit()]
     forecast_versions = ForecastVersion.objects.filter(tenant=tenant, id__in=fc_ids).order_by("code")
 
-    # Run-level capacity exceptions (not tied to a planned order) - shown as a banner.
-    capacity_exceptions = list(run.exceptions.filter(exception_code="CAPACITY_OVERLOAD")
-                               .order_by("severity")[:50])
+    # Run-level capacity + scheduling exceptions - shown as a banner.
+    capacity_exceptions = list(run.exceptions.filter(exception_code__in=[
+        "CAPACITY_OVERLOAD", "FINITE_CAPACITY_OVERLOAD", "SCHEDULING_FAILED",
+        "NO_WORKING_CAPACITY", "CAPACITY_NOT_AVAILABLE", "CALENDAR_MISSING",
+        "WORK_CENTRE_CALENDAR_INVALID", "OPERATION_SCHEDULE_CONFLICT",
+    ]).order_by("severity")[:50])
 
     return render(request, "mrp/workbench.html", {
         "tenant": tenant, "run": run, "planned_orders": planned_orders,
@@ -8153,6 +8156,205 @@ def routing_operation_delete(request, op_id):
 
 
 # ===========================================================================
+# Shop calendars + capacity load (Phase 14)
+# ===========================================================================
+
+_DEFAULT_WORKING_DAYS = [(0, True), (1, True), (2, True), (3, True), (4, True), (5, False), (6, False)]
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_SHOP_CALENDAR)
+def shop_calendar_list(request):
+    from core.models import ShopCalendar
+    from django.db.models import Count
+    tenant = _get_default_tenant(request)
+    calendars = (ShopCalendar.objects.filter(tenant=tenant)
+                 .annotate(wc_count=Count("work_centres")).order_by("-is_default", "code"))
+    return render(request, "manufacturing/shop_calendar_list.html",
+                  {"tenant": tenant, "calendars": calendars})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SHOP_CALENDAR)
+def shop_calendar_create(request):
+    import datetime
+    from core.forms import ShopCalendarForm
+    from core.models import ShopCalendarWorkingDay
+    tenant = _get_default_tenant(request)
+    if not tenant:
+        return render(request, "base.html", {"content": "Create a Tenant in admin first."})
+    form = ShopCalendarForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                cal = form.save(commit=False)
+                cal.tenant = tenant
+                cal.save()
+                # Seed a sensible Mon-Fri 09:00-17:00 default the planner can edit.
+                for weekday, working in _DEFAULT_WORKING_DAYS:
+                    ShopCalendarWorkingDay.objects.create(
+                        calendar=cal, weekday=weekday, is_working_day=working,
+                        start_time=datetime.time(9, 0) if working else None,
+                        end_time=datetime.time(17, 0) if working else None,
+                        capacity_multiplier=Decimal("1.00"))
+            log_audit(action="shop_calendar_create", request=request, user=request.user, tenant=tenant,
+                      detail=cal.code)
+            messages.success(request, f"Shop calendar {cal.code} created (Mon-Fri seeded).")
+            return redirect("shop_calendar_detail", calendar_id=cal.id)
+        except IntegrityError:
+            form.add_error("code", "A calendar with this code already exists.")
+    return render(request, "manufacturing/shop_calendar_form.html",
+                  {"tenant": tenant, "form": form, "mode": "create"})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SHOP_CALENDAR)
+def shop_calendar_edit(request, calendar_id):
+    from core.forms import ShopCalendarForm
+    from core.models import ShopCalendar
+    tenant = _get_default_tenant(request)
+    cal = get_object_or_404(ShopCalendar, id=calendar_id, tenant=tenant)
+    form = ShopCalendarForm(request.POST or None, instance=cal)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+            messages.success(request, "Shop calendar updated.")
+            return redirect("shop_calendar_detail", calendar_id=cal.id)
+        except IntegrityError:
+            form.add_error("code", "A calendar with this code already exists.")
+    return render(request, "manufacturing/shop_calendar_form.html",
+                  {"tenant": tenant, "form": form, "mode": "edit", "calendar": cal})
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_SHOP_CALENDAR)
+def shop_calendar_detail(request, calendar_id):
+    from core.forms import ShopCalendarExceptionForm
+    from core.models import ShopCalendar
+    tenant = _get_default_tenant(request)
+    cal = get_object_or_404(ShopCalendar, id=calendar_id, tenant=tenant)
+    working_days = cal.working_days.order_by("weekday")
+    exceptions = cal.exceptions.order_by("date")
+    can_manage = permissions_mod.MANAGE_SHOP_CALENDAR in _effective_perms(request)
+    return render(request, "manufacturing/shop_calendar_detail.html", {
+        "tenant": tenant, "calendar": cal, "working_days": working_days,
+        "exceptions": exceptions, "exception_form": ShopCalendarExceptionForm(),
+        "can_manage": can_manage,
+    })
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SHOP_CALENDAR)
+def shop_calendar_working_day_edit(request, calendar_id):
+    from core.forms import ShopCalendarWorkingDayForm
+    from core.models import ShopCalendar, ShopCalendarWorkingDay
+    tenant = _get_default_tenant(request)
+    cal = get_object_or_404(ShopCalendar, id=calendar_id, tenant=tenant)
+    weekday = int(request.POST.get("weekday") or request.GET.get("weekday") or 0)
+    wd, _ = ShopCalendarWorkingDay.objects.get_or_create(calendar=cal, weekday=weekday)
+    form = ShopCalendarWorkingDayForm(request.POST or None, instance=wd)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            form.save()
+        messages.success(request, "Working day updated.")
+        return redirect("shop_calendar_detail", calendar_id=cal.id)
+    return render(request, "manufacturing/shop_calendar_working_day_form.html",
+                  {"tenant": tenant, "form": form, "calendar": cal, "working_day": wd})
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SHOP_CALENDAR)
+def shop_calendar_exception_create(request, calendar_id):
+    from core.forms import ShopCalendarExceptionForm
+    from core.models import ShopCalendar
+    tenant = _get_default_tenant(request)
+    cal = get_object_or_404(ShopCalendar, id=calendar_id, tenant=tenant)
+    if request.method == "POST":
+        form = ShopCalendarExceptionForm(request.POST)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    exc = form.save(commit=False)
+                    exc.calendar = cal
+                    exc.save()
+                messages.success(request, f"Exception on {exc.date} added.")
+            except IntegrityError:
+                messages.error(request, "An exception already exists for that date.")
+        else:
+            messages.error(request, "Could not add the exception; check the date and values.")
+    return redirect("shop_calendar_detail", calendar_id=cal.id)
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SHOP_CALENDAR)
+def shop_calendar_exception_delete(request, exception_id):
+    from core.models import ShopCalendarException
+    tenant = _get_default_tenant(request)
+    exc = get_object_or_404(ShopCalendarException.objects.select_related("calendar"),
+                            id=exception_id, calendar__tenant=tenant)
+    cal_id = exc.calendar_id
+    if request.method == "POST":
+        exc.delete()
+        messages.success(request, "Exception removed.")
+    return redirect("shop_calendar_detail", calendar_id=cal_id)
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_SCHEDULE)
+def capacity_load(request):
+    """Per-day scheduled load for one or all work centres over a date range."""
+    import datetime
+    from core.models import WorkCentre
+    from core.services.mrp import scheduling
+    tenant = _get_default_tenant(request)
+    today = timezone.localdate()
+    f = request.GET
+
+    def _date(key, default):
+        val = (f.get(key) or "").strip()
+        if val:
+            try:
+                return datetime.date.fromisoformat(val)
+            except ValueError:
+                return default
+        return default
+
+    start = _date("start", today)
+    end = _date("end", today + datetime.timedelta(days=13))
+    if end < start:
+        end = start
+
+    centres = WorkCentre.objects.filter(tenant=tenant, is_active=True).select_related("site", "shop_calendar")
+    site_id = f.get("site")
+    if site_id:
+        centres = centres.filter(site_id=site_id)
+    wc_id = f.get("work_centre")
+    if wc_id:
+        centres = centres.filter(id=wc_id)
+    centres = centres.order_by("code")
+
+    load = []
+    for wc in centres:
+        rows = scheduling.calculate_daily_load(wc, start, end)
+        load.append({"work_centre": wc, "rows": rows,
+                     "overloaded": any(r["overload"] > 0 for r in rows)})
+
+    from core.models import Site
+    sites = Site.objects.filter(tenant=tenant).order_by("name")
+    all_centres = WorkCentre.objects.filter(tenant=tenant, is_active=True).order_by("code")
+    return render(request, "manufacturing/capacity_load.html", {
+        "tenant": tenant, "load": load, "start": start, "end": end,
+        "sites": sites, "all_centres": all_centres, "filters": f,
+    })
+
+
+def _effective_perms(request):
+    from core.access import get_effective_permissions
+    return get_effective_permissions(request)
+
+
+# ===========================================================================
 # Work Order execution (Phase 6)
 # ===========================================================================
 
@@ -8391,4 +8593,30 @@ def work_order_book(request, wo_id):
         messages.error(request, str(e))
     except (InvalidOperation, ValueError):
         messages.error(request, "Enter valid hours.")
+    return redirect("work_order_detail", wo_id=wo.id)
+
+
+@login_required
+@permission_required(permissions_mod.MANAGE_SCHEDULE)
+def work_order_reschedule(request, wo_id):
+    """Re-run finite scheduling over a work order's operations (Phase 14).
+    Backward from the required/end date, or forward from the start date. No
+    inventory or GL effect."""
+    from core.models import WorkOrder
+    from core.services.mrp import scheduling
+    tenant = _get_default_tenant(request)
+    wo = get_object_or_404(WorkOrder, id=wo_id, tenant=tenant)
+    if request.method != "POST":
+        return redirect("work_order_detail", wo_id=wo.id)
+    mode = "FORWARD" if (request.POST.get("mode") or "").upper() == "FORWARD" else "BACKWARD"
+    if not wo.operations.exists():
+        messages.info(request, "This work order has no operations to schedule.")
+        return redirect("work_order_detail", wo_id=wo.id)
+    try:
+        scheduling.schedule_work_order_operations(wo, mode=mode)
+        log_audit(action="work_order_reschedule", request=request, user=request.user, tenant=tenant,
+                  detail=f"{wo.work_order_number} {mode}")
+        messages.success(request, f"Rescheduled {wo.work_order_number} ({mode.lower()}).")
+    except scheduling.SchedulingError as e:
+        messages.error(request, f"Could not reschedule: {e}")
     return redirect("work_order_detail", wo_id=wo.id)

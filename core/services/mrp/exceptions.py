@@ -63,6 +63,14 @@ _REGISTRY = {
     "SUBCONTRACT_RECEIPT_UNSUPPORTED": ("INFO", "Subcontract receipt is handled via the existing goods-receipt flow."),
     "SUBCONTRACT_COST_MISSING": ("INFO", "No subcontract service cost set; standard cost was used."),
     "SUBCONTRACT_ORDER_ALREADY_CONVERTED": ("INFO", "This subcontract order has already been converted."),
+    # Phase 14 (finite scheduling + shop calendar)
+    "CALENDAR_MISSING": ("WARNING", "Assign a shop calendar to the work centre."),
+    "NO_WORKING_CAPACITY": ("WARNING", "No working capacity in the horizon; review the calendar."),
+    "SCHEDULING_FAILED": ("WARNING", "Finite scheduling failed; rough-cut dates were used."),
+    "CAPACITY_NOT_AVAILABLE": ("WARNING", "Required capacity is not available on the working days."),
+    "FINITE_CAPACITY_OVERLOAD": ("WARNING", "Work centre is overloaded; level the schedule."),
+    "WORK_CENTRE_CALENDAR_INVALID": ("WARNING", "The work centre calendar is invalid."),
+    "OPERATION_SCHEDULE_CONFLICT": ("WARNING", "Operation schedule conflicts with existing load."),
 }
 
 

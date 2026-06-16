@@ -21,6 +21,7 @@ from core.models import (
     RecurringInvoice, RecurringInvoiceLine,
     ItemSitePlanning, MRPRun, ForecastVersion, ForecastLine,
     WorkCentre, RoutingHeader, RoutingOperation,
+    ShopCalendar, ShopCalendarWorkingDay, ShopCalendarException,
 )
 
 
@@ -1077,7 +1078,8 @@ class WorkCentreForm(TenantModelForm):
         fields = [
             "site", "code", "name", "description", "capacity_hours_per_day",
             "efficiency_percent", "labour_rate_per_hour", "overhead_rate_per_hour",
-            "machine_rate_per_hour", "calendar_code", "working_days_mask",
+            "machine_rate_per_hour", "shop_calendar", "scheduling_enabled",
+            "finite_capacity_enabled", "calendar_code", "working_days_mask",
             "default_queue_hours", "default_move_hours", "is_active",
         ]
         widgets = {"description": forms.Textarea(attrs={"rows": 2})}
@@ -1159,3 +1161,34 @@ class RoutingOperationForm(TenantModelForm):
         from decimal import Decimal as _D
         v = self.cleaned_data.get("subcontract_unit_cost")
         return v if v is not None else _D("0.00")
+
+
+class ShopCalendarForm(TenantModelForm):
+    """Create / edit a shop calendar (Phase 14)."""
+    class Meta:
+        model = ShopCalendar
+        fields = ["code", "name", "description", "timezone", "is_default", "is_active"]
+        widgets = {"description": forms.Textarea(attrs={"rows": 2})}
+
+
+class ShopCalendarWorkingDayForm(forms.ModelForm):
+    """Edit a single weekday's working-time rule."""
+    class Meta:
+        model = ShopCalendarWorkingDay
+        fields = ["weekday", "is_working_day", "start_time", "end_time", "capacity_multiplier"]
+        widgets = {
+            "start_time": forms.TimeInput(attrs={"type": "time"}),
+            "end_time": forms.TimeInput(attrs={"type": "time"}),
+        }
+
+
+class ShopCalendarExceptionForm(forms.ModelForm):
+    """Add / edit a calendar exception (holiday, shutdown, extra shift, reduced)."""
+    class Meta:
+        model = ShopCalendarException
+        fields = ["date", "exception_type", "start_time", "end_time", "capacity_multiplier", "reason"]
+        widgets = {
+            "date": forms.DateInput(attrs={"type": "date"}),
+            "start_time": forms.TimeInput(attrs={"type": "time"}),
+            "end_time": forms.TimeInput(attrs={"type": "time"}),
+        }
