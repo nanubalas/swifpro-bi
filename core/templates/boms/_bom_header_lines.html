@@ -1,0 +1,293 @@
+{% comment %}
+BOM-specific EDITABLE Header + Components two-panel form. Forked from
+documents/_header_lines_form.html so BOM behaviour can diverge without touching
+the shared PO / Sales-Order document form. Differences:
+ - Left nav lists components by their LINE NUMBER (10, 20, 30...) as clickable links.
+ - Clicking "Components" shows a summary table (Line No, Component, Qty); each
+   row opens that component's full detail pane.
+ - Line numbers are READ ONLY. They are assigned (in steps of 10) when a
+   component is added; to change the order, delete the component and add a new
+   one rather than editing the number.
+Expects `form` (header ModelForm) and `formset` (inline line formset).
+{% endcomment %}
+<style>
+  .hlf-left .list-group-item { cursor: pointer; border: 0; border-radius: 8px; }
+  .hlf-left .hlf-nav.active { background: var(--skn-brand-soft); color: var(--skn-brand); font-weight: 650; }
+  .hlf-left .hlf-subitem { padding-left: 2.4rem; font-size: .9rem; }
+  .hlf-sublist.collapsed { display: none; }
+  .hlf-caret { transition: transform .18s ease; font-size: .8rem; }
+  #hlf-lines-toggle.lines-collapsed .hlf-caret { transform: rotate(-90deg); }
+  input[name$="-line_no"][readonly] { background: var(--bs-secondary-bg, #f1f3f5); cursor: not-allowed; }
+  @media (min-width: 992px) {
+    .hlf-left { position: sticky; top: 84px; }
+    .hlf-right { max-height: calc(100vh - 200px); overflow: auto; }
+  }
+</style>
+
+<form method="post" id="hlf-form">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  {{ formset.management_form }}
+  {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
+
+  <div class="row g-3">
+    <!-- Left: navigation -->
+    <div class="col-lg-3">
+      <div class="card hlf-left"><div class="list-group list-group-flush p-2">
+        <button type="button" class="hlf-nav list-group-item list-group-item-action active" data-pane="header">
+          <i class="bi bi-card-heading me-2"></i>Header{% if form.errors %} <i class="bi bi-exclamation-circle text-danger ms-1"></i>{% endif %}
+        </button>
+        <button type="button" class="hlf-nav list-group-item list-group-item-action d-flex justify-content-between align-items-center" id="hlf-lines-toggle" data-pane="lines">
+          <span><i class="bi bi-list-ol me-2"></i>Components</span>
+          <i class="bi bi-chevron-down hlf-caret"></i>
+        </button>
+        <div id="hlf-line-list" class="hlf-sublist">
+          {% for lf in formset %}
+          <button type="button" class="hlf-nav hlf-subitem list-group-item list-group-item-action" data-pane="line-{{ forloop.counter0 }}">
+            <i class="bi bi-hash"></i>{{ lf.line_no.value|default:forloop.counter }}{% if lf.errors %} <i class="bi bi-exclamation-circle text-danger ms-1"></i>{% endif %}
+          </button>
+          {% endfor %}
+        </div>
+        <button type="button" class="list-group-item list-group-item-action text-primary fw-semibold" id="hlf-add-line">
+          <i class="bi bi-plus-lg me-2"></i>Add component
+        </button>
+      </div></div>
+    </div>
+
+    <!-- Right: editable detail -->
+    <div class="col-lg-9">
+      <div class="card hlf-right"><div class="card-body">
+
+        {# Header pane #}
+        <div class="hlf-pane" id="hlf-pane-header">
+          <h5 class="fw-semibold mb-3">Header</h5>
+          <div class="row g-3">
+            {% for field in form %}{% if not field.is_hidden %}
+            <div class="col-md-6">
+              <label class="form-label">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+            {% endif %}{% endfor %}
+            {% for field in form.hidden_fields %}{{ field }}{% endfor %}
+          </div>
+        </div>
+
+        {# Components summary-table pane #}
+        <div class="hlf-pane" id="hlf-pane-lines" hidden>
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="fw-semibold mb-0">Components</h5>
+            <button type="button" class="btn btn-sm btn-outline-primary hlf-add-line2"><i class="bi bi-plus-lg me-1"></i> Add component</button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+              <thead class="table-light"><tr>
+                <th style="width:18%">Line No</th><th>Component</th><th class="text-end" style="width:18%">Qty</th>
+              </tr></thead>
+              <tbody id="hlf-lines-table"><tr><td colspan="3" class="text-muted text-center py-3">No components yet.</td></tr></tbody>
+            </table>
+          </div>
+          <p class="form-text small mb-0">Line numbers are fixed (steps of 10). To change the order, delete a component and add a new one.</p>
+        </div>
+
+        {# Editable per-line panes #}
+        <div id="hlf-line-panes">
+          {% for lf in formset %}
+          <div class="hlf-pane hlf-line-pane" id="hlf-pane-line-{{ forloop.counter0 }}" hidden>
+            {% for h in lf.hidden_fields %}{{ h }}{% endfor %}
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h5 class="fw-semibold mb-0">Component <span class="text-muted small">(Line <span class="hlf-line-num">{{ lf.line_no.value }}</span>)</span></h5>
+              <button type="button" class="btn btn-sm btn-outline-danger hlf-remove-line"><i class="bi bi-trash me-1"></i> Remove</button>
+            </div>
+            <div class="row g-3">
+              {% for field in lf %}{% if not field.is_hidden and field.name != "DELETE" %}
+              <div class="col-md-6">
+                <label class="form-label">{{ field.label }}</label>
+                {{ field }}
+                {% if field.name == "line_no" %}<div class="form-text">Fixed. Delete and re-add to reorder.</div>{% endif %}
+                {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+              </div>
+              {% endif %}{% endfor %}
+            </div>
+            <div class="d-none">{{ lf.DELETE }}</div>
+          </div>
+          {% endfor %}
+        </div>
+
+        <template id="hlf-empty-template">
+          <div class="hlf-pane hlf-line-pane" id="hlf-pane-line-__prefix__" hidden>
+            {% for h in formset.empty_form.hidden_fields %}{{ h }}{% endfor %}
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h5 class="fw-semibold mb-0">Component <span class="text-muted small">(Line <span class="hlf-line-num"></span>)</span></h5>
+              <button type="button" class="btn btn-sm btn-outline-danger hlf-remove-line"><i class="bi bi-trash me-1"></i> Remove</button>
+            </div>
+            <div class="row g-3">
+              {% for field in formset.empty_form %}{% if not field.is_hidden and field.name != "DELETE" %}
+              <div class="col-md-6"><label class="form-label">{{ field.label }}</label>{{ field }}{% if field.name == "line_no" %}<div class="form-text">Fixed. Delete and re-add to reorder.</div>{% endif %}</div>
+              {% endif %}{% endfor %}
+            </div>
+            <div class="d-none">{{ formset.empty_form.DELETE }}</div>
+          </div>
+        </template>
+
+        <div class="d-flex justify-content-end gap-2 mt-4">
+          <a class="btn btn-outline-secondary" href="{{ list_url|default:'/' }}">Cancel</a>
+          <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i> {{ save_label|default:"Save" }}</button>
+        </div>
+      </div></div>
+    </div>
+  </div>
+</form>
+
+<script>
+  (function () {
+    var form = document.getElementById("hlf-form");
+    if (!form) return;
+    var navList = document.getElementById("hlf-line-list");
+    var linesToggle = document.getElementById("hlf-lines-toggle");
+    var panesWrap = document.getElementById("hlf-line-panes");
+    var tmpl = document.getElementById("hlf-empty-template");
+    var totalForms = form.querySelector('input[name$="-TOTAL_FORMS"]');
+
+    function escapeHtml(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+        return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+      });
+    }
+    function styleControls(scope) {
+      scope.querySelectorAll("select, input, textarea").forEach(function (el) {
+        if (el.type === "checkbox") el.classList.add("form-check-input");
+        else if (el.type !== "hidden") el.classList.add("form-control");
+      });
+    }
+    function lockLineNos(scope) {
+      (scope || form).querySelectorAll('input[name$="-line_no"]').forEach(function (el) {
+        el.readOnly = true;
+        el.setAttribute("tabindex", "-1");
+        el.title = "Line numbers are fixed. Delete and re-add a component to reorder.";
+      });
+    }
+    function nextLineNo() {
+      var max = 0;
+      form.querySelectorAll('input[name$="-line_no"]').forEach(function (el) {
+        var v = parseInt(el.value, 10);
+        if (!isNaN(v) && v > max) max = v;
+      });
+      return max + 10;
+    }
+    styleControls(form);
+    lockLineNos(form);
+
+    function buildLinesTable() {
+      var body = document.getElementById("hlf-lines-table");
+      if (!body) return;
+      var rows = [];
+      form.querySelectorAll(".hlf-line-pane").forEach(function (pane) {
+        var del = pane.querySelector('input[name$="-DELETE"]');
+        if (del && del.checked) return;
+        var key = pane.id.replace("hlf-pane-", "");
+        var lnEl = pane.querySelector('input[name$="-line_no"]');
+        var compEl = pane.querySelector('select[name$="-component"]');
+        var qtyEl = pane.querySelector('input[name$="-qty"]');
+        var ln = lnEl ? lnEl.value : "";
+        var comp = "";
+        if (compEl && compEl.selectedIndex >= 0 && compEl.options[compEl.selectedIndex]) {
+          comp = compEl.options[compEl.selectedIndex].text;
+          if (comp === "---------") comp = "";
+        }
+        var qty = qtyEl ? qtyEl.value : "";
+        rows.push(
+          '<tr style="cursor:pointer" data-pane="' + key + '">' +
+          '<td class="fw-semibold text-primary"><i class="bi bi-hash"></i>' + escapeHtml(ln) + '</td>' +
+          '<td>' + (escapeHtml(comp) || '<span class="text-muted">(not set)</span>') + '</td>' +
+          '<td class="text-end">' + escapeHtml(qty) + '</td></tr>'
+        );
+      });
+      body.innerHTML = rows.length ? rows.join("") :
+        '<tr><td colspan="3" class="text-muted text-center py-3">No components yet.</td></tr>';
+    }
+
+    function show(key) {
+      if (key === "lines") buildLinesTable();
+      form.querySelectorAll(".hlf-pane").forEach(function (p) { p.hidden = (p.id !== "hlf-pane-" + key); });
+      form.querySelectorAll(".hlf-nav").forEach(function (n) {
+        var a = n.getAttribute("data-pane") === key ||
+                (key.indexOf("line-") === 0 && n.getAttribute("data-pane") === "lines");
+        n.classList.toggle("active", a);
+      });
+      var r = document.querySelector(".hlf-right"); if (r) r.scrollTop = 0;
+    }
+    function expandLines(open) {
+      navList.classList.toggle("collapsed", !open);
+      linesToggle.classList.toggle("lines-collapsed", !open);
+    }
+    function addLine() {
+      var i = parseInt(totalForms.value, 10);
+      var holder = document.createElement("div");
+      holder.innerHTML = tmpl.innerHTML.replaceAll("__prefix__", i).trim();
+      var pane = holder.querySelector(".hlf-line-pane");
+      var ln = nextLineNo();
+      var lnInput = pane.querySelector('input[name$="-line_no"]');
+      if (lnInput) lnInput.value = ln;
+      var num = pane.querySelector(".hlf-line-num"); if (num) num.textContent = ln;
+      panesWrap.appendChild(pane);
+      var nav = document.createElement("button");
+      nav.type = "button";
+      nav.className = "hlf-nav hlf-subitem list-group-item list-group-item-action";
+      nav.setAttribute("data-pane", "line-" + i);
+      nav.innerHTML = '<i class="bi bi-hash"></i>' + escapeHtml(ln);
+      navList.appendChild(nav);
+      totalForms.value = i + 1;
+      styleControls(pane);
+      lockLineNos(pane);
+      expandLines(true);
+      show("line-" + i);
+    }
+
+    form.addEventListener("click", function (e) {
+      if (e.target.closest("#hlf-add-line") || e.target.closest(".hlf-add-line2")) { e.preventDefault(); addLine(); return; }
+      var row = e.target.closest("#hlf-lines-table tr[data-pane]");
+      if (row) { show(row.getAttribute("data-pane")); return; }
+      var rm = e.target.closest(".hlf-remove-line");
+      if (rm) {
+        var pane = rm.closest(".hlf-line-pane");
+        var del = pane.querySelector('input[name$="-DELETE"]');
+        if (del) del.checked = true;
+        var nav = navList.querySelector('.hlf-nav[data-pane="' + pane.id.replace("hlf-pane-", "") + '"]');
+        if (nav) nav.style.textDecoration = "line-through";
+        if (!pane.querySelector(".hlf-removed-note")) {
+          var note = document.createElement("div");
+          note.className = "alert alert-warning hlf-removed-note mt-2";
+          note.innerHTML = 'Removed on save. <button type="button" class="btn btn-sm btn-link p-0 hlf-undo-remove">Undo</button>';
+          pane.insertBefore(note, pane.firstChild);
+        }
+        return;
+      }
+      var undo = e.target.closest(".hlf-undo-remove");
+      if (undo) {
+        var p2 = undo.closest(".hlf-line-pane");
+        var d2 = p2.querySelector('input[name$="-DELETE"]'); if (d2) d2.checked = false;
+        var n2 = navList.querySelector('.hlf-nav[data-pane="' + p2.id.replace("hlf-pane-", "") + '"]');
+        if (n2) n2.style.textDecoration = "";
+        var note2 = p2.querySelector(".hlf-removed-note"); if (note2) note2.remove();
+        return;
+      }
+      var navBtn = e.target.closest(".hlf-nav");
+      if (navBtn) {
+        var pane = navBtn.getAttribute("data-pane");
+        if (pane === "lines") { expandLines(navList.classList.contains("collapsed")); show("lines"); return; }
+        if (pane.indexOf("line-") === 0) expandLines(true);
+        show(pane);
+      }
+    });
+
+    // Open the first pane that has a validation error, else the Header.
+    var errNav = form.querySelector(".hlf-nav .bi-exclamation-circle");
+    if (errNav) {
+      var en = errNav.closest(".hlf-nav"), pane = en.getAttribute("data-pane");
+      if (pane.indexOf("line-") === 0) expandLines(true);
+      show(pane);
+    } else { show("header"); }
+  })();
+</script>
