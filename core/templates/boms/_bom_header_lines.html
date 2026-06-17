@@ -44,7 +44,7 @@ Expects `form` (header ModelForm) and `formset` (inline line formset).
         <div id="hlf-line-list" class="hlf-sublist">
           {% for lf in formset %}
           <button type="button" class="hlf-nav hlf-subitem list-group-item list-group-item-action" data-pane="line-{{ forloop.counter0 }}">
-            <i class="bi bi-hash"></i>{{ lf.line_no.value|default:forloop.counter }}{% if lf.errors %} <i class="bi bi-exclamation-circle text-danger ms-1"></i>{% endif %}
+            {{ lf.line_no.value|default:forloop.counter }}{% if lf.errors %} <i class="bi bi-exclamation-circle text-danger ms-1"></i>{% endif %}
           </button>
           {% endfor %}
         </div>
@@ -199,7 +199,7 @@ Expects `form` (header ModelForm) and `formset` (inline line formset).
         var qty = qtyEl ? qtyEl.value : "";
         rows.push(
           '<tr style="cursor:pointer" data-pane="' + key + '">' +
-          '<td class="fw-semibold text-primary"><i class="bi bi-hash"></i>' + escapeHtml(ln) + '</td>' +
+          '<td class="fw-semibold text-primary">' + escapeHtml(ln) + '</td>' +
           '<td>' + (escapeHtml(comp) || '<span class="text-muted">(not set)</span>') + '</td>' +
           '<td class="text-end">' + escapeHtml(qty) + '</td></tr>'
         );
@@ -236,7 +236,7 @@ Expects `form` (header ModelForm) and `formset` (inline line formset).
       nav.type = "button";
       nav.className = "hlf-nav hlf-subitem list-group-item list-group-item-action";
       nav.setAttribute("data-pane", "line-" + i);
-      nav.innerHTML = '<i class="bi bi-hash"></i>' + escapeHtml(ln);
+      nav.textContent = ln;
       navList.appendChild(nav);
       totalForms.value = i + 1;
       styleControls(pane);
