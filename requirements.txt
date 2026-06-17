@@ -1,6 +1,7 @@
 Django>=5.0,<6.0
 Pillow>=10.0            # image handling (company logo upload)
 openpyxl>=3.1          # accountant Excel (.xlsx) exports
+python-docx>=1.1       # Word (.docx) generation for demo guides
 xhtml2pdf>=0.2.16      # PDF generation for sales documents (pure-Python)
 
 # Production / deployment (optional for local dev with SQLite)

@@ -15519,14 +15519,14 @@ class MRP750ScenarioTests(TestCase):
 
     def test_fg_make_planned_order_750(self):
         from decimal import Decimal
-        fg = self._planned("FG-750-DEMO", "MAKE").first()
+        fg = self._planned("VGS-MRP750-FG", "MAKE").first()
         self.assertIsNotNone(fg)
         self.assertEqual(fg.quantity, Decimal("750.00"))
 
     def test_five_component_demand_rows_with_gross_qty(self):
         from decimal import Decimal
-        expected = {"RM-A": "1500.00", "RM-B": "750.00", "RM-C": "3000.00",
-                    "RM-D": "375.00", "RM-E": "750.00"}
+        expected = {"VGS-MRP750-RM-A": "1500.00", "VGS-MRP750-RM-B": "750.00", "VGS-MRP750-RM-C": "3000.00",
+                    "VGS-MRP750-RM-D": "375.00", "VGS-MRP750-RM-E": "750.00"}
         rows = self.mrp_run.demands.filter(demand_type="WORK_ORDER_COMPONENT")
         self.assertEqual(rows.count(), 5)
         for sku, qty in expected.items():
@@ -15538,18 +15538,18 @@ class MRP750ScenarioTests(TestCase):
         from decimal import Decimal
         # gross + safety - usable, then MOQ / order-multiple. Reserved excluded,
         # quarantine excluded, open PO counted, safety stock added.
-        expected = {"RM-A": "900.00",   # 1500 + 500 - (900-100 + 300) = 900
-                    "RM-B": "250.00",   # 750 + 300 - (1000-200) = 250
-                    "RM-C": "1500.00",  # 3000 + 1000 - (2000 + 500) = 1500 (200 quar excluded)
-                    "RM-D": "500.00",   # 375 + 200 - 100 = 475 -> MOQ 500
-                    "RM-E": "250.00"}   # 750 + 250 - 900 = 100 -> MOQ 250
+        expected = {"VGS-MRP750-RM-A": "900.00",   # 1500 + 500 - (900-100 + 300) = 900
+                    "VGS-MRP750-RM-B": "250.00",   # 750 + 300 - (1000-200) = 250
+                    "VGS-MRP750-RM-C": "1500.00",  # 3000 + 1000 - (2000 + 500) = 1500 (200 quar excluded)
+                    "VGS-MRP750-RM-D": "500.00",   # 375 + 200 - 100 = 475 -> MOQ 500
+                    "VGS-MRP750-RM-E": "250.00"}   # 750 + 250 - 900 = 100 -> MOQ 250
         for sku, qty in expected.items():
             self.assertEqual(self._total(sku), Decimal(qty), f"planned BUY qty wrong for {sku}")
 
     def test_no_duplicate_order_per_component(self):
         # Each component is planned exactly once - the dependent demand and the
         # safety floor are netted together, not in two un-shared passes.
-        for sku in ("RM-A", "RM-B", "RM-C", "RM-D", "RM-E"):
+        for sku in ("VGS-MRP750-RM-A", "VGS-MRP750-RM-B", "VGS-MRP750-RM-C", "VGS-MRP750-RM-D", "VGS-MRP750-RM-E"):
             self.assertEqual(self._planned(sku, "BUY").count(), 1, f"{sku} has duplicate orders")
 
     def test_quarantine_stock_excluded(self):
@@ -15557,20 +15557,20 @@ class MRP750ScenarioTests(TestCase):
         # flags them and RM-C still nets against 2000 (planned 1500, not 1300).
         from decimal import Decimal
         self.assertTrue(self.mrp_run.exceptions.filter(exception_code="NON_NETTABLE_STOCK").exists())
-        self.assertEqual(self._total("RM-C"), Decimal("1500.00"))
+        self.assertEqual(self._total("VGS-MRP750-RM-C"), Decimal("1500.00"))
 
     def test_open_po_counted_as_supply(self):
         # RM-A's open PO (300) reduces the requirement: without it the net would
         # be 1200, with it 900.
         from decimal import Decimal
-        self.assertEqual(self._total("RM-A"), Decimal("900.00"))
+        self.assertEqual(self._total("VGS-MRP750-RM-A"), Decimal("900.00"))
 
     def test_pegging_chain_exists(self):
         from core.models import MRPPegging
-        fg = self._planned("FG-750-DEMO", "MAKE").first()
-        rm_a = self._planned("RM-A", "BUY").first()
-        sales = self.mrp_run.demands.filter(demand_type="SALES_ORDER", product__sku="FG-750-DEMO").first()
-        comp = self.mrp_run.demands.filter(demand_type="WORK_ORDER_COMPONENT", product__sku="RM-A").first()
+        fg = self._planned("VGS-MRP750-FG", "MAKE").first()
+        rm_a = self._planned("VGS-MRP750-RM-A", "BUY").first()
+        sales = self.mrp_run.demands.filter(demand_type="SALES_ORDER", product__sku="VGS-MRP750-FG").first()
+        comp = self.mrp_run.demands.filter(demand_type="WORK_ORDER_COMPONENT", product__sku="VGS-MRP750-RM-A").first()
         self.assertTrue(MRPPegging.objects.filter(planned_order=fg, demand=sales).exists())
         self.assertTrue(MRPPegging.objects.filter(planned_order=fg, demand=comp).exists())
         self.assertTrue(MRPPegging.objects.filter(planned_order=rm_a, demand=comp).exists())
@@ -15620,7 +15620,7 @@ class MRP750ConvertDemoTests(TestCase):
     def test_converts_make_to_work_order(self):
         from core.models import WorkOrder
         self._call()
-        wos = WorkOrder.objects.filter(tenant=self.tenant, product__sku="FG-750-DEMO")
+        wos = WorkOrder.objects.filter(tenant=self.tenant, product__sku="VGS-MRP750-FG")
         self.assertEqual(wos.count(), 1)
         wo = wos.first()
         self.assertEqual(wo.quantity, Decimal("750.00"))
@@ -15631,7 +15631,7 @@ class MRP750ConvertDemoTests(TestCase):
         self._call()
         self._call()  # second run must not duplicate
         self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 5)
-        self.assertEqual(WorkOrder.objects.filter(tenant=self.tenant, product__sku="FG-750-DEMO").count(), 1)
+        self.assertEqual(WorkOrder.objects.filter(tenant=self.tenant, product__sku="VGS-MRP750-FG").count(), 1)
 
     def test_buy_as_po_creates_draft_purchase_orders(self):
         from core.models import PurchaseOrder
@@ -15645,20 +15645,89 @@ class MRP750ConvertDemoTests(TestCase):
     def test_execute_does_not_complete_when_stock_insufficient(self):
         from core.models import WorkOrder, InventoryMovement
         self._call(**{"execute_work_order": True})
-        wo = WorkOrder.objects.get(tenant=self.tenant, product__sku="FG-750-DEMO")
+        wo = WorkOrder.objects.get(tenant=self.tenant, product__sku="VGS-MRP750-FG")
         # Released and some materials issued, but never force-completed (RM-A/C/D short).
         self.assertIn(wo.status, ("RELEASED", "PARTIALLY_COMPLETED"))
         self.assertEqual(wo.quantity_completed or Decimal("0"), Decimal("0"))
         self.assertFalse(
             InventoryMovement.objects.filter(
-                tenant=self.tenant, product__sku="FG-750-DEMO",
+                tenant=self.tenant, product__sku="VGS-MRP750-FG",
                 movement_type="WORK_ORDER_COMPLETION").exists())
 
     def test_execute_is_idempotent(self):
         from core.models import WorkOrder
         self._call(**{"execute_work_order": True})
         self._call(**{"execute_work_order": True})  # must not crash or double-issue
-        wo = WorkOrder.objects.get(tenant=self.tenant, product__sku="FG-750-DEMO")
+        wo = WorkOrder.objects.get(tenant=self.tenant, product__sku="VGS-MRP750-FG")
         # RM-B and RM-E each have enough stock to issue exactly their requirement once.
-        rm_b = wo.materials.get(component__sku="RM-B")
+        rm_b = wo.materials.get(component__sku="VGS-MRP750-RM-B")
         self.assertEqual(rm_b.issued_quantity, Decimal("750.00"))
+
+
+class MRP750DocxGuideTests(TestCase):
+    """The --docx flag writes a Word manual-demo guide containing the company,
+    the generated run number, the expected planned quantities and the UI steps."""
+
+    @classmethod
+    def setUpTestData(cls):
+        import tempfile, os
+        from io import StringIO
+        from django.test import override_settings
+        from django.core.management import call_command
+        from core.models import Tenant, MRPRun
+        cls.tmpdir = tempfile.mkdtemp()
+        with override_settings(MEDIA_ROOT=cls.tmpdir):
+            call_command("seed_mrp_750_scenario", tenant="Docx 750 Co", run=True, docx=True,
+                         stdout=StringIO())
+        cls.tenant = Tenant.objects.get(name="Docx 750 Co")
+        cls.mrp_run = MRPRun.objects.filter(tenant=cls.tenant).order_by("-id").first()
+        cls.path = os.path.join(cls.tmpdir, "demo_guides", "VGS_MRP_750_Demo_Manual_Guide.docx")
+        cls.text = cls._extract(cls.path)
+
+    @staticmethod
+    def _extract(path):
+        from docx import Document
+        doc = Document(path)
+        parts = [p.text for p in doc.paragraphs]
+        for tbl in doc.tables:
+            for row in tbl.rows:
+                parts.extend(cell.text for cell in row.cells)
+        return "\n".join(parts)
+
+    def test_docx_file_created(self):
+        import os
+        self.assertTrue(os.path.exists(self.path))
+        self.assertTrue(self.path.endswith(".docx"))
+        self.assertGreater(os.path.getsize(self.path), 0)
+
+    def test_contains_company_name(self):
+        self.assertIn("Docx 750 Co", self.text)
+
+    def test_contains_run_number(self):
+        self.assertTrue(self.mrp_run.run_number.startswith("VGS-MRP750-"))
+        self.assertIn(self.mrp_run.run_number, self.text)
+
+    def test_contains_expected_planned_quantities(self):
+        # FG 750 and the five component planned quantities appear in the table.
+        for token in ("VGS-MRP750-FG", "750", "900", "250", "1500", "500"):
+            self.assertIn(token, self.text)
+
+    def test_contains_manual_ui_steps(self):
+        self.assertIn("Switch company", self.text)
+        self.assertIn("Convert BUY planned orders to Purchase Requisitions", self.text)
+        self.assertIn("Planner Dashboard", self.text)
+
+    def test_regenerated_safely_on_rerun(self):
+        import os, tempfile
+        from io import StringIO
+        from django.test import override_settings
+        from django.core.management import call_command
+        tmp2 = tempfile.mkdtemp()
+        with override_settings(MEDIA_ROOT=tmp2):
+            call_command("seed_mrp_750_scenario", tenant="Docx 750 Co", run=True, docx=True,
+                         stdout=StringIO())
+            call_command("seed_mrp_750_scenario", tenant="Docx 750 Co", run=True, docx=True,
+                         stdout=StringIO())  # second run overwrites cleanly
+        path2 = os.path.join(tmp2, "demo_guides", "VGS_MRP_750_Demo_Manual_Guide.docx")
+        self.assertTrue(os.path.exists(path2))
+        self.assertIn("Docx 750 Co", self._extract(path2))

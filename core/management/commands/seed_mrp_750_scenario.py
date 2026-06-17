@@ -1,10 +1,11 @@
-"""Seed and (optionally) run the FG-750-DEMO material-planning test scenario.
+"""Seed (and optionally run + document) the VGS MRP 750 material-planning scenario.
 
-    python manage.py seed_mrp_750_scenario --tenant "MRP 750 Demo"
-    python manage.py seed_mrp_750_scenario --tenant "MRP 750 Demo" --run
+    python manage.py seed_mrp_750_scenario --tenant "VGS and Technologies Pvt Ltd"
+    python manage.py seed_mrp_750_scenario --tenant "VGS and Technologies Pvt Ltd" --run
+    python manage.py seed_mrp_750_scenario --tenant "VGS and Technologies Pvt Ltd" --run --docx
 
 Builds a realistic single-level MAKE scenario for manual MRP testing:
-- 1 finished good FG-750-DEMO with a 5-component BOM (RM-A..RM-E).
+- 1 finished good VGS-MRP750-FG with a 5-component BOM (VGS-MRP750-RM-A..RM-E).
 - A confirmed sales order for 750 finished units.
 - Per-component BUY planning rules (safety stock, MOQ, order multiple, lead time).
 - Opening stock incl. reserved and quarantine quantities, plus open POs.
@@ -12,12 +13,14 @@ Builds a realistic single-level MAKE scenario for manual MRP testing:
 Idempotent: re-running reuses records and never double-posts stock. Uses only
 existing models and the inventory ledger service - no MRP logic is changed.
 
-With --run it executes the MRP run and prints expected (classic single-level
-netting) vs actual engine output so divergences are obvious.
+--run executes the MRP run and prints expected vs actual engine output.
+--docx writes a Word manual-demo guide to media/demo_guides/ and prints its path.
 """
 import datetime
+import os
 from decimal import Decimal, ROUND_CEILING
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
@@ -25,7 +28,7 @@ from django.utils import timezone
 from core.models import (
     Tenant, Site, Location, Product, Supplier, Customer,
     BillOfMaterials, BillOfMaterialsLine, ItemSitePlanning,
-    CustomerOrder, CustomerOrderLine, MRPRun,
+    CustomerOrder, CustomerOrderLine, MRPRun, MRPPlannedOrder,
     PurchaseOrder, PurchaseOrderLine, InventoryBalance,
     WorkCentre, RoutingHeader, RoutingOperation,
 )
@@ -33,7 +36,19 @@ from core.models import (
 SEED_REF = "MRP_750_SEED"
 ZERO = Decimal("0.00")
 
-# component_sku, bom_qty_per_fg, safety, moq, multiple, lead_days,
+PREFIX = "VGS-MRP750"            # SKU / document naming convention
+FG_CODE = "FG"
+FG_SKU = f"{PREFIX}-{FG_CODE}"   # VGS-MRP750-FG
+SO_NUMBER = f"{PREFIX}-SO"
+ROUTING_CODE = f"{PREFIX}-RT"
+WORK_CENTRE_CODE = PREFIX
+WORK_CENTRE_NAME = f"{PREFIX} Assembly"
+DOCX_FILENAME = "VGS_MRP_750_Demo_Manual_Guide.docx"
+
+ORDER_QTY = Decimal("750")
+FG_MAKE_LEAD = 3
+
+# code, bom_qty_per_fg, safety, moq, multiple, lead_days,
 # on_hand (nettable, main store), reserved, quarantine, open_po
 COMPONENTS = [
     ("RM-A", "2",   "500",  "500",  "100", 10, "900",  "100", "0",   "300"),
@@ -42,9 +57,10 @@ COMPONENTS = [
     ("RM-D", "0.5", "200",  "500",  "50",   7, "100",  "0",   "0",   "0"),
     ("RM-E", "1",   "250",  "250",  "50",   5, "900",  "0",   "0",   "0"),
 ]
-FG_SKU = "FG-750-DEMO"
-ORDER_QTY = Decimal("750")
-FG_MAKE_LEAD = 3
+
+
+def _sku(code):
+    return f"{PREFIX}-{code}"
 
 
 def _round_up_to_multiple(qty, multiple):
@@ -61,16 +77,17 @@ def _classic_planned(net, moq, multiple):
         return ZERO
     if moq > ZERO and qty < moq:
         qty = moq
-    qty = _round_up_to_multiple(qty, multiple)
-    return qty
+    return _round_up_to_multiple(qty, multiple)
 
 
 class Command(BaseCommand):
-    help = "Seed (and optionally run) the FG-750-DEMO 5-component MRP test scenario."
+    help = "Seed (and optionally run + document) the VGS-MRP750 5-component MRP test scenario."
 
     def add_arguments(self, parser):
         parser.add_argument("--tenant", required=True, help="Tenant name (created if missing).")
         parser.add_argument("--run", action="store_true", help="Execute the MRP run and print actual vs expected.")
+        parser.add_argument("--docx", action="store_true",
+                            help="Write the Word manual-demo guide and print its path.")
 
     @transaction.atomic
     def handle(self, *args, **opts):
@@ -92,14 +109,24 @@ class Command(BaseCommand):
         self._sales(tenant, site, products)
         run = self._run(tenant, site)
 
-        self._print_expected(site)
+        self._print_expected()
         self.stdout.write(self.style.SUCCESS(
             f"\nSeeded into '{tenant.name}'. MRP run: {run.run_number} (status {run.status}).\n"
             f"Open Planning -> MRP Runs -> {run.run_number} and click Run MRP, or re-run this "
             f"command with --run."))
 
         if opts["run"]:
-            self._run_and_compare(run, site)
+            self._run_and_compare(run)
+
+        if opts["docx"]:
+            # The guide's Section 4 needs actual planned quantities, so ensure the
+            # run has been executed before writing the document.
+            if not MRPPlannedOrder.objects.filter(mrp_run=run).exists():
+                from core.services.mrp.engine import run_mrp
+                run_mrp(run)
+            run.refresh_from_db()
+            path = self._write_guide(tenant, run)
+            self.stdout.write(self.style.SUCCESS(f"\nManual demo guide written to: {path}"))
 
     # ------------------------------------------------------------------ #
     def _tenant(self, ref):
@@ -127,44 +154,44 @@ class Command(BaseCommand):
         return {"store": store, "quarantine": loc("Quarantine", "QUARANTINE")}
 
     def _suppliers(self, tenant):
-        return {c[0]: Supplier.objects.get_or_create(tenant=tenant, name=f"Supplier {c[0]}")[0]
-                for c in COMPONENTS}
+        return {code: Supplier.objects.get_or_create(tenant=tenant, name=f"{PREFIX} Supplier {code}")[0]
+                for code, *_rest in COMPONENTS}
 
     def _products(self, tenant):
         out = {}
-        out[FG_SKU] = Product.objects.get_or_create(
+        out[FG_CODE] = Product.objects.get_or_create(
             tenant=tenant, sku=FG_SKU,
-            defaults={"name": "Finished good (750 demo)", "product_type": "FINISHED_GOOD",
+            defaults={"name": f"{PREFIX} finished good", "product_type": "FINISHED_GOOD",
                       "standard_cost": Decimal("50.00"), "cost_method": "AVERAGE", "is_active": True})[0]
-        for sku, *_rest in COMPONENTS:
-            out[sku] = Product.objects.get_or_create(
-                tenant=tenant, sku=sku,
-                defaults={"name": f"Raw material {sku}", "product_type": "RAW_MATERIAL",
+        for code, *_rest in COMPONENTS:
+            out[code] = Product.objects.get_or_create(
+                tenant=tenant, sku=_sku(code),
+                defaults={"name": f"{PREFIX} raw material {code}", "product_type": "RAW_MATERIAL",
                           "standard_cost": Decimal("2.00"), "cost_method": "AVERAGE", "is_active": True})[0]
         return out
 
     def _bom(self, tenant, p):
         bom = BillOfMaterials.objects.get_or_create(
-            tenant=tenant, product=p[FG_SKU], name="Default BOM",
+            tenant=tenant, product=p[FG_CODE], name="Default BOM",
             defaults={"output_qty": Decimal("1"), "is_active": True})[0]
-        for i, (sku, qty, *_rest) in enumerate(COMPONENTS, start=1):
+        for i, (code, qty, *_rest) in enumerate(COMPONENTS, start=1):
             BillOfMaterialsLine.objects.get_or_create(
-                bom=bom, component=p[sku],
+                bom=bom, component=p[code],
                 defaults={"line_no": i * 10, "qty": Decimal(qty),
                           "scrap_percent": ZERO, "fixed_qty": ZERO})
 
     def _routing(self, tenant, site, p):
-        # A simple single-operation routing so FG-750-DEMO (a MAKE item) has an
-        # active routing and the run does not raise MISSING_ROUTING. No shop
-        # calendar / finite scheduling - keeps the focus on material planning.
+        # A simple single-operation routing so the MAKE item has an active routing
+        # (no MISSING_ROUTING). No shop calendar / finite scheduling - keeps the
+        # focus on material planning.
         wc = WorkCentre.objects.get_or_create(
-            tenant=tenant, code="ASSY",
-            defaults={"site": site, "name": "Assembly", "capacity_hours_per_day": Decimal("8"),
+            tenant=tenant, code=WORK_CENTRE_CODE,
+            defaults={"site": site, "name": WORK_CENTRE_NAME, "capacity_hours_per_day": Decimal("8"),
                       "efficiency_percent": Decimal("100"), "finite_capacity_enabled": False,
                       "is_active": True})[0]
         routing, created = RoutingHeader.objects.get_or_create(
-            tenant=tenant, routing_code="RT-FG-750",
-            defaults={"product": p[FG_SKU], "site": None, "status": "ACTIVE", "is_default": True})
+            tenant=tenant, routing_code=ROUTING_CODE,
+            defaults={"product": p[FG_CODE], "site": None, "status": "ACTIVE", "is_default": True})
         if created:
             # Small per-unit time so 750 units fit one shift (no capacity overload).
             RoutingOperation.objects.create(
@@ -174,17 +201,17 @@ class Command(BaseCommand):
     def _planning(self, tenant, site, p, suppliers):
         # FG: MAKE, driven by the sales order.
         ItemSitePlanning.objects.get_or_create(
-            tenant=tenant, product=p[FG_SKU], site=site,
+            tenant=tenant, product=p[FG_CODE], site=site,
             defaults=dict(source_type="MAKE", mrp_enabled=True, is_active=True,
                           include_sales_orders=True, include_forecast=False, include_safety_stock=True,
                           safety_stock_qty=ZERO, lead_time_days=FG_MAKE_LEAD,
                           lot_sizing_method="LOT_FOR_LOT"))
-        for sku, _qty, safety, moq, mult, lead, *_rest in COMPONENTS:
+        for code, _qty, safety, moq, mult, lead, *_rest in COMPONENTS:
             ItemSitePlanning.objects.get_or_create(
-                tenant=tenant, product=p[sku], site=site,
+                tenant=tenant, product=p[code], site=site,
                 defaults=dict(source_type="BUY", mrp_enabled=True, is_active=True,
                               include_sales_orders=True, include_forecast=False, include_safety_stock=True,
-                              default_supplier=suppliers[sku],
+                              default_supplier=suppliers[code],
                               safety_stock_qty=Decimal(safety), min_order_qty=Decimal(moq),
                               order_multiple=Decimal(mult), lead_time_days=lead,
                               lot_sizing_method="LOT_FOR_LOT"))
@@ -200,47 +227,47 @@ class Command(BaseCommand):
                        unit_cost=Decimal("2.00"))
 
     def _stock(self, tenant, p, locs):
-        for sku, _qty, _safety, _moq, _mult, _lead, on_hand, reserved, quar, _po in COMPONENTS:
-            self._receive(tenant, p[sku], locs["store"], on_hand, f"{sku}-onhand")
-            self._receive(tenant, p[sku], locs["quarantine"], quar, f"{sku}-quar")
+        for code, _qty, _safety, _moq, _mult, _lead, on_hand, reserved, quar, _po in COMPONENTS:
+            self._receive(tenant, p[code], locs["store"], on_hand, f"{code}-onhand")
+            self._receive(tenant, p[code], locs["quarantine"], quar, f"{code}-quar")
             # Reserved is set on the balance directly (idempotent: assignment, not increment).
             if Decimal(reserved) > ZERO:
                 bal = InventoryBalance.objects.filter(
-                    tenant=tenant, product=p[sku], location=locs["store"]).first()
+                    tenant=tenant, product=p[code], location=locs["store"]).first()
                 if bal and bal.reserved != Decimal(reserved):
                     bal.reserved = Decimal(reserved)
                     bal.save(update_fields=["reserved"])
 
     def _open_pos(self, tenant, site, p, suppliers, locs):
         expected = self.today + datetime.timedelta(days=5)  # due before production
-        for sku, _qty, _safety, _moq, _mult, _lead, _oh, _res, _quar, po_qty in COMPONENTS:
+        for code, _qty, _safety, _moq, _mult, _lead, _oh, _res, _quar, po_qty in COMPONENTS:
             if Decimal(po_qty) <= ZERO:
                 continue
-            number = f"PO-750-{sku}"
+            number = f"{PREFIX}-PO-{code}"
             if PurchaseOrder.objects.filter(tenant=tenant, po_number=number).exists():
                 continue
             po = PurchaseOrder.objects.create(
-                tenant=tenant, po_number=number, supplier=suppliers[sku], site=site,
+                tenant=tenant, po_number=number, supplier=suppliers[code], site=site,
                 receiving_location=locs["store"], status="APPROVED", is_current=True,
                 expected_date=expected)
             PurchaseOrderLine.objects.create(
-                po=po, product=p[sku], ordered_qty=Decimal(po_qty), received_qty=ZERO,
+                po=po, product=p[code], ordered_qty=Decimal(po_qty), received_qty=ZERO,
                 unit_cost=Decimal("2.00"))
 
     def _sales(self, tenant, site, p):
-        cust = Customer.objects.get_or_create(tenant=tenant, name="Demo Customer 750")[0]
-        if not CustomerOrder.objects.filter(tenant=tenant, order_number="SO-750-1").exists():
+        cust = Customer.objects.get_or_create(tenant=tenant, name=f"{PREFIX} Demo Customer")[0]
+        if not CustomerOrder.objects.filter(tenant=tenant, order_number=SO_NUMBER).exists():
             o = CustomerOrder.objects.create(
-                tenant=tenant, customer=cust, site=site, order_number="SO-750-1",
+                tenant=tenant, customer=cust, site=site, order_number=SO_NUMBER,
                 status="CONFIRMED", order_date=self.so_required)
-            CustomerOrderLine.objects.create(order=o, product=p[FG_SKU], qty=ORDER_QTY)
+            CustomerOrderLine.objects.create(order=o, product=p[FG_CODE], qty=ORDER_QTY)
 
     def _run(self, tenant, site):
         from core.services.mrp import next_run_number
-        run = MRPRun.objects.filter(tenant=tenant, run_number__startswith="MRP-750").first()
+        run = MRPRun.objects.filter(tenant=tenant, run_number__startswith=f"{PREFIX}-").first()
         if run is None:
             run = MRPRun.objects.create(
-                tenant=tenant, run_number="MRP-750-" + next_run_number(tenant)[-6:],
+                tenant=tenant, run_number=f"{PREFIX}-" + next_run_number(tenant)[-6:],
                 site_scope=site, planning_start_date=self.today,
                 planning_end_date=self.today + datetime.timedelta(days=180),
                 include_sales_orders=True, include_forecast=False, include_safety_stock=True,
@@ -248,64 +275,317 @@ class Command(BaseCommand):
         return run
 
     # ------------------------------------------------------------------ #
-    def _print_expected(self, site):
-        fg_release = self.so_required - datetime.timedelta(days=FG_MAKE_LEAD)
-        self.stdout.write("\nExpected (classic single-level netting incl. safety stock):")
-        self.stdout.write(
-            "  Comp  Qty/FG  Gross  Safety  OnHand  Resv  Quar  OpenPO  Usable  Net   MOQ   Mult  Planned  Release")
-        for sku, qty, safety, moq, mult, lead, oh, res, quar, po in COMPONENTS:
+    # Expected / actual calculation (shared by the console table and the guide)
+    # ------------------------------------------------------------------ #
+    def _expected_rows(self):
+        """List of dicts with the full expected calculation for each component."""
+        rows = []
+        for code, qty, safety, moq, mult, lead, oh, res, quar, po in COMPONENTS:
             gross = ORDER_QTY * Decimal(qty)
             nettable = Decimal(oh) - Decimal(res)              # quarantine fully excluded
             usable = nettable + Decimal(po)
             net = gross + Decimal(safety) - usable
             planned = _classic_planned(net, Decimal(moq), Decimal(mult))
-            release = fg_release - datetime.timedelta(days=lead)
+            rows.append(dict(
+                sku=_sku(code), qty_per_fg=qty, gross=gross, safety=Decimal(safety),
+                on_hand=Decimal(oh), reserved=Decimal(res), quarantine=Decimal(quar),
+                open_po=Decimal(po), usable=usable, net=net, moq=Decimal(moq),
+                multiple=Decimal(mult), planned=planned, lead=lead))
+        return rows
+
+    def _actual_planned(self, run):
+        """(sku, source_type) -> total planned quantity from the run."""
+        out = {}
+        for po in MRPPlannedOrder.objects.filter(mrp_run=run).select_related("product"):
+            key = (po.product.sku, po.source_type)
+            out[key] = out.get(key, ZERO) + (po.quantity or ZERO)
+        return out
+
+    def _print_expected(self):
+        fg_release = self.so_required - datetime.timedelta(days=FG_MAKE_LEAD)
+        self.stdout.write("\nExpected (classic single-level netting incl. safety stock):")
+        self.stdout.write(
+            "  Component         Q/FG  Gross  Safety  OnHand  Resv  Quar  OpenPO  Usable  Net   MOQ   Mult  Planned")
+        for r in self._expected_rows():
             self.stdout.write(
-                f"  {sku:5} {qty:>5}  {gross:>5}  {safety:>5}  {oh:>5}  {res:>4}  {quar:>4}  "
-                f"{po:>5}  {usable:>6}  {net:>4}  {moq:>4}  {mult:>4}  {planned:>7}  {release}")
+                f"  {r['sku']:16} {r['qty_per_fg']:>4}  {r['gross']:>5}  {r['safety']:>5}  "
+                f"{r['on_hand']:>5}  {r['reserved']:>4}  {r['quarantine']:>4}  {r['open_po']:>5}  "
+                f"{r['usable']:>6}  {r['net']:>4}  {r['moq']:>4}  {r['multiple']:>4}  {r['planned']:>7}")
         self.stdout.write(f"\n  FG {FG_SKU}: MAKE {ORDER_QTY}, required {self.so_required}, release {fg_release}.")
 
-    def _run_and_compare(self, run, site):
+    def _run_and_compare(self, run):
         from core.services.mrp.engine import run_mrp
-        from core.models import MRPPlannedOrder, MRPDemand, MRPException
+        from core.models import MRPDemand, MRPException
         run = MRPRun.objects.get(pk=run.pk)
         run_mrp(run)
         run.refresh_from_db()
         self.stdout.write(self.style.WARNING(f"\nActual engine output (run {run.run_number}, status {run.status}):"))
 
-        pos = (MRPPlannedOrder.objects.filter(mrp_run=run)
-               .select_related("product").order_by("product__sku", "id"))
-        by_sku = {}
-        for po in pos:
-            by_sku.setdefault(po.product.sku, []).append(po)
+        actual = self._actual_planned(run)
         self.stdout.write("  Planned orders by product:")
-        for sku in [FG_SKU] + [c[0] for c in COMPONENTS]:
-            rows = by_sku.get(sku, [])
-            if not rows:
-                self.stdout.write(f"    {sku:12} (none)")
-                continue
-            for po in rows:
-                self.stdout.write(
-                    f"    {sku:12} {po.source_type:11} qty {po.quantity:>7} "
-                    f"required {po.required_date} release {po.planned_release_date} "
-                    f"receipt {po.planned_receipt_date}")
-            if len(rows) > 1:
-                total = sum((r.quantity for r in rows), ZERO)
-                self.stdout.write(f"    {'':12} -> {len(rows)} orders, total {total}")
+        self.stdout.write(f"    {FG_SKU:16} MAKE qty {actual.get((FG_SKU, 'MAKE'), ZERO)}")
+        for code, *_rest in COMPONENTS:
+            self.stdout.write(f"    {_sku(code):16} BUY  qty {actual.get((_sku(code), 'BUY'), ZERO)}")
 
         dem = (MRPDemand.objects.filter(mrp_run=run, demand_type="WORK_ORDER_COMPONENT")
                .select_related("product").order_by("product__sku"))
         self.stdout.write(f"\n  WORK_ORDER_COMPONENT demand rows: {dem.count()}")
         for d in dem:
-            self.stdout.write(f"    {d.product.sku:12} qty {d.quantity:>7} required {d.required_date}")
+            self.stdout.write(f"    {d.product.sku:16} qty {d.quantity:>7} required {d.required_date}")
 
-        excs = MRPException.objects.filter(mrp_run=run).order_by("exception_code")
-        self.stdout.write(f"\n  Exceptions: {excs.count()}")
+        excs = MRPException.objects.filter(mrp_run=run)
         seen = {}
         for e in excs:
             seen[e.exception_code] = seen.get(e.exception_code, 0) + 1
+        self.stdout.write(f"\n  Exceptions: {excs.count()}")
         for code, n in sorted(seen.items()):
             self.stdout.write(f"    {code} x{n}")
+
+    # ------------------------------------------------------------------ #
+    # Word (.docx) manual demo guide
+    # ------------------------------------------------------------------ #
+    def _guide_path(self):
+        out_dir = os.path.join(settings.MEDIA_ROOT, "demo_guides")
+        os.makedirs(out_dir, exist_ok=True)
+        return os.path.join(out_dir, DOCX_FILENAME)
+
+    def _write_guide(self, tenant, run):
+        try:
+            from docx import Document  # noqa: F401
+        except Exception:
+            return self._write_markdown_fallback(tenant, run)
+        return self._write_docx(tenant, run)
+
+    def _write_docx(self, tenant, run):
+        from docx import Document
+        from docx.shared import Pt
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        actual = self._actual_planned(run)
+        fg_actual = actual.get((FG_SKU, "MAKE"), ZERO)
+        rows = self._expected_rows()
+        path = self._guide_path()
+
+        doc = Document()
+        title = doc.add_heading("VGS MRP 750 Demo Manual Guide", level=0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        sub = doc.add_paragraph(f"Generated for {tenant.name} - MRP run {run.run_number}")
+        sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for r in sub.runs:
+            r.italic = True
+
+        # Section 1: Demo Purpose
+        doc.add_heading("1. Demo Purpose", level=1)
+        doc.add_paragraph(
+            "This demo walks through the full material-planning process end to end:")
+        for step in [
+            "Sales Order for 750 finished goods",
+            "BOM explosion into component demand",
+            "Material availability check",
+            "Reserved and quarantine stock excluded from usable supply",
+            "Open purchase-order supply counted",
+            "Safety stock included in the requirement",
+            "MOQ and order multiple applied",
+            "Planned BUY and MAKE orders created",
+            "Pegging that links demand to supply",
+            "Conversion to Purchase Requisitions / Purchase Orders and a Work Order",
+            "Validation in the MRP reports and the planner dashboard",
+        ]:
+            doc.add_paragraph(step, style="List Bullet")
+
+        # Section 2: Demo Company
+        doc.add_heading("2. Demo Company", level=1)
+        doc.add_paragraph(f"Company: {tenant.name}")
+
+        # Section 3: Demo Records Created
+        doc.add_heading("3. Demo Records Created", level=1)
+        self._docx_kv(doc, "Products", [
+            f"{FG_SKU} (finished good)",
+            *[_sku(c[0]) for c in COMPONENTS],
+        ])
+        self._docx_kv(doc, "BOM", [f"{FG_SKU} uses 5 raw materials (RM-A..RM-E)"])
+        self._docx_kv(doc, "Sales Order", [f"{SO_NUMBER} - quantity {ORDER_QTY}"])
+        self._docx_kv(doc, "Open POs", [
+            f"{PREFIX}-PO-RM-A quantity 300",
+            f"{PREFIX}-PO-RM-C quantity 500",
+        ])
+        self._docx_kv(doc, "Routing", [f"{ROUTING_CODE}", f"Work Centre: {WORK_CENTRE_NAME}"])
+        self._docx_kv(doc, "MRP Run", [f"{run.run_number} (status {run.get_status_display()})"])
+
+        # Section 4: Expected MRP Calculation
+        doc.add_heading("4. Expected MRP Calculation", level=1)
+        headers = ["Component", "Qty/FG", "Gross", "Safety", "On Hand", "Reserved", "Quarantine",
+                   "Open PO", "Usable", "Net", "MOQ", "Order Mult", "Expected Qty", "Actual Qty", "Status"]
+        table = doc.add_table(rows=1, cols=len(headers))
+        table.style = "Light Grid Accent 1"
+        for i, h in enumerate(headers):
+            cell = table.rows[0].cells[i]
+            cell.text = h
+            for p in cell.paragraphs:
+                for r in p.runs:
+                    r.bold = True
+                    r.font.size = Pt(8)
+        # FG row
+        self._docx_row(table, [FG_SKU, "-", str(ORDER_QTY), "0", "0", "0", "0", "0", "0",
+                               str(ORDER_QTY), "-", "-", str(ORDER_QTY), str(fg_actual),
+                               "OK" if fg_actual == ORDER_QTY else "CHECK"])
+        # Component rows
+        for r in rows:
+            act = actual.get((r["sku"], "BUY"), ZERO)
+            self._docx_row(table, [
+                r["sku"], r["qty_per_fg"], str(r["gross"]), str(r["safety"]), str(r["on_hand"]),
+                str(r["reserved"]), str(r["quarantine"]), str(r["open_po"]), str(r["usable"]),
+                str(r["net"]), str(r["moq"]), str(r["multiple"]), str(r["planned"]), str(act),
+                "OK" if act == r["planned"] else "CHECK"])
+        doc.add_paragraph(
+            "Note: RM-D is planned with exactly one BUY order of 500 (no duplicate). "
+            "The 200 quarantine units of RM-C are excluded from usable supply.").italic = True
+
+        # Section 5: Manual UI Steps
+        doc.add_heading("5. Manual UI Steps", level=1)
+        for line in self._ui_steps(run):
+            if line.startswith("  - "):
+                doc.add_paragraph(line[4:], style="List Bullet 2")
+            else:
+                doc.add_paragraph(line, style="List Number")
+
+        # Section 6: One-Click Conversion Command
+        doc.add_heading("6. One-Click Conversion Command", level=1)
+        self._docx_code(doc, f'python manage.py demo_mrp_750_convert --tenant "{tenant.name}"')
+        for line in [
+            "Converts BUY planned orders to Purchase Requisitions.",
+            "Converts the MAKE planned order to a Work Order.",
+            "Safe and idempotent - re-running does not duplicate PRs or Work Orders.",
+        ]:
+            doc.add_paragraph(line, style="List Bullet")
+        doc.add_paragraph("Optional - convert BUY orders to draft Purchase Orders instead:")
+        self._docx_code(doc, f'python manage.py demo_mrp_750_convert --tenant "{tenant.name}" --buy-as po')
+        doc.add_paragraph("Optional - execute the work order (issues materials, posts inventory):")
+        self._docx_code(doc, f'python manage.py demo_mrp_750_convert --tenant "{tenant.name}" --execute-work-order')
+        warn = doc.add_paragraph(
+            "Warning: do not use --execute-work-order during a clean demo unless you "
+            "intentionally want inventory movements posted.")
+        for r in warn.runs:
+            r.bold = True
+
+        # Section 7: Demo Talking Points
+        doc.add_heading("7. Demo Talking Points", level=1)
+        for line in [
+            "The system does not just check stock on hand - it checks usable stock.",
+            "Reserved stock is excluded.",
+            "Quarantine stock is excluded.",
+            "Open POs are counted if due on time.",
+            "Safety stock is maintained.",
+            "Supplier MOQ and order multiples are respected.",
+            "Lead times decide release dates.",
+            "Pegging explains why each planned order exists.",
+            "The planner can convert suggestions into real PRs, POs, and Work Orders.",
+        ]:
+            doc.add_paragraph(line, style="List Bullet")
+
+        # Section 8: Reset / Re-run Notes
+        doc.add_heading("8. Reset / Re-run Notes", level=1)
+        for line in [
+            "The seed command is idempotent - re-running reuses and updates demo records.",
+            "Re-running the seed never double-posts opening stock.",
+            "If the Work Order execution command was run, inventory movements may be posted.",
+            "For a clean demo, reseed into a fresh tenant or reset the demo records.",
+        ]:
+            doc.add_paragraph(line, style="List Bullet")
+
+        doc.save(path)
+        return path
+
+    def _docx_kv(self, doc, label, items):
+        p = doc.add_paragraph()
+        p.add_run(f"{label}:").bold = True
+        for it in items:
+            doc.add_paragraph(it, style="List Bullet")
+
+    def _docx_row(self, table, values):
+        from docx.shared import Pt
+        cells = table.add_row().cells
+        for i, v in enumerate(values):
+            cells[i].text = str(v)
+            for p in cells[i].paragraphs:
+                for r in p.runs:
+                    r.font.size = Pt(8)
+
+    def _docx_code(self, doc, text):
+        from docx.shared import Pt
+        p = doc.add_paragraph()
+        r = p.add_run(text)
+        r.font.name = "Consolas"
+        r.font.size = Pt(9)
+
+    def _ui_steps(self, run):
+        return [
+            "Login to the ERP.",
+            "Switch company to the demo tenant.",
+            "Go to Products and search VGS-MRP750.",
+            f"Open {FG_SKU}.",
+            f"Go to BOMs and open the BOM for {FG_SKU}.",
+            "Confirm the 5 component lines.",
+            "Go to Item Planning.",
+            "Confirm planning profiles for FG and RM-A to RM-E.",
+            "Go to Inventory.",
+            "Confirm nettable stock and quarantine stock.",
+            "Go to Purchase Orders.",
+            "Confirm open POs for RM-A and RM-C.",
+            "Go to Sales Orders.",
+            "Confirm the 750-unit sales order.",
+            "Go to Planning -> MRP Runs.",
+            f"Open the generated MRP run {run.run_number}.",
+            "Click Run MRP if not already run.",
+            "Open the Planner Workbench.",
+            "Check the Demand section.",
+            "Confirm sales demand for FG quantity 750.",
+            "Confirm component demands:",
+            "  - RM-A 1500",
+            "  - RM-B 750",
+            "  - RM-C 3000",
+            "  - RM-D 375",
+            "  - RM-E 750",
+            "Check Planned Orders. Confirm:",
+            "  - FG MAKE 750",
+            "  - RM-A BUY 900",
+            "  - RM-B BUY 250",
+            "  - RM-C BUY 1500",
+            "  - RM-D BUY 500",
+            "  - RM-E BUY 250",
+            "Open Pegging.",
+            "Confirm sales order -> MAKE planned order -> component demand -> BUY planned orders.",
+            "Open Exceptions and confirm only genuine exceptions appear.",
+            "Convert BUY planned orders to Purchase Requisitions.",
+            "Convert the MAKE planned order to a Work Order.",
+            "Go to Requisitions and confirm PRs were created.",
+            "Go to Work Orders and confirm the Work Order and material lines.",
+            "Go to MRP Reports.",
+            "Validate Planned Orders, Demand vs Supply, Pegging, and Exceptions.",
+            "Go to the Planner Dashboard and validate the dashboard cards.",
+        ]
+
+    def _write_markdown_fallback(self, tenant, run):
+        """Used only if python-docx is unavailable: a Markdown guide instead."""
+        path = self._guide_path().replace(".docx", ".md")
+        actual = self._actual_planned(run)
+        lines = [f"# VGS MRP 750 Demo Manual Guide", "",
+                 f"Company: {tenant.name}", f"MRP run: {run.run_number}", "",
+                 "## Expected MRP Calculation", ""]
+        for r in self._expected_rows():
+            act = actual.get((r["sku"], "BUY"), ZERO)
+            lines.append(f"- {r['sku']}: expected {r['planned']}, actual {act}")
+        lines += ["", "## Manual UI Steps", ""]
+        n = 1
+        for s in self._ui_steps(run):
+            if s.startswith("  - "):
+                lines.append(f"    {s.strip()}")
+            else:
+                lines.append(f"{n}. {s}")
+                n += 1
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+        return path
 
 
 def InventoryMovement_exists(tenant, product, location, ref):
