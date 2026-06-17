@@ -8524,6 +8524,26 @@ def mrp_report_planned_orders(request):
 
 @login_required
 @permission_required(permissions_mod.VIEW_MRP_REPORTS)
+def mrp_report_material_order_sheet(request):
+    tenant = _get_default_tenant(request)
+    from core.models import MRPRun
+    runs = MRPRun.objects.filter(tenant=tenant).order_by("-created_at")
+    run = _latest_run(tenant, request.GET.get("run"))
+    if run is None:
+        return render(request, "mrp/reports/empty.html",
+                      {"tenant": tenant, "title": "MRP Material Order Sheet"})
+    f = {"site": request.GET.get("site")}
+    data = mrp_reports_mod.material_order_sheet(run, f)
+    controls = _run_controls(request, tenant, run, runs, extra=[
+        {"name": "site", "label": "Site", "type": "select",
+         "options": _site_options(tenant), "value": f.get("site") or ""}])
+    return _report_export_or_render(request, title="MRP Material Order Sheet", data=data,
+                                    export_name="mrp-material-order-sheet", controls=controls,
+                                    run=run, runs=runs, report_type="MATERIAL_ORDER_SHEET")
+
+
+@login_required
+@permission_required(permissions_mod.VIEW_MRP_REPORTS)
 def mrp_report_demand_supply(request):
     tenant = _get_default_tenant(request)
     from core.models import MRPRun

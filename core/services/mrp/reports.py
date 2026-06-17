@@ -473,10 +473,11 @@ REPORT_TITLES = {
     "WORK_ORDER_COST": ("Work order cost", "work-order-cost"),
     "RESCHEDULE_SUGGESTIONS": ("Reschedule suggestions", "reschedule-suggestions"),
     "MRP_WORKBENCH": ("Planned orders (workbench)", "mrp-workbench"),
+    "MATERIAL_ORDER_SHEET": ("MRP Material Order Sheet", "mrp-material-order-sheet"),
 }
 
 _RUN_SCOPED = {"RUN_SUMMARY", "PLANNED_ORDERS", "DEMAND_SUPPLY", "SHORTAGES", "EXCEPTIONS",
-               "PEGGING", "RESCHEDULE_SUGGESTIONS", "MRP_WORKBENCH"}
+               "PEGGING", "RESCHEDULE_SUGGESTIONS", "MRP_WORKBENCH", "MATERIAL_ORDER_SHEET"}
 
 
 def _latest_run(tenant, filters):
@@ -495,6 +496,61 @@ def _parse_date(value):
         return datetime.date.fromisoformat(str(value))
     except ValueError:
         return None
+
+
+def material_order_sheet(run, filters):
+    """Material Order Sheet - one row per exploded component for the run, in the
+    handwritten material-planning layout: placement/component, value, package,
+    make, unit qty (BOM qty per FG), current nettable stock, gross required qty,
+    planned BUY order qty and order (release) date. Report-only; no MRP change."""
+    from core.models import MRPDemand, MRPPlannedOrder, BillOfMaterialsLine
+    from core.services.mrp import inventory_snapshot
+
+    site_f = filters.get("site")
+    dem = (MRPDemand.objects.filter(mrp_run=run, demand_type="WORK_ORDER_COMPONENT")
+           .select_related("product", "site").order_by("product__sku"))
+    if site_f:
+        dem = dem.filter(site_id=site_f)
+
+    # Aggregate gross required per (component, site); remember a BOM line for unit qty.
+    agg, order = {}, []
+    for d in dem:
+        key = (d.product_id, d.site_id)
+        if key not in agg:
+            agg[key] = {"product": d.product, "site": d.site, "required": ZERO,
+                        "line_id": d.source_line_id}
+            order.append(key)
+        agg[key]["required"] += (d.open_quantity or ZERO)
+
+    # Planned BUY quantity + earliest release date per (component, site).
+    buy = {}
+    for p in MRPPlannedOrder.objects.filter(mrp_run=run, source_type="BUY").select_related("product"):
+        e = buy.setdefault((p.product_id, p.site_id), {"qty": ZERO, "release": None})
+        e["qty"] += (p.quantity or ZERO)
+        if p.planned_release_date and (e["release"] is None or p.planned_release_date < e["release"]):
+            e["release"] = p.planned_release_date
+
+    columns = ["S.No", "Placement / Component", "Value", "Package", "Make", "Unit Qty",
+               "Current Stock", "Required Qty", "Order Qty", "Order Date"]
+    rows = []
+    for i, key in enumerate(order, start=1):
+        a = agg[key]
+        prod = a["product"]
+        unit_qty = ""
+        if a["line_id"] and str(a["line_id"]).isdigit():
+            bl = BillOfMaterialsLine.objects.filter(id=int(a["line_id"])).first()
+            if bl is not None:
+                unit_qty = bl.qty
+        avail, _exc, _exp = inventory_snapshot.nettable_on_hand(
+            run.tenant, prod, a["site"], as_of=run.planning_start_date)
+        b = buy.get(key, {})
+        rows.append([
+            i, f"{prod.sku} - {prod.name}",
+            prod.option1 or "", prod.pack_size or "", prod.brand or "",
+            unit_qty, avail, a["required"], b.get("qty", ZERO),
+            _d(b["release"]) if b.get("release") else "",
+        ])
+    return {"columns": columns, "rows": rows}
 
 
 def build_report(tenant, report_type, filters):
@@ -524,7 +580,8 @@ def build_report(tenant, report_type, filters):
         fn = {"PLANNED_ORDERS": planned_order_report, "DEMAND_SUPPLY": demand_supply_report,
               "SHORTAGES": shortage_report, "EXCEPTIONS": exception_report,
               "PEGGING": pegging_report, "RESCHEDULE_SUGGESTIONS": reschedule_suggestion_report,
-              "MRP_WORKBENCH": planned_order_report}[report_type]
+              "MRP_WORKBENCH": planned_order_report,
+              "MATERIAL_ORDER_SHEET": material_order_sheet}[report_type]
         data = fn(run, filters)
         return {"title": title, "filename": filename, "columns": data["columns"], "rows": data["rows"]}
 
