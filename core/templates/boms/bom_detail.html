@@ -10,29 +10,5 @@
   <a class="btn btn-outline-danger" href="/boms/{{ bom.id }}/delete/"><i class="bi bi-trash me-1"></i> Delete</a>
 </div>
 
-{% include "documents/_header_lines_form.html" with list_url="/boms/" save_label="Save BOM" line_noun="Component" %}
-
-<script>
-  // BOM-specific: auto-number a newly added component in steps of 10 (10, 20, 30...)
-  // so new lines never collide on the default line_no. Runs after the shared
-  // header/lines handler has appended the new pane.
-  (function () {
-    var form = document.getElementById("hlf-form");
-    if (!form) return;
-    form.addEventListener("click", function (e) {
-      if (!(e.target.closest("#hlf-add-line") || e.target.closest(".hlf-add-line2"))) return;
-      setTimeout(function () {
-        var inputs = Array.prototype.slice.call(form.querySelectorAll('input[name$="-line_no"]'));
-        if (!inputs.length) return;
-        var added = inputs[inputs.length - 1];
-        var max = 0;
-        inputs.slice(0, -1).forEach(function (el) {
-          var v = parseInt(el.value, 10);
-          if (!isNaN(v) && v > max) max = v;
-        });
-        added.value = max + 10;
-      }, 0);
-    });
-  })();
-</script>
+{% include "boms/_bom_header_lines.html" with list_url="/boms/" save_label="Save BOM" %}
 {% endblock %}
