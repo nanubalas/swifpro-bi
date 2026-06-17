@@ -15581,3 +15581,84 @@ class MRP750ScenarioTests(TestCase):
         before = Product.objects.filter(tenant=self.tenant).count()
         call_command("seed_mrp_750_scenario", tenant="Test 750 Co")
         self.assertEqual(Product.objects.filter(tenant=self.tenant).count(), before)
+
+
+class MRP750ConvertDemoTests(TestCase):
+    """One-click convert/execute demo helper (demo_mrp_750_convert): converts the
+    FG-750-DEMO planned orders to PR/PO + Work Order idempotently, and (with a
+    flag) safely executes the work order without forcing on insufficient stock."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from io import StringIO
+        from django.core.management import call_command
+        from django.contrib.auth.models import User
+        from core.models import Tenant, MRPRun, OrgMembership
+        from core.services.mrp import run_mrp
+        call_command("seed_mrp_750_scenario", tenant="Convert 750 Co", stdout=StringIO())
+        cls.tenant = Tenant.objects.get(name="Convert 750 Co")
+        cls.admin = User.objects.create_user("convert750", password="pw")
+        OrgMembership.objects.create(user=cls.admin, tenant=cls.tenant, role="ADMIN", is_default=True)
+        cls.mrp_run = MRPRun.objects.filter(tenant=cls.tenant).order_by("-id").first()
+        run_mrp(cls.mrp_run)
+
+    def _call(self, **flags):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command("demo_mrp_750_convert", tenant="Convert 750 Co", stdout=StringIO(), stderr=StringIO(), **flags)
+
+    def test_converts_buy_to_requisitions(self):
+        from core.models import PurchaseRequisition
+        self._call()
+        # One requisition per BUY component (RM-A..RM-E).
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 5)
+        for po in self.mrp_run.planned_orders.filter(source_type="BUY"):
+            po.refresh_from_db()
+            self.assertIsNotNone(po.created_purchase_requisition_id, f"{po.product.sku} not converted")
+            self.assertEqual(po.status, "CONVERTED")
+
+    def test_converts_make_to_work_order(self):
+        from core.models import WorkOrder
+        self._call()
+        wos = WorkOrder.objects.filter(tenant=self.tenant, product__sku="FG-750-DEMO")
+        self.assertEqual(wos.count(), 1)
+        wo = wos.first()
+        self.assertEqual(wo.quantity, Decimal("750.00"))
+        self.assertEqual(wo.materials.count(), 5)  # one material line per component
+
+    def test_idempotent_no_duplicate_pr_or_wo(self):
+        from core.models import PurchaseRequisition, WorkOrder
+        self._call()
+        self._call()  # second run must not duplicate
+        self.assertEqual(PurchaseRequisition.objects.filter(tenant=self.tenant).count(), 5)
+        self.assertEqual(WorkOrder.objects.filter(tenant=self.tenant, product__sku="FG-750-DEMO").count(), 1)
+
+    def test_buy_as_po_creates_draft_purchase_orders(self):
+        from core.models import PurchaseOrder
+        self._call(**{"buy_as": "po"})
+        # 5 new DRAFT POs (the 2 seeded open POs are APPROVED, not DRAFT).
+        self.assertEqual(PurchaseOrder.objects.filter(tenant=self.tenant, status="DRAFT").count(), 5)
+        for po in self.mrp_run.planned_orders.filter(source_type="BUY"):
+            po.refresh_from_db()
+            self.assertIsNotNone(po.created_purchase_order_id, f"{po.product.sku} not converted to PO")
+
+    def test_execute_does_not_complete_when_stock_insufficient(self):
+        from core.models import WorkOrder, InventoryMovement
+        self._call(**{"execute_work_order": True})
+        wo = WorkOrder.objects.get(tenant=self.tenant, product__sku="FG-750-DEMO")
+        # Released and some materials issued, but never force-completed (RM-A/C/D short).
+        self.assertIn(wo.status, ("RELEASED", "PARTIALLY_COMPLETED"))
+        self.assertEqual(wo.quantity_completed or Decimal("0"), Decimal("0"))
+        self.assertFalse(
+            InventoryMovement.objects.filter(
+                tenant=self.tenant, product__sku="FG-750-DEMO",
+                movement_type="WORK_ORDER_COMPLETION").exists())
+
+    def test_execute_is_idempotent(self):
+        from core.models import WorkOrder
+        self._call(**{"execute_work_order": True})
+        self._call(**{"execute_work_order": True})  # must not crash or double-issue
+        wo = WorkOrder.objects.get(tenant=self.tenant, product__sku="FG-750-DEMO")
+        # RM-B and RM-E each have enough stock to issue exactly their requirement once.
+        rm_b = wo.materials.get(component__sku="RM-B")
+        self.assertEqual(rm_b.issued_quantity, Decimal("750.00"))
