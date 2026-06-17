@@ -1,4 +1,4 @@
-"""One-click demo helper for the FG-750-DEMO MRP scenario.
+"""One-click demo helper for the VGS-MRP750 MRP scenario.
 
     python manage.py demo_mrp_750_convert --tenant "MRP 750 Demo"
     python manage.py demo_mrp_750_convert --tenant "MRP 750 Demo" --buy-as po
@@ -22,21 +22,22 @@ from django.core.management.base import BaseCommand, CommandError
 from core.models import Tenant, MRPRun, MRPPlannedOrder, OrgMembership
 from core.services.mrp import conversion
 
-PREFERRED_RUN = "MRP-750-0-WRV7"
+RUN_PREFIX = "VGS-MRP750"
+FG_SKU = "VGS-MRP750-FG"
 
 # (sku, source_type) -> expected planned quantity, for the confirmation check.
 EXPECTED = [
-    ("FG-750-DEMO", "MAKE", Decimal("750")),
-    ("RM-A", "BUY", Decimal("900")),
-    ("RM-B", "BUY", Decimal("250")),
-    ("RM-C", "BUY", Decimal("1500")),
-    ("RM-D", "BUY", Decimal("500")),
-    ("RM-E", "BUY", Decimal("250")),
+    (FG_SKU, "MAKE", Decimal("750")),
+    ("VGS-MRP750-RM-A", "BUY", Decimal("900")),
+    ("VGS-MRP750-RM-B", "BUY", Decimal("250")),
+    ("VGS-MRP750-RM-C", "BUY", Decimal("1500")),
+    ("VGS-MRP750-RM-D", "BUY", Decimal("500")),
+    ("VGS-MRP750-RM-E", "BUY", Decimal("250")),
 ]
 
 
 class Command(BaseCommand):
-    help = "Convert (and optionally execute) the FG-750-DEMO MRP planned orders - safe and idempotent."
+    help = "Convert (and optionally execute) the VGS-MRP750 MRP planned orders - safe and idempotent."
 
     def add_arguments(self, parser):
         parser.add_argument("--tenant", required=True, help="Tenant name.")
@@ -50,8 +51,7 @@ class Command(BaseCommand):
         tenant = Tenant.objects.filter(name=opts["tenant"]).first()
         if tenant is None:
             raise CommandError(f"Tenant '{opts['tenant']}' not found. Run seed_mrp_750_scenario first.")
-        run = (MRPRun.objects.filter(tenant=tenant, run_number=PREFERRED_RUN).first()
-               or MRPRun.objects.filter(tenant=tenant, run_number__startswith="MRP-750").order_by("-id").first()
+        run = (MRPRun.objects.filter(tenant=tenant, run_number__startswith=f"{RUN_PREFIX}-").order_by("-id").first()
                or MRPRun.objects.filter(tenant=tenant).order_by("-id").first())
         if run is None:
             raise CommandError("No MRP run found for this tenant. Run the MRP run first.")
@@ -91,7 +91,8 @@ class Command(BaseCommand):
 
     def _convert(self, run, user, buy_target):
         rows = []
-        order = ["FG-750-DEMO", "RM-A", "RM-B", "RM-C", "RM-D", "RM-E"]
+        order = [FG_SKU, "VGS-MRP750-RM-A", "VGS-MRP750-RM-B", "VGS-MRP750-RM-C",
+                 "VGS-MRP750-RM-D", "VGS-MRP750-RM-E"]
         planned = list(run.planned_orders.select_related("product").all())
         planned.sort(key=lambda p: (order.index(p.product.sku) if p.product.sku in order else 99, p.id))
         for po in planned:
