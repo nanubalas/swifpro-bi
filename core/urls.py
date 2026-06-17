@@ -389,6 +389,7 @@ path("invoices/<int:invoice_id>/post/", views.invoice_post, name="invoice_post")
     # MRP reports (Phase 15)
     path("mrp/reports/", views.mrp_reports_index, name="mrp_reports_index"),
     path("mrp/reports/planned-orders/", views.mrp_report_planned_orders, name="mrp_report_planned_orders"),
+    path("mrp/reports/material-order-sheet/", views.mrp_report_material_order_sheet, name="mrp_report_material_order_sheet"),
     path("mrp/reports/demand-supply/", views.mrp_report_demand_supply, name="mrp_report_demand_supply"),
     path("mrp/reports/shortages/", views.mrp_report_shortage, name="mrp_report_shortage"),
     path("mrp/reports/exceptions/", views.mrp_report_exceptions, name="mrp_report_exceptions"),

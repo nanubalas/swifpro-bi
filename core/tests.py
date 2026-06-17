@@ -15751,3 +15751,78 @@ class MRP750DocxGuideTests(TestCase):
         path2 = os.path.join(tmp2, "demo_guides", "VGS_MRP_750_Demo_Manual_Guide.docx")
         self.assertTrue(os.path.exists(path2))
         self.assertIn("Docx 750 Co", self._extract(path2))
+
+
+class MRPMaterialOrderSheetTests(TestCase):
+    """MRP Material Order Sheet report card, view, data mapping and CSV/Excel export."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from io import StringIO
+        from django.core.management import call_command
+        from django.contrib.auth.models import User
+        from core.models import Tenant, MRPRun, OrgMembership
+        from core.services.mrp import run_mrp
+        call_command("seed_mrp_750_scenario", tenant="OrderSheet Co", stdout=StringIO())
+        cls.tenant = Tenant.objects.get(name="OrderSheet Co")
+        cls.mrp_run = MRPRun.objects.filter(tenant=cls.tenant).order_by("-id").first()
+        run_mrp(cls.mrp_run)
+        cls.user = User.objects.create_user("ordersheet", password="pw",
+                                            is_superuser=True, is_staff=True)
+        OrgMembership.objects.create(user=cls.user, tenant=cls.tenant, role="ADMIN", is_default=True)
+
+    def setUp(self):
+        self.client.login(username="ordersheet", password="pw")
+
+    def _url(self):
+        from django.urls import reverse
+        return reverse("mrp_report_material_order_sheet")
+
+    def test_card_on_reports_index(self):
+        resp = self.client.get("/mrp/reports/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "MRP Material Order Sheet")
+        self.assertContains(resp, "/mrp/reports/material-order-sheet/")
+
+    def test_report_loads_for_run(self):
+        resp = self.client.get(self._url() + f"?run={self.mrp_run.id}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "MRP Material Order Sheet")
+        for col in ["Placement / Component", "Unit Qty", "Current Stock",
+                    "Required Qty", "Order Qty", "Order Date"]:
+            self.assertContains(resp, col)
+
+    def test_shows_five_raw_materials(self):
+        resp = self.client.get(self._url() + f"?run={self.mrp_run.id}")
+        for sku in ["VGS-MRP750-RM-A", "VGS-MRP750-RM-B", "VGS-MRP750-RM-C",
+                    "VGS-MRP750-RM-D", "VGS-MRP750-RM-E"]:
+            self.assertContains(resp, sku)
+
+    def test_required_qty_matches_exploded_demand(self):
+        from core.services.mrp import reports
+        rows = {r[1].split(" - ")[0]: r for r in reports.material_order_sheet(self.mrp_run, {})["rows"]}
+        self.assertEqual(rows["VGS-MRP750-RM-A"][7], Decimal("1500.00"))
+        self.assertEqual(rows["VGS-MRP750-RM-C"][7], Decimal("3000.00"))
+        self.assertEqual(rows["VGS-MRP750-RM-D"][7], Decimal("375.00"))
+
+    def test_order_qty_matches_planned_buy(self):
+        from core.services.mrp import reports
+        rows = {r[1].split(" - ")[0]: r for r in reports.material_order_sheet(self.mrp_run, {})["rows"]}
+        self.assertEqual(rows["VGS-MRP750-RM-A"][8], Decimal("900.00"))
+        self.assertEqual(rows["VGS-MRP750-RM-B"][8], Decimal("250.00"))
+        self.assertEqual(rows["VGS-MRP750-RM-C"][8], Decimal("1500.00"))
+        self.assertEqual(rows["VGS-MRP750-RM-D"][8], Decimal("500.00"))
+        self.assertEqual(rows["VGS-MRP750-RM-E"][8], Decimal("250.00"))
+
+    def test_csv_export(self):
+        resp = self.client.get(self._url() + f"?run={self.mrp_run.id}&export=1")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/csv", resp["Content-Type"])
+        body = resp.content.decode("utf-8")
+        self.assertIn("Placement / Component", body)
+        self.assertIn("VGS-MRP750-RM-A", body)
+
+    def test_xlsx_export(self):
+        resp = self.client.get(self._url() + f"?run={self.mrp_run.id}&export=1&format=xlsx")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("spreadsheetml", resp["Content-Type"])
