@@ -2,156 +2,37 @@
 {% block title %}BOM - {{ bom.product.sku }}{% endblock %}
 {% block back_url %}{% url 'bom_list' %}{% endblock %}
 {% block body %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
   <div>
     <h2 class="fw-bold mb-1">BOM: {{ bom.product.sku }}</h2>
-    <div class="text-muted">{{ bom.product.name }} • Manage components</div>
+    <div class="text-muted">{{ bom.product.name }} - edit the header and each component in the panel on the right.</div>
   </div>
-  <div class="d-flex gap-2">
-<a class="btn btn-outline-danger" href="/boms/{{ bom.id }}/delete/">Delete</a>
-  </div>
+  <a class="btn btn-outline-danger" href="/boms/{{ bom.id }}/delete/"><i class="bi bi-trash me-1"></i> Delete</a>
 </div>
 
-<form method="post">
-  {% csrf_token %}
-  <div class="row g-4">
-    <div class="col-lg-4">
-      <div class="card card-soft">
-        <div class="card-body">
-          <h5 class="fw-semibold mb-3">Header</h5>
-          <div class="mb-3">
-            <label class="form-label">Product</label>
-            {{ form.product }}
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Name</label>
-            {{ form.name }}
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Output quantity</label>
-            {{ form.output_qty }}
-            <div class="form-text">Units produced per run. Build/batch quantity is entered at planning time, not stored here.</div>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Notes</label>
-            {{ form.notes }}
-            <div class="form-text">e.g. "R1 is open / not fitted".</div>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Active</label>
-            {{ form.is_active }}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-8">
-      <div class="card card-soft">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="fw-semibold mb-0">Components</h5>
-            <button type="button" class="btn btn-sm btn-outline-primary" id="add-line-btn">+ Add component</button>
-          </div>
-
-          {{ formset.management_form }}
-          <p class="text-muted small mb-2">Use line numbers such as 10, 20, 30 so new components can be inserted later without renumbering the whole BOM.</p>
-
-          <div class="table-responsive">
-            <table class="table table-bordered align-middle mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th style="width:7%">Line</th>
-                  <th style="width:28%">Component</th>
-                  <th class="text-end" style="width:9%">Quantity</th>
-                  <th style="width:12%">UOM</th>
-                  <th style="width:12%">Notes</th>
-                  <th style="width:24%">Placements <span class="text-muted fw-normal">(ref designators)</span></th>
-                  <th class="text-center" style="width:8%">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="lines-body">
-                {% for f in formset %}
-                <tr class="line-row">
-                  {% for hidden in f.hidden_fields %}{{ hidden }}{% endfor %}
-                  <td>{{ f.line_no }}</td>
-                  <td>{{ f.component }}</td>
-                  <td class="text-end">{{ f.qty }}</td>
-                  <td>{{ f.uom }}</td>
-                  <td>{{ f.notes }}</td>
-                  <td>
-                    {{ f.placements }}
-                    {% if f.instance.pk and not f.instance.placements_match_qty %}
-                    <div class="text-warning small mt-1"><i class="bi bi-exclamation-triangle"></i>
-                      Placement total {{ f.instance.placement_qty_sum }} &ne; line qty {{ f.instance.qty }}</div>
-                    {% endif %}
-                  </td>
-                  <td class="text-center"><div class="form-check d-inline-block">{{ f.DELETE }}</div></td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          <p class="form-text small mb-0">Placements are reference designators (e.g. <code>Z1,Z2,Z3</code>); each defaults to qty 1 and should add up to the line quantity. They are descriptive only - explosion and planning use the line quantity.</p>
-
-          <template id="empty-form-template">
-            <tr class="line-row">
-              <td>{{ formset.empty_form.line_no }}</td>
-              <td>{{ formset.empty_form.component }}</td>
-              <td class="text-end">{{ formset.empty_form.qty }}</td>
-              <td>{{ formset.empty_form.uom }}</td>
-              <td>{{ formset.empty_form.notes }}</td>
-              <td>{{ formset.empty_form.placements }}</td>
-              <td class="text-center"><div class="form-check d-inline-block">{{ formset.empty_form.DELETE }}</div></td>
-            </tr>
-          </template>
-
-          <div class="d-flex justify-content-end gap-2 mt-3">
-            <button class="btn btn-primary" type="submit">Save BOM</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</form>
+{% include "documents/_header_lines_form.html" with list_url="/boms/" save_label="Save BOM" line_noun="Component" %}
 
 <script>
-  document.querySelectorAll("select, input, textarea").forEach(el => {
-    if (el.type === "checkbox") el.classList.add("form-check-input");
-    else el.classList.add("form-control");
-  });
-
-  const addBtn = document.getElementById("add-line-btn");
-  const tbody = document.getElementById("lines-body");
-  const template = document.getElementById("empty-form-template");
-
-  function updateAttributes(html, index) { return html.replaceAll("__prefix__", index); }
-
-  function nextLineNo() {
-    // Next number in steps of 10 (max existing + 10, else 10).
-    let max = 0;
-    tbody.querySelectorAll('input[name$="-line_no"]').forEach(el => {
-      const v = parseInt(el.value, 10);
-      if (!isNaN(v) && v > max) max = v;
+  // BOM-specific: auto-number a newly added component in steps of 10 (10, 20, 30...)
+  // so new lines never collide on the default line_no. Runs after the shared
+  // header/lines handler has appended the new pane.
+  (function () {
+    var form = document.getElementById("hlf-form");
+    if (!form) return;
+    form.addEventListener("click", function (e) {
+      if (!(e.target.closest("#hlf-add-line") || e.target.closest(".hlf-add-line2"))) return;
+      setTimeout(function () {
+        var inputs = Array.prototype.slice.call(form.querySelectorAll('input[name$="-line_no"]'));
+        if (!inputs.length) return;
+        var added = inputs[inputs.length - 1];
+        var max = 0;
+        inputs.slice(0, -1).forEach(function (el) {
+          var v = parseInt(el.value, 10);
+          if (!isNaN(v) && v > max) max = v;
+        });
+        added.value = max + 10;
+      }, 0);
     });
-    return max + 10;
-  }
-
-  addBtn.addEventListener("click", () => {
-    const totalFormsInput = document.querySelector('input[name="{{ formset.prefix }}-TOTAL_FORMS"]');
-    const index = parseInt(totalFormsInput.value, 10);
-    const tempHtml = updateAttributes(template.innerHTML, index);
-    const wrapper = document.createElement("tbody");
-    wrapper.innerHTML = tempHtml.trim();
-    const newRow = wrapper.querySelector("tr");
-    const lineInput = newRow.querySelector('input[name$="-line_no"]');
-    if (lineInput) lineInput.value = nextLineNo();
-    tbody.appendChild(newRow);
-    totalFormsInput.value = index + 1;
-
-    newRow.querySelectorAll("select, input, textarea").forEach(el => {
-      if (el.type === "checkbox") el.classList.add("form-check-input");
-      else el.classList.add("form-control");
-    });
-  });
+  })();
 </script>
 {% endblock %}
