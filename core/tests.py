@@ -15713,9 +15713,29 @@ class MRP750DocxGuideTests(TestCase):
             self.assertIn(token, self.text)
 
     def test_contains_manual_ui_steps(self):
-        self.assertIn("Switch company", self.text)
+        self.assertIn(f"Switch company to {self.tenant.name}", self.text)
         self.assertIn("Convert BUY planned orders to Purchase Requisitions", self.text)
         self.assertIn("Planner Dashboard", self.text)
+
+    def test_landscape_orientation_and_short_headers(self):
+        from docx import Document
+        from docx.enum.section import WD_ORIENT
+        doc = Document(self.path)
+        sec = doc.sections[0]
+        self.assertEqual(sec.orientation, WD_ORIENT.LANDSCAPE)
+        self.assertGreater(sec.page_width, sec.page_height)
+        headers = [c.text for c in doc.tables[0].rows[0].cells]
+        self.assertEqual(headers, [
+            "Component", "Qty/FG", "Gross", "Safety", "On Hand", "Reserved", "Quarantine",
+            "Open PO", "Usable", "Net", "MOQ", "Multiple", "Expected", "Actual", "Status"])
+
+    def test_each_sku_on_one_table_line(self):
+        from docx import Document
+        doc = Document(self.path)
+        col0 = [r.cells[0].text for r in doc.tables[0].rows[1:]]
+        self.assertIn("VGS-MRP750-RM-A", col0)
+        for txt in col0:
+            self.assertNotIn("\n", txt)  # SKU not wrapped onto a second line
 
     def test_regenerated_safely_on_rerun(self):
         import os, tempfile

@@ -358,8 +358,9 @@ class Command(BaseCommand):
 
     def _write_docx(self, tenant, run):
         from docx import Document
-        from docx.shared import Pt
+        from docx.shared import Pt, Inches
         from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.section import WD_ORIENT
 
         actual = self._actual_planned(run)
         fg_actual = actual.get((FG_SKU, "MAKE"), ZERO)
@@ -367,6 +368,14 @@ class Command(BaseCommand):
         path = self._guide_path()
 
         doc = Document()
+        # Landscape with slim margins so the 15-column calculation table is wide
+        # and readable.
+        sec = doc.sections[0]
+        sec.orientation = WD_ORIENT.LANDSCAPE
+        sec.page_width, sec.page_height = sec.page_height, sec.page_width
+        sec.left_margin = sec.right_margin = Inches(0.4)
+        sec.top_margin = sec.bottom_margin = Inches(0.5)
+
         title = doc.add_heading("VGS MRP 750 Demo Manual Guide", level=0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
         sub = doc.add_paragraph(f"Generated for {tenant.name} - MRP run {run.run_number}")
@@ -412,14 +421,21 @@ class Command(BaseCommand):
         self._docx_kv(doc, "Routing", [f"{ROUTING_CODE}", f"Work Centre: {WORK_CENTRE_NAME}"])
         self._docx_kv(doc, "MRP Run", [f"{run.run_number} (status {run.get_status_display()})"])
 
-        # Section 4: Expected MRP Calculation
+        # Section 4: Expected MRP Calculation (own page so the wide table has room)
+        doc.add_page_break()
         doc.add_heading("4. Expected MRP Calculation", level=1)
         headers = ["Component", "Qty/FG", "Gross", "Safety", "On Hand", "Reserved", "Quarantine",
-                   "Open PO", "Usable", "Net", "MOQ", "Order Mult", "Expected Qty", "Actual Qty", "Status"]
+                   "Open PO", "Usable", "Net", "MOQ", "Multiple", "Expected", "Actual", "Status"]
+        # Column widths (inches) - Component wide enough to keep each SKU on one line.
+        widths = [Inches(w) for w in (1.5, 0.5, 0.55, 0.55, 0.6, 0.65, 0.75, 0.6,
+                                      0.6, 0.5, 0.5, 0.6, 0.65, 0.6, 0.55)]
         table = doc.add_table(rows=1, cols=len(headers))
         table.style = "Light Grid Accent 1"
+        table.autofit = False
+        table.allow_autofit = False
         for i, h in enumerate(headers):
             cell = table.rows[0].cells[i]
+            cell.width = widths[i]
             cell.text = h
             for p in cell.paragraphs:
                 for r in p.runs:
@@ -428,7 +444,7 @@ class Command(BaseCommand):
         # FG row
         self._docx_row(table, [FG_SKU, "-", str(ORDER_QTY), "0", "0", "0", "0", "0", "0",
                                str(ORDER_QTY), "-", "-", str(ORDER_QTY), str(fg_actual),
-                               "OK" if fg_actual == ORDER_QTY else "CHECK"])
+                               "OK" if fg_actual == ORDER_QTY else "CHECK"], widths)
         # Component rows
         for r in rows:
             act = actual.get((r["sku"], "BUY"), ZERO)
@@ -436,14 +452,14 @@ class Command(BaseCommand):
                 r["sku"], r["qty_per_fg"], str(r["gross"]), str(r["safety"]), str(r["on_hand"]),
                 str(r["reserved"]), str(r["quarantine"]), str(r["open_po"]), str(r["usable"]),
                 str(r["net"]), str(r["moq"]), str(r["multiple"]), str(r["planned"]), str(act),
-                "OK" if act == r["planned"] else "CHECK"])
+                "OK" if act == r["planned"] else "CHECK"], widths)
         doc.add_paragraph(
             "Note: RM-D is planned with exactly one BUY order of 500 (no duplicate). "
             "The 200 quarantine units of RM-C are excluded from usable supply.").italic = True
 
         # Section 5: Manual UI Steps
         doc.add_heading("5. Manual UI Steps", level=1)
-        for line in self._ui_steps(run):
+        for line in self._ui_steps(run, tenant):
             if line.startswith("  - "):
                 doc.add_paragraph(line[4:], style="List Bullet 2")
             else:
@@ -502,10 +518,12 @@ class Command(BaseCommand):
         for it in items:
             doc.add_paragraph(it, style="List Bullet")
 
-    def _docx_row(self, table, values):
+    def _docx_row(self, table, values, widths=None):
         from docx.shared import Pt
         cells = table.add_row().cells
         for i, v in enumerate(values):
+            if widths is not None:
+                cells[i].width = widths[i]
             cells[i].text = str(v)
             for p in cells[i].paragraphs:
                 for r in p.runs:
@@ -518,10 +536,10 @@ class Command(BaseCommand):
         r.font.name = "Consolas"
         r.font.size = Pt(9)
 
-    def _ui_steps(self, run):
+    def _ui_steps(self, run, tenant):
         return [
             "Login to the ERP.",
-            "Switch company to the demo tenant.",
+            f"Switch company to {tenant.name}.",
             "Go to Products and search VGS-MRP750.",
             f"Open {FG_SKU}.",
             f"Go to BOMs and open the BOM for {FG_SKU}.",
@@ -577,7 +595,7 @@ class Command(BaseCommand):
             lines.append(f"- {r['sku']}: expected {r['planned']}, actual {act}")
         lines += ["", "## Manual UI Steps", ""]
         n = 1
-        for s in self._ui_steps(run):
+        for s in self._ui_steps(run, tenant):
             if s.startswith("  - "):
                 lines.append(f"    {s.strip()}")
             else:
