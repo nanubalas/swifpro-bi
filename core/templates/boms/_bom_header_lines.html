@@ -248,7 +248,7 @@ Expects `form` (header ModelForm) and `formset` (inline line formset).
     form.addEventListener("click", function (e) {
       if (e.target.closest("#hlf-add-line") || e.target.closest(".hlf-add-line2")) { e.preventDefault(); addLine(); return; }
       var row = e.target.closest("#hlf-lines-table tr[data-pane]");
-      if (row) { show(row.getAttribute("data-pane")); return; }
+      if (row) { expandLines(true); show(row.getAttribute("data-pane")); return; }
       var rm = e.target.closest(".hlf-remove-line");
       if (rm) {
         var pane = rm.closest(".hlf-line-pane");
