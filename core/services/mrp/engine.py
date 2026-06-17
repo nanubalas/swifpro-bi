@@ -60,16 +60,31 @@ def run_mrp(run, user=None):
     run._supply_cache = {}      # (product_id, site_id) -> [MRPSupply]; collect once per run
     run._comp_consumed = {}     # (product_id, site_id) -> Decimal consumed by dependent demand
     run._transfer_src_avail = {}  # (product_id, source_site_id) -> Decimal remaining source stock
+    run._planned_as_component = set()       # (product_id, site_id) planned via BOM explosion
+    run._safety_in_component_applied = set()  # (product_id, site_id) whose safety was folded into dependent demand
 
-    profiles = (ItemSitePlanning.objects
-                .filter(tenant=run.tenant, is_active=True, mrp_enabled=True,
-                        source_type__in=_PLANNABLE_SOURCE_TYPES)
-                .select_related("product", "site", "default_supplier"))
+    profiles = list(ItemSitePlanning.objects
+                    .filter(tenant=run.tenant, is_active=True, mrp_enabled=True,
+                            source_type__in=_PLANNABLE_SOURCE_TYPES)
+                    .select_related("product", "site", "default_supplier"))
     if run.site_scope_id:
-        profiles = profiles.filter(site_id=run.site_scope_id)
+        profiles = [p for p in profiles if p.site_id == run.site_scope_id]
+    # Plan parents before their components (low-level code ascending) so a
+    # component is reached via its parent's BOM explosion - where its dependent
+    # demand and safety stock are netted together - before the main loop would
+    # otherwise plan it standalone, which would double-count the same supply.
+    _llc_cache = {}
+    profiles.sort(key=lambda p: _low_level_code(run.tenant, p.product_id, _llc_cache))
 
     try:
         for profile in profiles:
+            # An item already planned as a dependent component had its demand and
+            # safety stock handled during explosion; do not plan it again standalone
+            # (would double-count supply / re-add safety). Still plan it if it has
+            # its own independent sales/forecast demand to satisfy.
+            if ((profile.product_id, profile.site_id) in run._planned_as_component
+                    and not _has_independent_demand(run, profile)):
+                continue
             try:
                 with transaction.atomic():
                     _plan_profile(run, profile)
@@ -102,6 +117,46 @@ def run_mrp(run, user=None):
         run.save(update_fields=["status", "notes", "completed_at"])
         raise
     return run
+
+
+def _low_level_code(tenant, product_id, cache, _visiting=None):
+    """BOM low-level code used only to order planning: 0 for an item that is not
+    a component of any active BOM, else 1 + the deepest parent's code. Cycles
+    resolve to 0 (the explosion's circular guard reports the actual cycle)."""
+    if product_id in cache:
+        return cache[product_id]
+    from core.models import BillOfMaterialsLine
+    if _visiting is None:
+        _visiting = set()
+    if product_id in _visiting:
+        return 0
+    _visiting.add(product_id)
+    parent_ids = (BillOfMaterialsLine.objects
+                  .filter(bom__tenant=tenant, bom__is_active=True, component_id=product_id)
+                  .values_list("bom__product_id", flat=True).distinct())
+    parents = [pid for pid in parent_ids if pid is not None]
+    code = 0 if not parents else 1 + max(
+        _low_level_code(tenant, pid, cache, _visiting) for pid in parents)
+    _visiting.discard(product_id)
+    cache[product_id] = code
+    return code
+
+
+def _has_independent_demand(run, profile):
+    """True if the item has its own sales-order or forecast demand at its site,
+    independent of being a BOM component."""
+    from core.models import CustomerOrderLine, ForecastLine
+    if run.include_sales_orders and profile.include_sales_orders:
+        if CustomerOrderLine.objects.filter(
+                order__tenant=run.tenant, order__status="CONFIRMED",
+                product_id=profile.product_id, order__site_id=profile.site_id).exists():
+            return True
+    if run.include_forecast and profile.include_forecast:
+        if ForecastLine.objects.filter(
+                tenant=run.tenant, product_id=profile.product_id,
+                site_id=profile.site_id).exists():
+            return True
+    return False
 
 
 def _plan_profile(run, profile):

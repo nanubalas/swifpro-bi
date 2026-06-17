@@ -172,11 +172,33 @@ def _plan_component(run, comp, site, req, required_date, nearest_po, demand,
             product=comp, site=site)
         return
 
-    # Net the dependent demand against the component's own stock/supply.
-    available = engine.take_component_availability(run, profile, req)
-    net = req - available
+    # This item-site is being planned as a dependent component; the main engine
+    # loop must not also plan it standalone (which would double-count the same
+    # supply and re-add safety stock). Record it even when stock fully covers.
+    if getattr(run, "_planned_as_component", None) is None:
+        run._planned_as_component = set()
+    if getattr(run, "_safety_in_component_applied", None) is None:
+        run._safety_in_component_applied = set()
+    run._planned_as_component.add((comp.id, site.id))
+
+    # Add the safety-stock floor to the dependent requirement once per item-site
+    # per run, so the component is replenished to cover demand AND safety in a
+    # single netting (classic gross = dependent demand + safety stock).
+    safety = profile.safety_stock_qty or ZERO
+    if not (run.include_safety_stock and profile.include_safety_stock):
+        safety = ZERO
+    sk = (comp.id, site.id)
+    if sk in run._safety_in_component_applied:
+        safety = ZERO
+    elif safety > ZERO:
+        run._safety_in_component_applied.add(sk)
+
+    # Net the dependent demand (plus safety floor) against the component's supply.
+    needed = req + safety
+    available = engine.take_component_availability(run, profile, needed)
+    net = needed - available
     if net <= ZERO:
-        return  # covered by existing stock/supply
+        return  # demand + safety already covered by existing stock/supply
 
     qty, capped, notes = lot_sizing.size_order(profile, net)
     if qty <= ZERO:

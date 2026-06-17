@@ -27,6 +27,7 @@ from core.models import (
     BillOfMaterials, BillOfMaterialsLine, ItemSitePlanning,
     CustomerOrder, CustomerOrderLine, MRPRun,
     PurchaseOrder, PurchaseOrderLine, InventoryBalance,
+    WorkCentre, RoutingHeader, RoutingOperation,
 )
 
 SEED_REF = "MRP_750_SEED"
@@ -84,6 +85,7 @@ class Command(BaseCommand):
         suppliers = self._suppliers(tenant)
         products = self._products(tenant)
         self._bom(tenant, products)
+        self._routing(tenant, site, products)
         self._planning(tenant, site, products, suppliers)
         self._stock(tenant, products, locs)
         self._open_pos(tenant, site, products, suppliers, locs)
@@ -150,6 +152,24 @@ class Command(BaseCommand):
                 bom=bom, component=p[sku],
                 defaults={"line_no": i * 10, "qty": Decimal(qty),
                           "scrap_percent": ZERO, "fixed_qty": ZERO})
+
+    def _routing(self, tenant, site, p):
+        # A simple single-operation routing so FG-750-DEMO (a MAKE item) has an
+        # active routing and the run does not raise MISSING_ROUTING. No shop
+        # calendar / finite scheduling - keeps the focus on material planning.
+        wc = WorkCentre.objects.get_or_create(
+            tenant=tenant, code="ASSY",
+            defaults={"site": site, "name": "Assembly", "capacity_hours_per_day": Decimal("8"),
+                      "efficiency_percent": Decimal("100"), "finite_capacity_enabled": False,
+                      "is_active": True})[0]
+        routing, created = RoutingHeader.objects.get_or_create(
+            tenant=tenant, routing_code="RT-FG-750",
+            defaults={"product": p[FG_SKU], "site": None, "status": "ACTIVE", "is_default": True})
+        if created:
+            # Small per-unit time so 750 units fit one shift (no capacity overload).
+            RoutingOperation.objects.create(
+                routing=routing, operation_sequence=10, operation_name="Assemble",
+                work_centre=wc, setup_minutes=Decimal("10"), run_minutes_per_unit=Decimal("0.1"))
 
     def _planning(self, tenant, site, p, suppliers):
         # FG: MAKE, driven by the sales order.
