@@ -15482,3 +15482,102 @@ class MRPPhase18DemoTests(TestCase):
         self.assertEqual(self.client.get("/mrp/reports/work-order-cost/").status_code, 200)
         self.assertEqual(self.client.get("/mrp/dashboard/").status_code, 200)
         self.assertEqual(self.client.get("/mrp/health-check/").status_code, 200)
+
+
+class MRP750ScenarioTests(TestCase):
+    """End-to-end validation of the FG-750-DEMO material-planning scenario
+    (seed_mrp_750_scenario): a 750-unit MAKE order exploding a 5-component BOM,
+    with safety stock, MOQ, order multiples, reserved + quarantine stock and open
+    POs. Verifies the engine nets component requirements classically:
+
+        planned = roundup_to_multiple(max(MOQ, gross + safety - usable), multiple)
+        usable  = (on_hand - reserved) + open_PO    (quarantine excluded)
+
+    and that each component is planned exactly once (no duplicate safety order).
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.core.management import call_command
+        from core.models import Tenant, MRPRun
+        from core.services.mrp import run_mrp
+        call_command("seed_mrp_750_scenario", tenant="Test 750 Co")
+        cls.tenant = Tenant.objects.get(name="Test 750 Co")
+        cls.mrp_run = MRPRun.objects.filter(tenant=cls.tenant).order_by("-id").first()
+        run_mrp(cls.mrp_run)
+        cls.mrp_run.refresh_from_db()
+
+    def _planned(self, sku, source_type=None):
+        qs = self.mrp_run.planned_orders.filter(product__sku=sku)
+        if source_type:
+            qs = qs.filter(source_type=source_type)
+        return qs
+
+    def _total(self, sku):
+        from decimal import Decimal
+        return sum((p.quantity for p in self._planned(sku, "BUY")), Decimal("0"))
+
+    def test_fg_make_planned_order_750(self):
+        from decimal import Decimal
+        fg = self._planned("FG-750-DEMO", "MAKE").first()
+        self.assertIsNotNone(fg)
+        self.assertEqual(fg.quantity, Decimal("750.00"))
+
+    def test_five_component_demand_rows_with_gross_qty(self):
+        from decimal import Decimal
+        expected = {"RM-A": "1500.00", "RM-B": "750.00", "RM-C": "3000.00",
+                    "RM-D": "375.00", "RM-E": "750.00"}
+        rows = self.mrp_run.demands.filter(demand_type="WORK_ORDER_COMPONENT")
+        self.assertEqual(rows.count(), 5)
+        for sku, qty in expected.items():
+            d = rows.filter(product__sku=sku).first()
+            self.assertIsNotNone(d, f"missing component demand for {sku}")
+            self.assertEqual(d.open_quantity, Decimal(qty), f"gross qty wrong for {sku}")
+
+    def test_planned_buy_quantities_match_classic_netting(self):
+        from decimal import Decimal
+        # gross + safety - usable, then MOQ / order-multiple. Reserved excluded,
+        # quarantine excluded, open PO counted, safety stock added.
+        expected = {"RM-A": "900.00",   # 1500 + 500 - (900-100 + 300) = 900
+                    "RM-B": "250.00",   # 750 + 300 - (1000-200) = 250
+                    "RM-C": "1500.00",  # 3000 + 1000 - (2000 + 500) = 1500 (200 quar excluded)
+                    "RM-D": "500.00",   # 375 + 200 - 100 = 475 -> MOQ 500
+                    "RM-E": "250.00"}   # 750 + 250 - 900 = 100 -> MOQ 250
+        for sku, qty in expected.items():
+            self.assertEqual(self._total(sku), Decimal(qty), f"planned BUY qty wrong for {sku}")
+
+    def test_no_duplicate_order_per_component(self):
+        # Each component is planned exactly once - the dependent demand and the
+        # safety floor are netted together, not in two un-shared passes.
+        for sku in ("RM-A", "RM-B", "RM-C", "RM-D", "RM-E"):
+            self.assertEqual(self._planned(sku, "BUY").count(), 1, f"{sku} has duplicate orders")
+
+    def test_quarantine_stock_excluded(self):
+        # RM-C has 200 quarantine units that must NOT net against demand; the run
+        # flags them and RM-C still nets against 2000 (planned 1500, not 1300).
+        from decimal import Decimal
+        self.assertTrue(self.mrp_run.exceptions.filter(exception_code="NON_NETTABLE_STOCK").exists())
+        self.assertEqual(self._total("RM-C"), Decimal("1500.00"))
+
+    def test_open_po_counted_as_supply(self):
+        # RM-A's open PO (300) reduces the requirement: without it the net would
+        # be 1200, with it 900.
+        from decimal import Decimal
+        self.assertEqual(self._total("RM-A"), Decimal("900.00"))
+
+    def test_pegging_chain_exists(self):
+        from core.models import MRPPegging
+        fg = self._planned("FG-750-DEMO", "MAKE").first()
+        rm_a = self._planned("RM-A", "BUY").first()
+        sales = self.mrp_run.demands.filter(demand_type="SALES_ORDER", product__sku="FG-750-DEMO").first()
+        comp = self.mrp_run.demands.filter(demand_type="WORK_ORDER_COMPONENT", product__sku="RM-A").first()
+        self.assertTrue(MRPPegging.objects.filter(planned_order=fg, demand=sales).exists())
+        self.assertTrue(MRPPegging.objects.filter(planned_order=fg, demand=comp).exists())
+        self.assertTrue(MRPPegging.objects.filter(planned_order=rm_a, demand=comp).exists())
+
+    def test_idempotent_command_rerun(self):
+        from django.core.management import call_command
+        from core.models import Product
+        before = Product.objects.filter(tenant=self.tenant).count()
+        call_command("seed_mrp_750_scenario", tenant="Test 750 Co")
+        self.assertEqual(Product.objects.filter(tenant=self.tenant).count(), before)
